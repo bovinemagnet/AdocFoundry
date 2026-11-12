@@ -552,20 +552,21 @@ impl Server {
                 .filter(|reference| kinds.is_empty() || kinds.contains(&reference.kind))
                 .collect();
             let page = page(found, &query, revision, args.cursor.as_deref(), args.limit)?;
-            let mut lines: Option<(PathBuf, LineIndex)> = None;
+            let mut lines: Option<(PathBuf, String, LineIndex)> = None;
             let items: Vec<Value> = page
                 .items
                 .iter()
                 .map(|reference| {
                     if lines
                         .as_ref()
-                        .is_none_or(|(file, _)| *file != reference.path)
+                        .is_none_or(|(file, _, _)| *file != reference.path)
                     {
                         let text = state.text(&reference.path).unwrap_or_default();
-                        lines = Some((reference.path.clone(), LineIndex::new(&text)));
+                        let index = LineIndex::new(&text);
+                        lines = Some((reference.path.clone(), text, index));
                     }
-                    let (_, index) = lines.as_ref().expect("set above");
-                    let (line, column) = index.line_column(reference.range.start);
+                    let (_, text, index) = lines.as_ref().expect("set above");
+                    let (line, column) = index.line_character(text, reference.range.start);
                     json!({
                         "kind": reference.kind.name(),
                         "path": state.shown(&reference.path),

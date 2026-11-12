@@ -829,7 +829,7 @@ fn symbols(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let engine = open_engine(&root, false)?;
     for symbol in engine.workspace_symbols(query) {
         let text = std::fs::read_to_string(&symbol.path).unwrap_or_default();
-        let (line, column) = LineIndex::new(&text).line_column(symbol.range.start);
+        let (line, column) = LineIndex::new(&text).line_character(&text, symbol.range.start);
         outln!(
             out,
             "{:?} {} {}:{}:{}",
@@ -907,7 +907,7 @@ fn follow(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     ) {
         Ok(CommandOutcome::Location(location)) => {
             let text = std::fs::read_to_string(&location.path).unwrap_or_default();
-            let (line, column) = LineIndex::new(&text).line_column(location.range.start);
+            let (line, column) = LineIndex::new(&text).line_character(&text, location.range.start);
             outln!(
                 out,
                 "{}:{}:{}",

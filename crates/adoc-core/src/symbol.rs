@@ -119,10 +119,37 @@ impl IdStyle {
 /// Asciidoctor numbers a generated id an earlier anchor or section already holds (the second
 /// `== Parameters` is `_parameters_2`, or `parameters-2` in Antora). The id is empty where it
 /// cannot be known without rendering the title (`IdStyle::generate`).
+///
+/// An anchor declared inside `ifdef`, `ifndef` or `ifeval` is not counted: it numbers the id
+/// only in a build that includes it, so the id offered is the one without it, and
+/// [`section_ids_with_conditionals`] gives the other.
 #[must_use]
 pub fn section_ids(sections: &[Section], anchors: &[Anchor], style: IdStyle) -> Vec<String> {
+    numbered_ids(sections, anchors, style, false)
+}
+
+/// The id of each section as [`section_ids`] gives it, in a build where every anchor declared
+/// inside `ifdef`, `ifndef` or `ifeval` is present.
+#[must_use]
+pub fn section_ids_with_conditionals(
+    sections: &[Section],
+    anchors: &[Anchor],
+    style: IdStyle,
+) -> Vec<String> {
+    numbered_ids(sections, anchors, style, true)
+}
+
+fn numbered_ids(
+    sections: &[Section],
+    anchors: &[Anchor],
+    style: IdStyle,
+    conditionals: bool,
+) -> Vec<String> {
     let mut taken = HashSet::new();
-    let mut anchors = anchors.iter().peekable();
+    let mut anchors = anchors
+        .iter()
+        .filter(|anchor| conditionals || !anchor.conditional)
+        .peekable();
     let mut ids = Vec::with_capacity(sections.len());
     for section in sections {
         while let Some(anchor) = anchors.next_if(|anchor| anchor.range.start < section.range.start)
@@ -340,6 +367,33 @@ mod tests {
         assert_eq!(
             section_ids(&sections, &anchors, IdStyle::Antora),
             ["parameters", "parameters-2", "notes"]
+        );
+    }
+
+    /// Issue #533: an anchor inside `ifdef` numbers the section only in a build that sets the
+    /// attribute, so the id offered is the unnumbered one, and the numbered one is kept as well.
+    #[test]
+    fn a_conditional_anchor_numbers_the_section_only_with_conditionals() {
+        let sections = [
+            section("Parameters", None, 20),
+            section("Parameters", None, 40),
+        ];
+        let conditional = Anchor {
+            conditional: true,
+            ..anchor("parameters", 0)
+        };
+
+        assert_eq!(
+            section_ids(
+                &sections,
+                std::slice::from_ref(&conditional),
+                IdStyle::Antora
+            ),
+            ["parameters", "parameters-2"]
+        );
+        assert_eq!(
+            section_ids_with_conditionals(&sections, &[conditional], IdStyle::Antora),
+            ["parameters-2", "parameters-3"]
         );
     }
 

@@ -156,6 +156,32 @@ fn spanned(root: &std::path::Path, item: &Value) -> String {
 }
 
 #[test]
+fn mcp_find_references_counts_columns_in_characters() {
+    // Issue #533: `héllo wörld çà ` is 15 characters and 19 bytes.
+    let (_directory, root) = scratch("discovery");
+    std::fs::write(
+        root.join("guide/modules/ROOT/pages/accents.adoc"),
+        "= Accents\n\nhéllo wörld çà xref:product::install.adoc[]\n",
+    )
+    .unwrap();
+    let mut client = Client::start(&root, false);
+
+    let to_page = client
+        .call(
+            "find_references",
+            json!({ "resource_id": "product:ROOT:page$install.adoc" }),
+        )
+        .unwrap();
+    let item = to_page["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["path"] == "guide/modules/ROOT/pages/accents.adoc")
+        .unwrap_or_else(|| panic!("no reference from accents.adoc in {to_page}"));
+    assert_eq!((&item["line"], &item["column"]), (&json!(3), &json!(16)));
+}
+
+#[test]
 fn mcp_find_references_returns_exact_spans() {
     let (_directory, root) = scratch("discovery");
     let mut client = Client::start(&root, false);

@@ -334,11 +334,9 @@ fn duplicate_anchors(text: &str, anchors: &[Anchor]) -> Vec<Diagnostic> {
 /// The line and the character on it of `offset` in `text`, both counted from 1. The line index
 /// is built once, by the first duplicate, so each is placed by counting within its own line.
 fn line_and_column(text: &str, lines: &mut Option<LineIndex>, offset: usize) -> (usize, usize) {
-    let offset = text.floor_char_boundary(offset.min(text.len()));
     let lines = lines.get_or_insert_with(|| LineIndex::new(text));
-    let (line, column) = lines.line_column(offset);
-    let line_start = offset - column;
-    (line + 1, text[line_start..offset].chars().count() + 1)
+    let (line, column) = lines.line_character(text, offset);
+    (line + 1, column + 1)
 }
 
 #[cfg(test)]

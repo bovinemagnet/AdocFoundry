@@ -159,6 +159,8 @@ fn anchor_candidates(
     );
 
     candidates.sort_by(|a, b| a.label.cmp(&b.label));
+    // A section and an anchor inside `ifdef` can share an id; it is written the same either way.
+    candidates.dedup_by(|a, b| a.label == b.label);
     candidates
 }
 
@@ -545,6 +547,25 @@ mod tests {
                 .collect();
 
         assert_eq!(labels, ["_parameters", "_parameters_2"]);
+    }
+
+    #[test]
+    fn a_conditional_anchor_does_not_number_the_section_offered() {
+        // Issue #533: `_parameters_2` is the section's id only in a build setting `internal`.
+        let path = Path::new("/docs/guide.adoc");
+        let text =
+            "ifdef::internal[]\n[[_parameters]]\nInternal.\nendif::[]\n\n== Parameters\n\nSee <<";
+        let mut index = WorkspaceIndex::new();
+        index.index_source(path, text);
+        let document = parse("file:///docs/guide.adoc", text).document;
+
+        let labels: Vec<_> =
+            completion_at_offset(&index, &AntoraCatalog::new(), path, &document, text.len())
+                .into_iter()
+                .map(|candidate| candidate.label)
+                .collect();
+
+        assert_eq!(labels, ["_parameters"]);
     }
 
     #[test]

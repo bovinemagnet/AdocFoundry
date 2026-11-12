@@ -53,6 +53,33 @@ fn error_code(result: &Value) -> &str {
 }
 
 #[test]
+fn mcp_preview_counts_diagnostic_columns_in_characters() {
+    // Issue #533: `héllo wörld çà ` is 15 characters and 19 bytes.
+    let (_directory, root) = scratch("discovery");
+    let mut client = Client::start(&root, false);
+    let preview = client
+        .call(
+            "preview_changes",
+            json!({ "operations": [{
+                "kind": "replace",
+                "path": INSTALL,
+                "old_text": "You need things.",
+                "new_text": "héllo wörld çà xref:missing.adoc[]",
+            }] }),
+        )
+        .unwrap();
+    let diagnostics = file(&preview, INSTALL)["diagnostics"].as_array().unwrap();
+    let unresolved = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic["code"] == "adoc.unresolved-xref-file")
+        .unwrap_or_else(|| panic!("no unresolved xref in {preview}"));
+    assert_eq!(
+        (&unresolved["line"], &unresolved["column"]),
+        (&json!(6), &json!(16))
+    );
+}
+
+#[test]
 fn mcp_preview_does_not_mutate() {
     let (_directory, root) = scratch("discovery");
     let (install, nav) = (read(&root, INSTALL), read(&root, NAV));

@@ -112,6 +112,18 @@ impl LineIndex {
         (line, offset - self.line_starts[line])
     }
 
+    /// The 0-based line and column of `offset` in `text`, the text this index was built from,
+    /// the column in characters, as editors and CI annotations count it.
+    #[must_use]
+    pub fn line_character(&self, text: &str, offset: usize) -> (usize, usize) {
+        let offset = text.floor_char_boundary(offset.min(text.len()));
+        let (line, byte) = self.line_column(offset);
+        let column = text
+            .get(offset - byte..offset)
+            .map_or(byte, |before| before.chars().count());
+        (line, column)
+    }
+
     /// The offset of 0-based `line` and `column`, the column in bytes, clamped to the end of the
     /// line's content; `None` past the last line.
     #[must_use]
@@ -142,5 +154,20 @@ mod tests {
         assert_eq!(LineIndex::new("one\r\ntwo\r\n").offset(0, 99), Some(3));
         assert_eq!(LineIndex::new("one\ntwo").offset(1, 99), Some(7));
         assert_eq!(LineIndex::new("one\n").offset(1, 5), Some(4));
+    }
+
+    #[test]
+    fn a_character_column_counts_characters_not_bytes() {
+        // Issue #533: `héllo wörld çà ` is 15 characters and 19 bytes.
+        let text = "= Page\n\nhéllo wörld çà xref:missing.adoc[]\n";
+        let index = LineIndex::new(text);
+        let xref = text.find("xref").unwrap();
+
+        assert_eq!(index.line_column(xref), (2, 19));
+        assert_eq!(index.line_character(text, xref), (2, 15));
+        // Inside a character, the character it is in; past the end, the end.
+        let inside = text.find('é').unwrap() + 1;
+        assert_eq!(index.line_character(text, inside), (2, 1));
+        assert_eq!(index.line_character(text, text.len() + 9), (3, 0));
     }
 }

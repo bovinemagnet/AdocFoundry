@@ -431,7 +431,7 @@ Ranges are byte offsets, `{ "start", "end" }`: the first byte, and just past the
 
 |`get_outline`
 |`path` or `resource_id`, `from?`, `headings?`, `anchors?`
-|A page's title with its sections nested by level. `headings` and `anchors` default to true. `from` names the page that a partial id is read from. Each node has `kind` (`document` or `section`), `title`, `level`, `id`, `range`, `title_range` and `children`. The `id` is the one a reference reaches the section by: its anchor, else the id Antora generates from its title. For a navigation file (`kind: navigation`) the outline is its entries instead. An entry has `kind` `page` when it links and `category` otherwise, and a `target`, the xref target. `anchors` lists the anchors the page declares, each with `id`, `range` and `conditional`. `conditional` is true when the anchor is declared inside `ifdef`, `ifndef` or `ifeval`, so it may not be in the build.
+|A page's title with its sections nested by level. `headings` and `anchors` default to true. `from` names the page that a partial id is read from. Each node has `kind` (`document` or `section`), `title`, `level`, `id`, `range`, `title_range` and `children`. The `id` is the one a reference reaches the section by: its anchor, else the id Antora generates from its title. An anchor declared inside `ifdef`, `ifndef` or `ifeval` does not number it, since that anchor may not be in the build. For a navigation file (`kind: navigation`) the outline is its entries instead. An entry has `kind` `page` when it links and `category` otherwise, and a `target`, the xref target. `anchors` lists the anchors the page declares, each with `id`, `range` and `conditional`. `conditional` is true when the anchor is declared inside `ifdef`, `ifndef` or `ifeval`, so it may not be in the build.
 
 |`get_page_context`
 |`path` or `resource_id`, `from?`, `navigation?`, `includes?`, `incoming?`, `attributes?`, `text?`
@@ -439,7 +439,7 @@ Ranges are byte offsets, `{ "start", "end" }`: the first byte, and just past the
 
 |`find_references`
 |`path` or `resource_id`, `from?`, `anchor?`, `kinds?`, `cursor?`, `limit?`
-|The exact references that reach a page, paged like `check`, with `total`: see <<paging>>. These are xrefs in pages and partials (`xref`), entries of navigation files (`nav`) and include directives (`include`). With `anchor`, the references to that anchor of the page are listed instead (`anchor`): `+<<id>>+`, `+xref:#id[]+` and `+xref:page.adoc#id[]+` from anywhere. `kinds` is a list of `xref`, `include`, `nav` and `anchor`. Each item gives `kind`, `path` (the file it is written in), `resource_id`, `range`, `line`, `column`, `target` as written and `confidence`. `line` and `column` are one-based, and the column counts bytes. `confidence` is `resolved`, because every reference listed was resolved to the page. The references come from the index, resolved one by one, and never from the link graph's merged edges. A dynamic target that cannot be resolved is not listed. A path and a resource id together are refused as ambiguous.
+|The exact references that reach a page, paged like `check`, with `total`: see <<paging>>. These are xrefs in pages and partials (`xref`), entries of navigation files (`nav`) and include directives (`include`). With `anchor`, the references to that anchor of the page are listed instead (`anchor`): `+<<id>>+`, `+xref:#id[]+` and `+xref:page.adoc#id[]+` from anywhere. `kinds` is a list of `xref`, `include`, `nav` and `anchor`. Each item gives `kind`, `path` (the file it is written in), `resource_id`, `range`, `line`, `column`, `target` as written and `confidence`. `line` and `column` are one-based, and the column counts characters. `confidence` is `resolved`, because every reference listed was resolved to the page. The references come from the index, resolved one by one, and never from the link graph's merged edges. A dynamic target that cannot be resolved is not listed. A path and a resource id together are refused as ambiguous.
 |===
 
 A listing reads only the resources it returns.
@@ -720,6 +720,7 @@ Each of `files` has:
 * `before_hash` and `after_hash`, both SHA-256.
 * `diff`, whose lines start with `-`, `+` or a space. Lines left out are shown as `@@ n unchanged lines @@`.
 * `diagnostics` that the file would have after the change. Each has `severity`, `code`, `message`, `line` and `column`.
+`line` and `column` are one-based, and the column counts characters.
 
 The diagnostics are worked out on a copy of the workspace with the whole change made.
 The preview writes nothing to disk, changes no buffer and indexes nothing.

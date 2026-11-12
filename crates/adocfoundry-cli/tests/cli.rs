@@ -323,6 +323,36 @@ fn check_text_format_and_fail_on() {
 }
 
 #[test]
+fn columns_count_characters_as_editors_do() {
+    // Issue #533: `héllo wörld çà ` is 15 characters and 19 bytes, so the xref after it is at
+    // column 16, where an editor and the Problems panel put it, not 20.
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    std::fs::write(
+        root.join("page.adoc"),
+        "= Page\n\nhéllo wörld çà xref:missing.adoc[] xref:other.adoc#ici[]\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("other.adoc"), "= Other\n\nçà et là [[ici]]here\n").unwrap();
+    let root = root.to_str().unwrap();
+
+    let text = stdout(&cli(&["check", root]));
+    assert!(text.starts_with("page.adoc:3:16: warning "), "{text}");
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout(&cli(&["check", root, "--format", "json"]))).unwrap();
+    assert_eq!(json[0]["column"], 16, "{json}");
+
+    let page = format!("{root}/page.adoc");
+    let offset = std::fs::read_to_string(&page)
+        .unwrap()
+        .find("xref:other")
+        .unwrap()
+        + 6;
+    let output = cli(&["follow", &page, &offset.to_string()]);
+    assert_eq!(stdout(&output).trim(), "other.adoc:3:10");
+}
+
+#[test]
 fn follow_resolves_an_xref() {
     let output = cli(&["follow", "tests/fixtures/xrefs/index.adoc", "25"]);
     assert!(output.status.success());

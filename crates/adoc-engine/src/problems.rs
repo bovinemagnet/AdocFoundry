@@ -370,11 +370,7 @@ impl ProblemsState {
 
 /// The 1-based line and character column of `offset` in `text`, whose lines are `lines`.
 pub(crate) fn line_and_column(lines: &LineIndex, text: &str, offset: usize) -> (usize, usize) {
-    let (line, byte) = lines.line_column(offset);
-    let start = offset.min(text.len()) - byte;
-    let column = text
-        .get(start..start + byte)
-        .map_or(byte, |before| before.chars().count());
+    let (line, column) = lines.line_character(text, offset);
     (line + 1, column + 1)
 }
 
