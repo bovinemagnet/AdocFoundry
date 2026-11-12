@@ -822,8 +822,8 @@ The command always exits with 0, even when it reports a missing tool or font.
 AdocFoundry diagnostics
 
 Program
-  Version:  adocfoundry-cli 0.9.0
-  Engine:   adoc-engine 0.9.0
+  Version:  adocfoundry-cli 0.10.0
+  Engine:   adoc-engine 0.10.0
   Build:    release
   Features: typst, git
 
@@ -886,7 +886,7 @@ With a workspace, `Diagram cache` gives the folder of rendered diagrams and form
     {
       "title": "Program",
       "lines": [
-        { "label": "Version", "value": "adocfoundry-cli 0.9.0" }
+        { "label": "Version", "value": "adocfoundry-cli 0.10.0" }
       ]
     }
   ]
