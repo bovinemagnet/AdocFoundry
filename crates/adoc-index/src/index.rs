@@ -11,7 +11,7 @@ use std::{
 };
 
 use adoc_core::{
-    alphanumeric_id, canonical_id, section_ids, Document, IdStyle, IncludeDirective, Reference,
+    alphanumeric_id, canonical_id, section_ids, section_ids_with_conditionals, Document, IdStyle, IncludeDirective, Reference,
     ReferenceKind, SourceRange,
 };
 use adoc_parser::parse;
@@ -174,12 +174,23 @@ impl PreparedFile {
                 anchor(id, section.selection_range);
             }
         }
-        // A generated id already in use is numbered (`_parameters_2`, `parameters-2`).
+        // A generated id already in use is numbered (`_parameters_2`, `parameters-2`), in a
+        // build with the conditional anchors and in one without them.
+        let conditional = document.anchors.iter().any(|anchor| anchor.conditional);
         for style in [IdStyle::Antora, IdStyle::Asciidoctor] {
-            let ids = section_ids(&document.sections, &document.anchors, style);
-            for (section, id) in document.sections.iter().zip(ids) {
-                if section.id.is_none() && !id.is_empty() {
-                    anchor(id, section.selection_range);
+            let mut builds = vec![section_ids(&document.sections, &document.anchors, style)];
+            if conditional {
+                builds.push(section_ids_with_conditionals(
+                    &document.sections,
+                    &document.anchors,
+                    style,
+                ));
+            }
+            for ids in builds {
+                for (section, id) in document.sections.iter().zip(ids) {
+                    if section.id.is_none() && !id.is_empty() {
+                        anchor(id, section.selection_range);
+                    }
                 }
             }
         }

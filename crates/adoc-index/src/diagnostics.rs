@@ -509,6 +509,25 @@ mod tests {
         assert!(unresolved[0].contains("_parameters_3"), "{unresolved:?}");
     }
 
+    /// Issue #533: an anchor inside `ifdef` numbers the sections after it only in a build that
+    /// sets the attribute, so the ids of both builds resolve.
+    #[test]
+    fn sections_after_a_conditional_anchor_resolve_with_and_without_it() {
+        let path = Path::new("docs/index.adoc");
+        let mut index = WorkspaceIndex::new();
+        index.index_source(
+            path,
+            "= Guide\n\nSee <<_parameters_2>>, <<_parameters_3>> and <<_parameters_4>>.\n\nifdef::internal[]\n[[_parameters]]\nInternal.\nendif::[]\n\n== Parameters\n\n== Parameters\n",
+        );
+
+        let unresolved: Vec<_> = workspace_diagnostics(&index, path)
+            .into_iter()
+            .map(|diagnostic| diagnostic.message)
+            .collect();
+        assert_eq!(unresolved.len(), 1, "{unresolved:?}");
+        assert!(unresolved[0].contains("_parameters_4"), "{unresolved:?}");
+    }
+
     /// An explicit anchor holding the generated id makes the section's id numbered too.
     #[test]
     fn an_anchor_holding_a_generated_id_numbers_the_section() {
