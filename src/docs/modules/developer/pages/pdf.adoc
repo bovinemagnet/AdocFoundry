@@ -5,6 +5,7 @@ Paul Snow
 
 PDF export is two parts: the `adoc-pdf` crate, which turns view trees and a theme into PDF bytes, and the export service in `adoc-engine`, which gathers the pages and runs the crate on a worker.
 For using it, see xref:ROOT:pdf-export.adoc[Exporting to PDF].
+For an overview of the stages, see xref:ROOT:pdf-generation.adoc[How PDF generation works].
 
 == Decisions
 

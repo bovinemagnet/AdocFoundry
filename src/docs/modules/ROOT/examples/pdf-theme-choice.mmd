@@ -1,0 +1,8 @@
+flowchart TD
+    start["Choose the theme"] --> a{"Export given<br/>a theme?<br/>(--theme)"}
+    a -->|yes| use["Use it"]
+    a -->|no| b{"Page sets<br/>pdf-theme?"}
+    b -->|yes| use
+    b -->|no| c{"pdf theme set<br/>in settings?"}
+    c -->|yes| use
+    c -->|no| d["default"]

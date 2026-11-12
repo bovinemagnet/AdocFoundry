@@ -1,0 +1,132 @@
+= How PDF generation works
+Paul Snow
+:revnumber: 0.0.0
+:description: What happens between your AsciiDoc and the PDF: the stages, the app, command line and MCP entry points, and how an asciidoctor-pdf theme acts as the template.
+
+AdocFoundry typesets a PDF in process.
+Typst lays out the pages, from the same view tree that the preview shows, and an asciidoctor-pdf theme decides how they look.
+It needs no Ruby, Node.js or Java, and it makes no network request.
+
+This page explains the path from a page to a PDF, the three ways to start it and the part the theme plays.
+For the options, see xref:pdf-export.adoc[Exporting to PDF].
+For the code, see xref:developer:pdf.adoc[PDF export].
+
+== From AsciiDoc to PDF
+
+An export goes through these stages.
+
+. The pages are parsed, from their open buffers where they are open, so unsaved edits are included.
+. Each page is resolved into the view tree: cross references, includes and images are followed, as they are in the preview.
+. Diagrams are taken from the cache or rendered, and the export waits for them.
+. The theme is loaded, and its fonts are registered under the family names it uses.
+. The view trees and the theme's keys are written as Typst source.
+Every string from your documents is written as a Typst string literal, so a document can never inject Typst code.
+. Typst compiles the source with the theme's fonts and writes the PDF.
+Problems it reports are mapped back to the AsciiDoc file and line.
+
+.From AsciiDoc to a PDF
+[mermaid]
+----
+include::example$pdf-generation-flow.mmd[]
+----
+
+A page is exported as an article.
+A component version is exported as a book, with a title page, a table of contents and its pages in navigation order.
+
+== Three ways in
+
+The application, the command line and the MCP server all go through the engine's export service.
+The application invokes the commands `export.pdf_page` and `export.pdf_component`, while the command line and the MCP server's `export_pdf` tool call `Engine::export_blocking`, which runs the same export with the same arguments and waits for it.
+Each gives the same PDF for the same page, theme and settings.
+The PDF preview takes a shorter route: it typesets the page you are looking at and shows the pages instead of writing a file.
+
+.The ways to a PDF
+[mermaid]
+----
+include::example$pdf-entry-points.mmd[]
+----
+
+== In the app
+
+Export Page to PDF… (`export.pdf_page`), Export Page to PDF with Theme…, Export Component to PDF… (`export.pdf_component`) and Export PDF Profile… are in the File menu and the command palette.
+The export runs in the background, the status bar shows "Exporting PDF…", and a notification reports the pages and the first warning when it finishes.
+
+=== The PDF preview
+
+Toggle PDF Preview (`view.toggle_pdf_preview`) shows the preview target as PDF pages, docked or in a window of their own.
+The target is the pinned page, else the active one.
+After you type, the page is typeset on a background worker once it settles, so the editor never waits.
+
+The preview keeps the loaded theme and the work Typst has already done between runs, so an update after the first is quicker.
+The theme is read again only when you choose another or change one of its files.
+The pages open fitted to the pane's width, and the toolbar above them zooms.
+See xref:preview.adoc#pdf-preview[PDF preview] and xref:preview.adoc#pdf-zoom[Zoom].
+
+.The PDF preview beside the source of this guide's Getting started page
+image::pdf-preview-app.png[AdocFoundry with getting-started.adoc open in the editor and its PDF preview docked beside it]
+
+== From the command line
+
+`adocfoundry-cli pdf` exports a page as an article, or a component as a book in navigation order.
+These commands export this guide.
+
+[source,sh]
+----
+adocfoundry-cli pdf src/docs/modules/ROOT/pages/getting-started.adoc
+adocfoundry-cli pdf src/docs --output adocfoundry.pdf
+adocfoundry-cli pdf src/docs/modules/ROOT/pages/getting-started.adoc --theme src/docs/modules/ROOT/examples/docs-green-theme.yml
+----
+
+The first writes `getting-started.pdf` beside the page.
+The second finds `antora.yml` in the directory and writes the whole component to `adocfoundry.pdf`.
+The command prints the output and its page count, and prints warnings on standard error as `path:line: warning: message`.
+See xref:command-line.adoc#pdf[the pdf command] for every option.
+
+.This guide exported as a book: the title page and the start of the table of contents
+image::pdf-book-pages.png[The first four pages of this documentation exported as a PDF book: a title page reading AdocFoundry, Version 0.10.0, then three pages of the table of contents]
+
+== Themes: the asciidoctor-pdf template
+
+An asciidoctor-pdf YAML theme is the template.
+It is read the way asciidoctor-pdf's own theme loader reads it, so a theme written for asciidoctor-pdf loads without edits.
+
+* Nested keys flatten, so `heading: h2: font-size` is `heading_h2_font_size`.
+* `extends` chains work, with the bundled `default`, `default-sans`, `default-for-print` and `base`.
+* `$variable` references and arithmetic are evaluated, and lengths and colours take the forms asciidoctor-pdf accepts.
+* `font.catalog` names font files, which are registered under the theme's family names.
+
+The Typst template, `adoc.typ`, reads the flattened keys and sets the page, the fonts, the headings, the blocks and the running content.
+It also reproduces asciidoctor-pdf's spacing model, so pages break where asciidoctor-pdf would break them.
+Deprecated categories and keys are renamed with a warning, and only unknown top-level categories warn, because themes commonly keep variables in categories of their own.
+A key the template does not use is simply not applied.
+xref:pdf-theme-keys.adoc[PDF theme keys] lists each key as supported, approximated or ignored.
+
+The theme comes from the first of these that is set.
+
+.How a theme is chosen
+[mermaid]
+----
+include::example$pdf-theme-choice.mmd[]
+----
+
+This guide ships a small theme that extends `default` and changes the colours.
+
+.docs-green-theme.yml
+[source,yaml]
+----
+include::example$docs-green-theme.yml[]
+----
+
+.The first page of Getting started in three themes: default, default-sans and docs-green-theme.yml
+image::pdf-themes.png[The first page of the Getting started guide exported three times: with the default theme, with default-sans, and with docs-green-theme.yml, whose headings, links and code backgrounds are green]
+
+See xref:pdf-export.adoc#_themes[Themes] for the bundled themes, the themes directory and fonts.
+
+== Related
+
+* xref:pdf-export.adoc[Exporting to PDF]
+* xref:pdf-theme-keys.adoc[PDF theme keys]
+* xref:preview.adoc#pdf-preview[PDF preview]
+* xref:command-line.adoc#pdf[The pdf command]
+* xref:mcp-server.adoc[MCP server], for the `export_pdf` tool
+* xref:developer:pdf.adoc[PDF export internals]

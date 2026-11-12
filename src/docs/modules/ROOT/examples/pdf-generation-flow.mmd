@@ -1,0 +1,9 @@
+flowchart TD
+    src["AsciiDoc pages<br/>(open buffers or files)"] --> parse["Parse each page"]
+    parse --> view["Build the view tree<br/>xrefs, includes, images"]
+    view --> diag["Render diagrams<br/>(cache or tool)"]
+    diag --> theme["Load the theme<br/>and its fonts"]
+    theme --> typst["Write Typst source<br/>(text as string literals)"]
+    typst --> compile["Compile with Typst"]
+    compile --> pdf["Write the PDF"]
+    compile --> warn["Warnings with<br/>AsciiDoc file and line"]

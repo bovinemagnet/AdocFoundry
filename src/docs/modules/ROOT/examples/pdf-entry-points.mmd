@@ -1,0 +1,9 @@
+flowchart LR
+    app["Application"] -->|"export.pdf_page<br/>export.pdf_component"| engine["Engine export service"]
+    cli["adocfoundry-cli pdf"] -->|"Engine::export_blocking"| engine
+    mcp["MCP export_pdf"] -->|"Engine::export_blocking"| engine
+    engine --> pdf["adoc-pdf<br/>theme, Typst, PDF"]
+    pdf --> file["PDF file"]
+    preview["PDF preview"] --> pages["Preview pages<br/>on a worker"]
+    pages --> pdf2["adoc-pdf<br/>kept theme and cache"]
+    pdf2 --> pane["Pages in the pane"]
