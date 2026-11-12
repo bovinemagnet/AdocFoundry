@@ -347,7 +347,7 @@ The command palette and the View menu dispatch those actions, which `WorkspaceVi
 `SidebarMenu` is bound to `shift-f10` in gpui-component's `Tree` key context, and `WorkspaceView` then opens the panel's menu as a `PopupMenu` drawn over the shown tree.
 Only chosen branches are saved, in a versioned JSON file written atomically 500 ms after the last change (`EXPANSION_SAVE_SETTLE`) and keyed by the workspace's roots; `open_workspace` loads it after writing the previous workspace's state.
 
-In the app, `sidebar.rs` builds `Node`s with stable keys taken from component@version, then module and family, or nav file and entry (title and link target, counted among alike siblings).
+In the app, `sidebar.rs` builds `Node` values with stable keys taken from component@version, then module and family, or nav file and entry (title and link target, counted among alike siblings).
 Keys never use row numbers.
 A node's tree item id is its key followed by its target.
 `WorkspaceView` resolves the nodes before showing them, so a rebuilt tree never flashes fully open, records `TreeEvent::Expanded` and `TreeEvent::Collapsed`, and shows a panel again on `ExpansionChanged`, keeping the selection or its nearest shown ancestor.

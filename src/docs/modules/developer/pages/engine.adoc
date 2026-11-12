@@ -243,7 +243,7 @@ It refuses a path that is not a file before anything changes.
 `tabs.rs` holds the tab order and the preview tab as `TabItem`, which is `Document(DocumentId)` or `Image(ImageId)`.
 `open_item(path, disposition)` is the one decision about how to open a resource: an image goes to `open_image_as`, anything else to `open_as`.
 `document.open`, `document.browse` and navigation all use it.
-`activate(item)`, `active_item()`, `close_item`, `keep_open(item)`, `closed_by(command, item)` (which returns the `TabItem`s a close command closes) and `closed_by_any` work on either kind.
+`activate(item)`, `active_item()`, `close_item`, `keep_open(item)`, `closed_by(command, item)` (which returns the `TabItem` values a close command closes) and `closed_by_any` work on either kind.
 
 While an image is active, `Engine::active()` is `None`, so document commands are unavailable and cannot act on the page that was active before.
 Following an image link opens it as a preview and is recorded in back history, and going back or forward to an image reopens it.
@@ -425,7 +425,7 @@ The engine publishes `EngineEvent` values to subscribers through `std::sync::mps
 |Settings were reloaded.
 
 |`PreviewTabReplaced`
-|The preview tab's item was replaced by another, a page or an image, with `old` and `new` as `TabItem`s.
+|The preview tab's item was replaced by another, a page or an image, with `old` and `new` as `TabItem` values.
 
 |`TabKept`
 |A tab stopped being the preview tab. It carries a `TabItem` and replaces `DocumentKept`.
@@ -1115,7 +1115,7 @@ The MCP `build_site` tool is `crates/adoc-mcp/src/build.rs`; it needs `--allow-b
 == Staged changes
 
 A staged change is worked out without touching the workspace.
-`ChangeSet` holds the files to make, a `FileEdits` against each file's current text, and the `FileMove`s.
+`ChangeSet` holds the files to make, a `FileEdits` against each file's current text, and the `FileMove` values.
 
 * `Engine::stage_edits` stages edits to existing files.
 * `Engine::stage_new_page` stages the plan that `page.new` makes. It uses `plan_new_page`, which `new_page` itself now uses.
@@ -1140,7 +1140,7 @@ The engine delegates definition, hover, completion and diagnostics to `adoc-lang
 That is why the editor, the command-line checker and the language server give identical answers.
 For an open page the engine calls `adoc_lang::definition_in`, `hover_in` and `completion_in` with the page's own parse; `definition_at_offset`, `hover_at_offset` and `completion_at_offset` take text, parse it with `with_document` and call them, and `adoc-ls` uses those.
 `Engine::completes_after(id, offset, typed)` reads only the caret's line (`adoc_parser::completion_context`) and says whether typing `typed` there is inside something that completes: a target being typed, `<<`, or an attribute reference.
-`Engine::inspect_attribute` and `Engine::effective_values` (`src/attribute_inspection.rs`) answer Inspect Attribute and the MCP `get_page_context` tool from `adoc_lang::effective`, with the playbook's and the component's `AttributeEntry`s and the page's includes.
+`Engine::inspect_attribute` and `Engine::effective_values` (`src/attribute_inspection.rs`) answer Inspect Attribute and the MCP `get_page_context` tool from `adoc_lang::effective`, with the `AttributeEntry` values of the playbook and the component, and the page's includes.
 
 `adoc-ls` is a front end of the engine.
 It opens workspace folders with the engine, and keeps client buffers in it with `Engine::open_client_text(path, text)`, which works for a file that does not exist.
@@ -1381,7 +1381,7 @@ Three queries serve the front end:
 
 * `Engine::impact_place` gives where to open an impact: its source span, else the file.
 * `Engine::impact_path` makes a report's root-relative path absolute.
-* `Engine::impact_trail` gives an impact's `via` as graph `PathStep`s, each with the graph's links between it and the one before, and `backwards` when they run from it to the one before. It asks the graph store and never searches.
+* `Engine::impact_trail` gives an impact's `via` as a list of graph `PathStep` values, each with the graph's links between it and the one before, and `backwards` when they run from it to the one before. It asks the graph store and never searches.
 
 The commands are `impact.analyse_changes`, `impact.compare_revisions` (`CommandArgs::Revisions { base, head }`) and `impact.inspect` (`CommandArgs::Path`, `Document`, or none for the active page).
 
@@ -1471,7 +1471,7 @@ It never reads the working tree, the index or `HEAD`, and never fetches or runs 
 * `Repository::resolve_revision(spec)` returns a `Revision { spec, commit, tree }`. A spec is a branch, tag, `HEAD`, `HEAD~2` or commit id, as Git reads it. Anything else is `GitError::UnknownRevision`.
 * `tree_files(&revision)` lists every file of the commit's tree, in path order.
 * `text_at(&revision, path)` returns a file's text at the revision, or `None` when it is absent or not UTF-8.
-* `tree_changes(&base, &head)` returns `TreeChange`s: `Added`, `Modified`, `Removed` and `Renamed { from, to, similarity }`. Renames are detected as Git detects them by default. `similarity` is in per cent, and 100 for a move found by object id.
+* `tree_changes(&base, &head)` returns `TreeChange` values: `Added`, `Modified`, `Removed` and `Renamed { from, to, similarity }`. Renames are detected as Git detects them by default. `similarity` is in per cent, and 100 for a move found by object id.
 
 ==== Discovery from a file list
 

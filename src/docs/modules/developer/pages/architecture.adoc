@@ -35,7 +35,7 @@ acdc reads line ends as `\n`, so a page or include written with CRLF is given to
 
 |L1
 |`adoc-antora`
-|`antora.yml` and playbook parsing, `AntoraCatalog`, resource-ID parsing for `version@component:module:family$path`, the resolver, page aliases, descriptor reload, navigation trees, and the playbook's content sources (`ContentSource`) with the table of versions per branch (`PublishedVersions`). `Playbook` and `ComponentDescriptor` give their `asciidoc.attributes` as `AttributeEntry`s (`attribute_entries`), unsets included, each with the range of its key.
+|`antora.yml` and playbook parsing, `AntoraCatalog`, resource-ID parsing for `version@component:module:family$path`, the resolver, page aliases, descriptor reload, navigation trees, and the playbook's content sources (`ContentSource`) with the table of versions per branch (`PublishedVersions`). `Playbook` and `ComponentDescriptor` give their `asciidoc.attributes` as a list of `AttributeEntry` values (`attribute_entries`), unsets included, each with the range of its key.
 
 |L1
 |`adoc-index`

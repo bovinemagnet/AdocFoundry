@@ -352,7 +352,7 @@ While `PreviewLayout::pdf` is set, each newly published view of the preview targ
 One typesetting runs at a time; a newer view waits, and only the newest is typeset next.
 The result is `Engine::pdf_preview(id)`, a `PdfPreview { document, version, path, pages }` where `pages` is a `Result<Vec<PreviewPage>, String>`, announced by `EngineEvent::PdfPreviewReady`.
 
-`adoc_pdf::preview_pages` returns each page as SVG (`typst-svg`) with `PageAnchor`s.
+`adoc_pdf::preview_pages` returns each page as SVG (`typst-svg`) with `PageAnchor` values.
 An anchor holds a line of text's top and baseline in points, and the AsciiDoc file and byte offset it was written from.
 The offset is found from the glyphs' Typst spans through the emitter's `SourceMap`.
 
