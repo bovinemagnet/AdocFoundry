@@ -108,6 +108,7 @@ Git is opt-in for `adoc-ls`: it looks for no repository unless the user settings
 | `adoc.unresolved-include` | An include target cannot be found. |
 | `adoc.unresolved-image` | An image target cannot be found. |
 | `adoc.duplicate-anchor` | An anchor id is defined more than once on a page. |
+| `adoc.broken-code-span` | A code span does not close where it seems to: its closing backtick is followed by an apostrophe or a letter. |
 | `adoc.antora.unknown-module` | A resource id names a module the component version does not have. |
 | `adoc.antora.unknown-resource` | A resource id names a resource that does not exist. |
 | `adoc.antora.invalid-family` | A resource id names an unknown family, such as `partials$`. |

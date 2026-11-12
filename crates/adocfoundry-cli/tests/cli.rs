@@ -106,6 +106,13 @@ fn check_broken_references() {
     insta::assert_snapshot!(check_json("broken-references"));
 }
 
+/// Issue #593: a code span that does not close where it seems to, and none for the spans
+/// written well or in a listing.
+#[test]
+fn check_broken_code_spans() {
+    insta::assert_snapshot!(check_json("broken-code-spans"));
+}
+
 #[test]
 fn graph_prints_json() {
     let output = cli(&["graph", "tests/fixtures/graph", "--unresolved"]);

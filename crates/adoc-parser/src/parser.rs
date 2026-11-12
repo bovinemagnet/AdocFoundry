@@ -6,9 +6,9 @@ use adoc_core::{
 };
 
 use crate::line_parser::{
-    content, find_anchors, find_images, find_includes, find_references, is_block_metadata,
-    is_dynamic_id, is_line_comment, mask_passthroughs, parse_attribute, parse_heading,
-    trailing_anchor, Conditional, Heading, Verbatim, VerbatimBlocks,
+    broken_code_spans, content, find_anchors, find_images, find_includes, find_references,
+    is_block_metadata, is_dynamic_id, is_line_comment, mask_passthroughs, parse_attribute,
+    parse_heading, trailing_anchor, Conditional, Heading, Verbatim, VerbatimBlocks,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -58,6 +58,8 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
     let mut body = false;
     // The block attribute lines since the last block, for the block image that may follow.
     let mut block_attributes: Vec<String> = Vec::new();
+    // Code spans that do not close where they seem to (#593).
+    let mut broken_spans = Vec::new();
     // Asciidoctor drops a leading byte order mark; ranges still count it.
     let (source, mut offset) = match text.strip_prefix('\u{feff}') {
         Some(source) => (source, '\u{feff}'.len_utf8()),
@@ -218,6 +220,7 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         }
         let line_includes: Vec<_> = includes(line, offset, body).collect();
         let mut header_line = metadata || !line_includes.is_empty();
+        let mut entry = false;
 
         if let Some(heading) = heading.filter(|_| !verbatim.in_compound_block()) {
             if heading.marker_level == 1 && document.title.is_none() {
@@ -232,10 +235,21 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
             }
             document.attributes.push(attribute);
             header_line = true;
+            entry = true;
         } else if !trimmed.is_empty() && !anchor_only && !is_block_metadata(trimmed) {
             pending_anchor = None;
         }
 
+        // Prose only: not metadata or an attribute entry, not an indented literal line, and
+        // not a STEM macro, whose content is not AsciiDoc.
+        if !metadata
+            && !entry
+            && !line.starts_with([' ', '\t'])
+            && !line.contains("math:[")
+            && !line.contains("stem:[")
+        {
+            broken_spans.extend(broken_code_spans(&inline, offset));
+        }
         document.references.extend(find_references(&inline, offset));
         document.includes.extend(line_includes);
         for mut image in find_images(&inline, offset) {
@@ -252,6 +266,18 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
     }
 
     document.diagnostics = duplicate_anchors(text, &document.anchors);
+    document
+        .diagnostics
+        .extend(broken_spans.into_iter().map(|(range, message)| Diagnostic {
+            code: DiagnosticCode::BrokenCodeSpan,
+            severity: DiagnosticSeverity::Warning,
+            message,
+            range,
+            related: Vec::new(),
+        }));
+    document
+        .diagnostics
+        .sort_by_key(|diagnostic| diagnostic.range);
     ParseResult { document }
 }
 
@@ -1521,5 +1547,100 @@ image::diagram.png[Architecture]\n";
 
         assert!(document.anchors.is_empty(), "{:?}", document.anchors);
         assert!(document.images.is_empty(), "{:?}", document.images);
+    }
+
+    /// The broken code spans of `source`: each as the text it covers and its message.
+    fn broken_code_spans(source: &str) -> Vec<(String, String)> {
+        parse("file:///doc.adoc", source)
+            .document
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == adoc_core::DiagnosticCode::BrokenCodeSpan)
+            .map(|d| {
+                assert_eq!(d.severity, adoc_core::DiagnosticSeverity::Warning);
+                (
+                    source[d.range.start..d.range.end].to_owned(),
+                    d.message.clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// Issue #593: Asciidoctor reads a backtick followed by an apostrophe as a curved
+    /// apostrophe, so `` `x`'s `` loses the backtick that would close the span.
+    #[test]
+    fn a_code_span_followed_by_an_apostrophe_is_broken() {
+        let found = broken_code_spans("The `adoc-render`'s `ViewResolver` is used.\n");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].0, "`adoc-render`'");
+        assert!(found[0].1.contains("``adoc-render``'s"), "{}", found[0].1);
+    }
+
+    /// Issue #593: a constrained span cannot close before a word character, so `` `x`s ``
+    /// runs on to the next backtick.
+    #[test]
+    fn a_code_span_followed_by_a_letter_or_digit_is_broken() {
+        let found =
+            broken_code_spans("It publishes `EngineEvent`s. Every action is a `Command`.\n");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].0, "`EngineEvent`s");
+        assert!(found[0].1.contains("``EngineEvent``s"), "{}", found[0].1);
+        assert_eq!(broken_code_spans("Count `x`2 times.\n").len(), 1);
+    }
+
+    #[test]
+    fn broken_code_spans_are_found_in_titles_lists_and_cells() {
+        let source = "== The `Engine`'s pump\n\n* `Hunk`s\n\n|===\n|`Node`s |ok\n|===\n";
+        let found: Vec<String> = broken_code_spans(source).into_iter().map(|f| f.0).collect();
+        assert_eq!(found, ["`Engine`'", "`Hunk`s", "`Node`s"]);
+    }
+
+    /// Conservative, as every diagnostic is: nothing that is not a constrained code span
+    /// closed in the wrong place.
+    #[test]
+    fn well_formed_and_unrelated_backticks_are_not_broken() {
+        let quiet = [
+            // Closed well, and the unconstrained form.
+            "A `x` and `y`, `z`. and (`w`) here.\n",
+            "A ``ViewResolver``'s field and ``EngineEvent``s.\n",
+            // Curved quotes and a curved apostrophe.
+            "Say '`single`' and \"`double`\" and Sam`'s hat.\n",
+            // Passthroughs and an escaped backtick.
+            "Pass `+x`s+` and +`x`s+ and pass:[`x`s] here.\n",
+            "An escaped \\`x`s here.\n",
+            // A lone backtick, and a span left open.
+            "A lone ` here, and `open on this line\n",
+            // An attribute entry, a comment and block metadata.
+            ":note: `x`s\n// `x`s\n[source,`x`s]\nText.\n",
+        ];
+        for source in quiet {
+            assert_eq!(broken_code_spans(source), Vec::new(), "{source:?}");
+        }
+    }
+
+    #[test]
+    fn verbatim_and_comment_blocks_have_no_broken_code_spans() {
+        let source = "----\n`x`s\n----\n\n....\n`x`'s\n....\n\n////\n`x`s\n////\n\n\
+                      [source]\n`x`s\n\n++++\n`x`s\n++++\n\n```\n`x`s\n```\n\n literal `x`s\n";
+        assert_eq!(broken_code_spans(source), Vec::new());
+    }
+
+    /// Half-typed input is normal: a backtick at the very end, or before a multi-byte
+    /// character, must not panic.
+    #[test]
+    fn half_typed_code_spans_do_not_panic() {
+        for source in [
+            "`",
+            "``",
+            "`x`",
+            "a `x`",
+            "`é`s",
+            "`x`é",
+            "`x`’s",
+            "`\u{1f600}`s\n",
+        ] {
+            let _ = broken_code_spans(source);
+        }
+        assert_eq!(broken_code_spans("`é`s\n").len(), 1);
     }
 }
