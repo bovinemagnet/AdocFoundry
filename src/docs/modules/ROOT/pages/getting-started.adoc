@@ -184,6 +184,9 @@ So opening an AsciiDoc file from a file manager, or from Finder on macOS, opens 
 Open Folder (kbd:[Cmd+Shift+O] or kbd:[Ctrl+Shift+O]) does the same from inside the application.
 Launched with no folder or file, the app reopens the last session; see xref:using-the-editor.adoc#restoring-the-session[Restoring the last session].
 
+.The main window with this guide open
+image::app-main-window.png["AdocFoundry with getting-started.adoc open in the source editor and its rendered preview beside it, the Navigation sidebar on the left listing the User guide and Developer guide, the Outline on the right and the status bar along the bottom"]
+
 The fixtures in the repository make a good first workspace.
 
 [source,sh]

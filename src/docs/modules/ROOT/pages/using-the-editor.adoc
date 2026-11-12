@@ -699,6 +699,9 @@ If no folder has been opened yet, a notification says so.
 Quick Open finds a page by name.
 Press Cmd-P (Ctrl-P on Windows and Linux), or choose File > Quick Open… or Quick Open… in the command palette.
 
+.Quick Open
+image::app-quick-open.png["The Quick Open list over the AdocFoundry window, with the prompt Open a file by name, title or resource id and pages listed by title, each with its resource id, such as adocfoundry:developer:architecture.adoc, and its path"]
+
 The picker lists the workspace's AsciiDoc files, read from the index, so the disk is not scanned.
 Each row shows the page title, or the file name when there is no title.
 It also shows the Antora resource ID and the path relative to the workspace root.
@@ -1814,6 +1817,9 @@ Reload Themes::
 Reads your themes folder again, as it is not watched.
 A new file's themes become available, a changed file's are read anew and a removed file's go; a chosen theme that goes shows the native default until it is back.
 A notification says how many themes there are.
+
+.Select Theme filtered by dark
+image::app-select-theme.png["Select Theme filtered by dark, with Catppuccin Macchiato highlighted and previewed across the window and Default Dark ticked as chosen"]
 
 While the mode is Follow System, the theme you choose becomes the light or dark half of a pair, by its mode, and Follow System stays on.
 The application changes theme whenever the system's appearance changes.
