@@ -15,6 +15,7 @@ pub mod includes;
 pub mod references;
 pub mod render_source;
 pub mod symbols;
+mod ui_macros;
 mod workspace;
 pub mod xref;
 
@@ -197,6 +198,7 @@ pub fn diagnostics(ws: &WorkspaceState, path: &Path) -> Vec<Diagnostic> {
     if let Some(problems) = ws.descriptor_problems.get(&normalize_path(path)) {
         found.extend(problems.iter().cloned());
     }
+    found.extend(ui_macros::ui_macro_hints(ws, path));
     found
 }
 

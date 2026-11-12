@@ -33,6 +33,11 @@ A page saved with a byte order mark is read after it.
 * A constrained code span whose closing backtick is followed by an apostrophe or a letter or digit is reported as `adoc.broken-code-span`.
 The message gives the unconstrained form to write instead.
 It is left alone inside listing, literal, passthrough and comment blocks, in comments, in inline passthroughs (the plus form and `+pass:[...]+`), for unconstrained spans, escaped backticks, curved quotes and a curved apostrophe, in attribute entries, block attribute lines and indented literal lines, and on a line with a STEM macro.
+* A keyboard, button or menu macro (`+kbd:[...]+`, `+btn:[...]+`, `+menu:File[Save]+`) where the `experimental` attribute is not set is reported as `adoc.ui-macro-not-enabled`, since Asciidoctor shows such a macro as plain text until it is set.
+The attribute counts as set when the page header (`+:experimental:+`), a file the page includes, the component's `antora.yml` (`asciidoc.attributes`) or the playbook sets it.
+In a partial, the hint is given only when no page that includes the partial sets it.
+The value counted is the one at the macro, so a page that unsets it (`+:experimental!:+`) gets hints after that point.
+No hint is given in passthroughs, for escaped macros (`+\kbd:[...]+`), in verbatim blocks, comments, attribute entries or indented literal lines, or on a line with a STEM macro.
 
 Codes are stable strings, so you can filter on them in scripts.
 
@@ -68,6 +73,11 @@ A page named without its extension before a `#`, as in `+xref:other#details[]+`,
 |The closing backtick of a code span is followed by an apostrophe or a letter or digit, as in `+`adoc-render`'s+` or `+`EngineEvent`s+`.
 Asciidoctor reads the apostrophe as a curved one and cannot close a constrained span before a letter, so the rest of the line is formatted wrongly in the preview, the PDF and the published site.
 Write the unconstrained form, `+``adoc-render``'s+` or `+``EngineEvent``s+`, or reword the sentence.
+
+|`adoc.ui-macro-not-enabled`
+|Information
+|A `+kbd:[...]+`, `+btn:[...]+` or `+menu:...[...]+` macro is used where `experimental` is not set, so Asciidoctor shows it as plain text.
+Set `+:experimental:+` in the page header, in the component's `antora.yml` under `asciidoc.attributes`, or in the playbook.
 
 |`adoc.antora.unknown-module`
 |Warning

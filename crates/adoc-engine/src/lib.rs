@@ -146,7 +146,9 @@ pub use rendered::{
     PreviewLayout, PreviewPlace, RenderedPreview, DIAGRAM_WORKERS, MAX_DIAGRAM_FAILURES,
     PREVIEW_SETTLE,
 };
-pub use session::{WindowPlacement, RECENT_FOLDERS, RECENT_FOLDERS_FILE, SESSION_FILE};
+pub use session::{
+    WindowPlacement, PLAYBOOK_NOTICES_FILE, RECENT_FOLDERS, RECENT_FOLDERS_FILE, SESSION_FILE,
+};
 pub use settings::{
     pdf_standard, AppearanceSettings, AutoSave, EditorSettings, ExpansionPolicy, FontScale,
     GitSettings, GraphColour, GraphLayout, GraphSettings, HistorySettings, PdfSettings,

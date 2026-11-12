@@ -1,0 +1,5 @@
+= From an include
+
+include::partial$settings.adoc[]
+
+Press kbd:[X].

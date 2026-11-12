@@ -213,7 +213,7 @@ pub fn resolve(
 
 /// The attribute `name` at the place `stop` (a file and an offset in it) as the page at `path`
 /// composes it; None when composing the page never reaches the file.
-fn resolve_through(
+pub(crate) fn resolve_through(
     index: &WorkspaceIndex,
     antora: &AntoraCatalog,
     path: &Path,
@@ -433,7 +433,7 @@ fn declared_name(written: &str) -> (&str, bool) {
 
 /// The pages that include the file at `path`, directly or through other files, which nothing
 /// includes in turn.
-fn top_pages(ws: &WorkspaceState, path: &Path) -> Vec<PathBuf> {
+pub(crate) fn top_pages(ws: &WorkspaceState, path: &Path) -> Vec<PathBuf> {
     let start = normalize_path(path);
     let mut seen = BTreeSet::from([start.clone()]);
     let mut frontier = vec![start];

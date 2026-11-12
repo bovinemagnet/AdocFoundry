@@ -9,7 +9,7 @@ mod symbol;
 pub use access::FileAccess;
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticSeverity, Related};
 pub use document::{
-    AttributeDeclaration, Document, DocumentTitle, LineIndex, Location, SourceRange,
+    AttributeDeclaration, Document, DocumentTitle, LineIndex, Location, SourceRange, UiMacro,
 };
 pub use path::normalize_path;
 pub use reference::{xref_file, ImageDirective, IncludeDirective, Reference, ReferenceKind};

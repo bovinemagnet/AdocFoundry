@@ -1,0 +1,5 @@
+= Plain
+
+Press kbd:[Ctrl+S], then btn:[OK].
+
+include::partial$loose.adoc[]

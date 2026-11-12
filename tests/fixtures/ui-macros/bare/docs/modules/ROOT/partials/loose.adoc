@@ -1,0 +1,1 @@
+Choose menu:File[Close].

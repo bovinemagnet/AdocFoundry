@@ -7,8 +7,9 @@ use adoc_core::{
 
 use crate::line_parser::{
     broken_code_spans, content, find_anchors, find_images, find_includes, find_references,
-    is_block_metadata, is_dynamic_id, is_line_comment, mask_passthroughs, parse_attribute,
-    parse_heading, trailing_anchor, Conditional, Heading, Verbatim, VerbatimBlocks,
+    find_ui_macros, is_block_metadata, is_dynamic_id, is_line_comment, mask_passthroughs,
+    parse_attribute, parse_heading, trailing_anchor, Conditional, Heading, Verbatim,
+    VerbatimBlocks,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -249,6 +250,7 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
             && !line.contains("stem:[")
         {
             broken_spans.extend(broken_code_spans(&inline, offset));
+            document.ui_macros.extend(find_ui_macros(&inline, offset));
         }
         document.references.extend(find_references(&inline, offset));
         document.includes.extend(line_includes);
@@ -1547,6 +1549,49 @@ image::diagram.png[Architecture]\n";
 
         assert!(document.anchors.is_empty(), "{:?}", document.anchors);
         assert!(document.images.is_empty(), "{:?}", document.images);
+    }
+
+    /// The UI macros of `source`: each as its name and the text it covers.
+    fn ui_macros(source: &str) -> Vec<(&'static str, String)> {
+        parse("file:///doc.adoc", source)
+            .document
+            .ui_macros
+            .iter()
+            .map(|found| {
+                (
+                    found.name,
+                    source[found.range.start..found.range.end].to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    /// Issue #600: the keyboard, button and menu macros, which Asciidoctor reads only while
+    /// `experimental` is set, are recorded wherever prose is read, headings included.
+    #[test]
+    fn records_keyboard_button_and_menu_macros_in_prose() {
+        let source =
+            "= Keys\n\n== Save with kbd:[Ctrl+S]\n\nThen btn:[Save] or menu:File[Save As…], \
+                      kbd:[Ctrl+\\]] and menu:View[].\n";
+        assert_eq!(
+            ui_macros(source),
+            [
+                ("kbd", "kbd:[Ctrl+S]".to_owned()),
+                ("btn", "btn:[Save]".to_owned()),
+                ("menu", "menu:File[Save As…]".to_owned()),
+                ("kbd", "kbd:[Ctrl+\\]]".to_owned()),
+                ("menu", "menu:View[]".to_owned()),
+            ]
+        );
+    }
+
+    /// Issue #600: nothing Asciidoctor would not read as a UI macro is recorded.
+    #[test]
+    fn leaves_out_ui_macros_escaped_passed_through_verbatim_or_incomplete() {
+        let source = "Write \\kbd:[Ctrl+S], +kbd:[Ctrl+S]+, `+btn:[OK]+` or pass:[btn:[OK]].\n\n\
+                      ----\nkbd:[Ctrl+S]\n----\n\n// kbd:[Ctrl+S]\n\n:shortcut: kbd:[Ctrl+S]\n\n  \
+                      kbd:[Ctrl+S]\n\nNot menu:[x], menu: File[x], kbd:[] or btn:[OK.\n";
+        assert!(ui_macros(source).is_empty(), "{:?}", ui_macros(source));
     }
 
     /// The broken code spans of `source`: each as the text it covers and its message.

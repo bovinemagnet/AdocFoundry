@@ -18,7 +18,7 @@ When both the standard directory and the older one hold a file with the same nam
 
 A folder with no `antora.yml` is treated as plain AsciiDoc, and links resolve by relative path only.
 
-The workspace-level `antora-playbook.yml`, if one is found at a workspace root, supplies site-wide attributes (see <<playbook-attributes>>).
+The workspace-level `antora-playbook.yml`, if one is found at a workspace root or beside a component version's `antora.yml`, supplies site-wide attributes (see <<playbook-attributes>>).
 Remote repositories are never cloned and no project scripts are executed.
 
 === Descriptor reload
@@ -184,6 +184,10 @@ When the same name is defined more than once, the first definition below wins.
 An attribute that the document unsets (`:name!:`) is not offered from any source.
 
 Playbook attributes apply to pages that belong to an Antora module only.
+The playbook is looked for only at a workspace root or beside a component version's `antora.yml`, never in folders above the one you opened.
+When the folder holds Antora components but no `antora-playbook.yml` is found, a "No Antora playbook" notification says that attributes the site sets in its playbook, such as `experimental`, are not applied, and asks you to open the folder that holds the playbook.
+It is shown once after the folder is indexed, and Don't Show Again stops it for that folder in later sessions too, remembered in the app's state folder and not in the project.
+This documentation's playbook is `antora-playbook.yml` at the top of the repository, so opening `src/docs` alone shows the notice and its keyboard macros as text, while opening the repository's top folder applies the playbook; see xref:diagnostics.adoc[Diagnostics] for the `adoc.ui-macro-not-enabled` hint.
 In the playbook, `true` sets an empty value and `false` or `~` unsets, as Antora reads them.
 
 The attributes Antora computes are `page-component-name`, `page-module`, `page-component-version` (when the component has a version), the family prefixes `pagesdir`, `partialsdir`, `examplesdir`, `attachmentsdir` and `imagesdir`, and `moduledir`.

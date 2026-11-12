@@ -11245,3 +11245,42 @@ fn a_linked_file_is_not_offered_to_the_system(cx: &mut TestAppContext) {
     let opened = crate::files_view::OPENED_EXTERNALLY.with(|opened| opened.borrow().clone());
     assert!(opened.is_empty(), "{opened:?}");
 }
+
+/// #600: a folder with Antora components but no playbook says so once it is indexed, and
+/// Don't Show Again stops it for that folder.
+#[gpui::test]
+fn a_workspace_without_a_playbook_says_so_until_dismissed(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("docs"));
+    copy_tree(&fixture("ui-macros/bare"), &root);
+    // As the app runs it: with sessions, which remember Don't Show Again.
+    let mut engine = Engine::new(
+        Settings::default()
+            .with_git_opt_in()
+            .with_state_dir(Some(directory.path().join("state"))),
+    );
+    engine.enable_sessions();
+    let app = app_with(engine, cx);
+    let window = cx.open_window(size(px(1200.), px(800.)), |window, cx| {
+        let view = cx
+            .new(|cx| WorkspaceView::new(app.clone(), Some(root.clone()), Vec::new(), window, cx));
+        Root::new(view, window, cx)
+    });
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds("playbook-notice-dismiss").is_some()
+    }));
+    click("playbook-notice-dismiss", &mut cx);
+    redraw(&app, &mut cx);
+    assert_eq!(
+        cx.update(|_, cx| app.read(cx).engine.playbook_notice()),
+        None
+    );
+    // Once it has finished closing.
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(2));
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("playbook-notice-dismiss").is_none());
+}
