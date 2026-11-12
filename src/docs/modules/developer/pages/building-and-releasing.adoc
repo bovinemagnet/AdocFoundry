@@ -45,6 +45,10 @@ A pull request or push that changes only documentation, `.md` and `.adoc` files,
 The docs site's pages, `README.md`, `AGENTS.md` and the design document are read by some tests too (the visual editor's round-trip tests over `src/docs`, `theme_keys` over the theme keys partial, and `every_crate_is_documented` in `xtask`), so a change to them alone is checked only by the next run that changes code.
 When a tagged release does call CI, it always runs, since `workflow_call` has no path filter.
 
+Documentation changes do not run `ci.yml`, but `.github/workflows/docs.yml` builds the site for them.
+On `main` it also publishes the site to GitHub Pages.
+See xref:documentation-site.adoc#_publishing[Publishing].
+
 Concurrency: a newer push to a pull request cancels the run it supersedes, through a `concurrency` group per event and ref.
 Runs on `main`, and the tag's run through `release.yml` when it calls CI, always finish.
 

@@ -261,5 +261,56 @@ class FuzzWorkflow(unittest.TestCase):
         self.assertNotIn("fuzz run", build)
 
 
+ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+
+
+def read_root(name):
+    with open(os.path.join(ROOT, name), encoding="utf-8") as file:
+        return file.read()
+
+
+class DocsWorkflow(unittest.TestCase):
+    """docs.yml builds the Antora site on pull requests and deploys it to Pages from main."""
+
+    def test_a_pull_request_builds_but_never_deploys(self):
+        docs = read("docs.yml")
+        triggers = docs.split("\njobs:\n", 1)[0]
+        self.assertRegex(triggers, r"(?m)^  pull_request:")
+        self.assertRegex(triggers, r"(?m)^  push:\n    branches: \[main\]")
+        self.assertRegex(triggers, r"(?m)^  workflow_dispatch:")
+        self.assertRegex(triggers, r"(?m)^permissions:\n  contents: read$")
+        found = jobs(docs)
+        build = "\n".join(found["build"])
+        self.assertIn("run: ./gradlew antora", build)
+        self.assertIn("gradle/actions/wrapper-validation@", build)
+        self.assertIn("actions/upload-pages-artifact@", build)
+        deploy = "\n".join(found["deploy"])
+        self.assertIn("build", needs(found["deploy"]))
+        self.assertIn(
+            "if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'", deploy
+        )
+        self.assertRegex(deploy, r"permissions:\n\s+pages: write\n\s+id-token: write\n")
+        self.assertIn("name: github-pages", deploy)
+        self.assertIn("actions/deploy-pages@", deploy)
+
+    def test_the_sites_inputs_are_pinned(self):
+        # The same sources build the same site next month: Antora, its extensions, Node.js,
+        # the UI bundle and Mermaid each name an exact version.
+        gradle = read_root("build.gradle")
+        self.assertNotIn("'latest'", gradle)
+        self.assertRegex(gradle, r"(?m)^    version = '\d+\.\d+\.\d+'$", "Antora is pinned")
+        self.assertRegex(gradle, r"(?m)^node \{\n    version = '\d+\.\d+\.\d+'$", "Node.js")
+        for package in ("@antora/lunr-extension", "@sntke/antora-mermaid-extension"):
+            self.assertRegex(gradle, re.escape(f"'{package}': '") + r"\d+\.\d+\.\d+[\w.-]*'")
+        playbook = read_root("antora-playbook.yml")
+        self.assertNotIn("snapshot: true", playbook)
+        self.assertRegex(
+            playbook,
+            r"url: https://github\.com/bovinemagnet/snowed-under-antora-ui-bundle/releases/"
+            r"download/v\d+\.\d+\.\d+/ui-bundle\.zip\n",
+        )
+        self.assertRegex(playbook, r"mermaid@\d+\.\d+\.\d+/")
+
+
 if __name__ == "__main__":
     unittest.main()

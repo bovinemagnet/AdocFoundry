@@ -35,7 +35,10 @@ Every page begins with a level-0 title, the author line and `:revnumber:`.
 == Playbook
 
 `antora-playbook.yml` at the repository root reads the content from the current repository, from the `src/docs` start path and the `HEAD` branch.
-It sets the site title and start page, enables the default UI bundle and defines the AsciiDoc attributes used across the pages: `project-name`, `source-highlighter` (highlight.js), `icons`, `sectanchors`, `sectlinks` and `experimental`.
+It sets the site title, URL and start page, and uses the Snowed Under UI bundle at a pinned release (`v0.2.0`), which is a release asset and so never changes.
+It also sets `site.keys` to a `tagline` and a `repo_url`, which the footer shows.
+Antora 3.2 accepts only primitive values in `site.keys`, so the bundle's `nav_links` list cannot be used, and the top bar falls back to one link per component.
+It defines the AsciiDoc attributes used across the pages: `project-name`, `source-highlighter` (highlight.js), `icons`, `sectanchors`, `sectlinks` and `experimental`.
 The `experimental` attribute turns on the `kbd:[]` macro used for key bindings.
 The site is written to `build/site`.
 
@@ -44,16 +47,20 @@ See xref:ROOT:antora-support.adoc[Antora support].
 
 == Extensions
 
-The component descriptor registers two Antora extensions:
+The playbook registers two Antora extensions:
 
 * `@antora/lunr-extension` builds a search index, restricted to the latest version.
-* `@sntke/antora-mermaid-extension` renders Mermaid diagrams in the browser, loading Mermaid from a CDN.
+* `@sntke/antora-mermaid-extension` renders Mermaid diagrams in the browser, loading Mermaid from a CDN at a pinned version (10.9.8).
+
+The version of each extension is pinned in `build.gradle`.
+The search box comes from the UI bundle, and it appears only when the Lunr extension is enabled.
 
 == Gradle build
 
 `build.gradle` applies the `org.antora` Gradle plugin.
 It points the plugin at the playbook, sets the options `clean`, `fetch` and `stacktrace`, and lists the two extension packages.
 The plugin installs Node.js and the packages itself, so no separate Node.js installation is needed.
+Antora, the two extensions and Node.js are pinned to exact versions in `build.gradle`, so the site builds the same locally and in CI.
 
 [source,sh]
 ----
@@ -62,6 +69,23 @@ gradle25w antora
 
 The generated site is in `build/site`.
 The command also reports Antora's errors and warnings, and the playbook sets the failure level to `warn`, so a broken xref or missing include fails the build.
+
+== Publishing
+
+`.github/workflows/docs.yml` publishes the site to GitHub Pages at https://bovinemagnet.github.io/AdocFoundry[bovinemagnet.github.io/AdocFoundry].
+It runs on pull requests and on pushes to `main` that change `src/docs/**`, `antora-playbook.yml`, `build.gradle`, `settings.gradle`, `gradle/**`, `gradlew` or the workflow itself, and by hand (`workflow_dispatch`).
+
+The `build` job validates the Gradle wrapper, sets up Temurin JDK 21, runs `./gradlew antora` and uploads `build/site` as the Pages artifact.
+The playbook's failure level is `warn`, so a broken xref or include fails the build.
+The `deploy` job runs only for pushes to `main` and manual runs on `main`, never for pull requests.
+It has the `pages: write` and `id-token: write` permissions and deploys in the `github-pages` environment.
+A newer push to a pull request cancels the build it replaces, and deployments always finish.
+
+The repository's Pages source is set to GitHub Actions, and the `github-pages` environment accepts deployments from `main` only.
+
+`packaging/test_workflows.py` checks this workflow too, as it does the others.
+`test_a_pull_request_builds_but_never_deploys` checks that a pull request builds the site but never deploys it.
+`test_the_sites_inputs_are_pinned` checks that Antora, Node.js, both extensions, the UI bundle release and Mermaid are pinned.
 
 == Diagrams
 
