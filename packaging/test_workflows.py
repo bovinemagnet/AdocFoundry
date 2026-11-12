@@ -311,6 +311,29 @@ class DocsWorkflow(unittest.TestCase):
         )
         self.assertRegex(playbook, r"mermaid@\d+\.\d+\.\d+/")
 
+    def test_the_ui_overrides_follow_the_pinned_bundle(self):
+        # The site's header and favicon show the app's icon through partials the playbook
+        # supplies in place of the bundle's. Each is a copy of the bundle's own partial at the
+        # pinned release, so a new release cannot be pinned without checking them against it.
+        playbook = read_root("antora-playbook.yml")
+        pinned = re.search(r"releases/download/(v\d+\.\d+\.\d+)/ui-bundle\.zip", playbook)
+        self.assertIsNotNone(pinned)
+        self.assertRegex(playbook, r"\n  supplemental_files: \./src/docs/supplemental-ui\n")
+        ui = os.path.join(ROOT, "src", "docs", "supplemental-ui")
+        for partial in ("header-content.hbs", "head-icons.hbs"):
+            text = read_root(f"src/docs/supplemental-ui/partials/{partial}")
+            copied = re.search(r"snowed-under-antora-ui-bundle (v\d+\.\d+\.\d+)", text)
+            self.assertIsNotNone(copied, f"{partial} names the bundle release it was copied from")
+            self.assertEqual(
+                copied.group(1),
+                pinned.group(1),
+                f"{partial} was copied from {copied.group(1)}; compare it with "
+                f"{pinned.group(1)}'s and update the release it names",
+            )
+            self.assertIn("img/adocfoundry", text, f"{partial} shows the app's icon")
+        for image in ("favicon.ico", "adocfoundry-64.png"):
+            self.assertTrue(os.path.isfile(os.path.join(ui, "img", image)), image)
+
 
 if __name__ == "__main__":
     unittest.main()

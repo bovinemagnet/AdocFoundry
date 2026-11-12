@@ -45,6 +45,23 @@ The site is written to `build/site`.
 The playbook is also read by AdocFoundry itself: its `asciidoc.attributes` apply to pages in the workspace.
 See xref:ROOT:antora-support.adoc[Antora support].
 
+=== Header icon and favicon
+
+The site shows the application's icon in the header, before the site title, and as the favicon.
+The UI bundle has no option for either: its favicon link is commented out, and its header shows only `site.title`.
+So the playbook sets `ui.supplemental_files` to `./src/docs/supplemental-ui`, which holds:
+
+* `img/adocfoundry-64.png`, made from `packaging/icons/adocfoundry-256.png`.
+* `img/favicon.ico`, at 16, 32 and 48 px.
+* `partials/head-icons.hbs`, the favicon links.
+* `partials/header-content.hbs`, a copy of the bundle's header partial with an `<img class="brand-logo">` added before the brand mark.
+
+Antora reads only the `modules` folder of a content source, so `supplemental-ui` beside `antora.yml` is never read as content.
+
+Each partial names, in a comment, the bundle release it was copied from (`v0.2.0`).
+`DocsWorkflow.test_the_ui_overrides_follow_the_pinned_bundle` in `packaging/test_workflows.py` fails when that release differs from the one the playbook pins.
+To move to a new bundle release, compare the two partials with that release's own partials, carry over any changes, and update the release they name.
+
 == Extensions
 
 The playbook registers two Antora extensions:

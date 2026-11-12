@@ -29,6 +29,9 @@ ui:
   bundle:
     # A release asset never changes, so it is not a snapshot.
     url: https://github.com/bovinemagnet/snowed-under-antora-ui-bundle/releases/download/v0.2.0/ui-bundle.zip
+  # The app's icon in the header and as the favicon: partials copied from the bundle's release
+  # above, with the icon added (checked by packaging/test_workflows.py).
+  supplemental_files: ./src/docs/supplemental-ui
 
 asciidoc:
   attributes:

@@ -1,0 +1,49 @@
+{{!-- A copy of snowed-under-antora-ui-bundle v0.2.0's header-content partial, with the app's
+      icon before the site title. When the playbook pins another release, compare this with
+      that release's partial and update the release named here. --}}
+<header class="header">
+  <nav class="navbar">
+    <div class="navbar-brand">
+      <a class="navbar-item brand" href="{{{or site.url siteRootPath}}}">
+        <img class="brand-logo" src="{{{uiRootPath}}}/img/adocfoundry-64.png" alt="" width="28" height="28" style="align-self: center">
+        <span class="brand-mark">{{site.title}}</span>
+        {{#if site.keys.brandSuffix}}<span class="brand-suffix">{{site.keys.brandSuffix}}</span>{{/if}}
+      </a>
+      <button class="navbar-burger" aria-controls="topbar-nav" aria-expanded="false" aria-label="Toggle main menu">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+    </div>
+    <div id="topbar-nav" class="navbar-menu">
+      <div class="navbar-end">
+        {{!-- Top nav comes from site.keys.nav_links in the playbook. Site-root paths
+              ('/…') are relativized; absolute URLs pass through untouched. With no
+              nav_links configured, fall back to one link per component. --}}
+        {{#if site.keys.navLinks}}
+        {{#each site.keys.navLinks}}
+        <a class="navbar-item{{#if this.external}} is-external{{/if}}" href="{{{relativize this.url}}}">{{this.text}}</a>
+        {{/each}}
+        {{else}}
+        {{#each site.components}}
+        <a class="navbar-item" href="{{{relativize ./url}}}">{{./title}}</a>
+        {{/each}}
+        {{/if}}
+        {{!-- The search box appears only when a search extension (such as
+              @antora/lunr-extension) sets env.SITE_SEARCH_PROVIDER; that
+              extension also supplies the search-scripts partial. --}}
+        {{#if env.SITE_SEARCH_PROVIDER}}
+        <div class="navbar-item search hide-for-print">
+          <div id="search-field" class="field">
+            <input id="search-input" type="search" placeholder="Search the docs" aria-label="Search the docs" autocomplete="off"{{#if page.home}} autofocus{{/if}}>
+          </div>
+        </div>
+        {{/if}}
+        <button class="theme-toggle" type="button" aria-label="Toggle light and dark theme" title="Toggle light and dark theme">
+          <span class="icon icon-dark">dark_mode</span>
+          <span class="icon icon-light">light_mode</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+</header>
