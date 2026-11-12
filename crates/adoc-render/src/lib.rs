@@ -18,7 +18,7 @@ pub use request::{RenderRequest, RenderSafeMode};
 pub use result::{RenderError, RenderOutput};
 pub use text::to_text;
 pub use view::{
-    attribute_image, block_at, block_by_trail, build_view, each_block, inline_stem_attributes,
+    attribute_image, block_by_trail, build_view, each_block, inline_stem_attributes,
     source_location, stem_kind, AttributeImage, BlockIndex, DiagramView, LocalResolver,
     ResolvedLink, TocEntry, ViewBlock, ViewCallout, ViewCell, ViewDescription, ViewFootnote,
     ViewImage, ViewInline, ViewKind, ViewListItem, ViewResolver, ViewTable, ViewTree,

@@ -1084,7 +1084,10 @@ fn block_for(
     cx.update(|_, cx| {
         let preview = workspace.read(cx).preview().read(cx);
         let view = &preview.shown().unwrap().view;
-        let trail = adoc_render::block_at(view, path, offset).unwrap();
+        let trail = adoc_render::BlockIndex::new(view)
+            .block_at(path, offset)
+            .unwrap()
+            .to_vec();
         let span = adoc_render::block_by_trail(view, &trail)
             .unwrap()
             .span
