@@ -10,7 +10,7 @@ Every action described here is an engine command, so it also appears in the comm
 See xref:keyboard-shortcuts.adoc#visual-editor[Keyboard shortcuts] for the bindings.
 
 .The visual editor on Using the editor
-image::app-visual-editor.png["The visual editor showing Using the editor laid out as text under a formatting toolbar of Heading 1, bold, italic, code, mark, link, lists, outdent, indent and insert, with a Mermaid diagram drawn in place as read-only content and the Source, Visual and Split buttons with Visual selected"]
+image::app-visual-editor.png["The visual editor showing Using the editor laid out as text under a formatting toolbar of a block style menu showing Title, bold, italic, code, mark, link, lists, outdent, indent and insert, with a Mermaid diagram drawn in place as read-only content and the Source, Visual and Split buttons with Visual selected"]
 
 == Source, Visual and Split modes
 
