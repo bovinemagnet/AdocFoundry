@@ -238,21 +238,54 @@ fn replaced(title: &str) -> String {
     text
 }
 
+/// `title` as a reader sees it: without the marks of code, strong, emphasis, highlighting and
+/// passthrough, constrained or not, nor the attribute list before a mark (`[.role]#text#`).
+/// Marks that form nothing stay, as Asciidoctor leaves them; nothing else is changed.
+#[must_use]
+pub fn plain_title(title: &str) -> String {
+    let mut text = String::with_capacity(title.len());
+    let mut rest = title;
+    while let Some(open) = rest.find('[') {
+        text.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        match after.find(']') {
+            Some(close) if after[close + 1..].starts_with(MARKS) => rest = &after[close + 1..],
+            _ => {
+                text.push('[');
+                rest = after;
+            }
+        }
+    }
+    text.push_str(rest);
+    MARKS
+        .iter()
+        .fold(text, |text, &mark| without_marks(&text, mark))
+}
+
+/// The formatting marks `plain_title` removes, code first, so passthrough within code goes too.
+const MARKS: [char; 5] = ['`', '*', '_', '#', '+'];
+
 /// `text` without the `_` marks of emphasis, `__unconstrained__` and `_constrained_`, which
 /// Asciidoctor turns into tags; every other mark is no word character and is dropped anyway.
 fn without_emphasis(text: &str) -> String {
+    without_marks(text, '_')
+}
+
+/// `text` without the pairs of `mark` that Asciidoctor turns into tags, unconstrained (doubled,
+/// anywhere) and constrained (single, at word boundaries).
+fn without_marks(text: &str, mark: char) -> String {
     let characters: Vec<char> = text.chars().collect();
     let is_word = |character: char| character.is_alphanumeric() || character == '_';
     let mut drop = vec![false; characters.len()];
     let mut at = 0;
     while at < characters.len() {
-        if characters[at] != '_' {
+        if characters[at] != mark {
             at += 1;
             continue;
         }
-        if characters.get(at + 1) == Some(&'_') {
+        if characters.get(at + 1) == Some(&mark) {
             let close = (at + 3..characters.len().saturating_sub(1))
-                .find(|&close| characters[close] == '_' && characters[close + 1] == '_');
+                .find(|&close| characters[close] == mark && characters[close + 1] == mark);
             if let Some(close) = close {
                 drop[at..at + 2].fill(true);
                 drop[close..close + 2].fill(true);
@@ -268,7 +301,7 @@ fn without_emphasis(text: &str) -> String {
         let close = opens
             .then(|| {
                 (at + 2..characters.len()).find(|&close| {
-                    characters[close] == '_'
+                    characters[close] == mark
                         && !characters[close - 1].is_whitespace()
                         && characters
                             .get(close + 1)
@@ -333,6 +366,39 @@ mod tests {
             id: id.to_owned(),
             range: SourceRange::new(start, start + 1),
             conditional: false,
+        }
+    }
+
+    #[test]
+    fn plain_titles_lose_their_formatting_marks_only() {
+        for (title, plain) in [
+            (
+                "The one `lsp-types` exception",
+                "The one lsp-types exception",
+            ),
+            (
+                "*Bold* and _emphasis_ and #mark#",
+                "Bold and emphasis and mark",
+            ),
+            (
+                "**un**constrained __marks__ ``here``",
+                "unconstrained marks here",
+            ),
+            ("A [.role]#marked# word", "A marked word"),
+            ("Literal `+{attr}+` text", "Literal {attr} text"),
+            // Marks that form nothing stay, as Asciidoctor leaves them.
+            (
+                "snake_case_name and 2 * 3 * 4",
+                "snake_case_name and 2 * 3 * 4",
+            ),
+            ("C++ is a language", "C++ is a language"),
+            ("A lone ` backtick", "A lone ` backtick"),
+            (
+                "It's a [[anchor]]title -> here",
+                "It's a [[anchor]]title -> here",
+            ),
+        ] {
+            assert_eq!(plain_title(title), plain, "{title}");
         }
     }
 

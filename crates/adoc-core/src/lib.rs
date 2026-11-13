@@ -14,8 +14,8 @@ pub use document::{
 pub use path::normalize_path;
 pub use reference::{xref_file, ImageDirective, IncludeDirective, Reference, ReferenceKind};
 pub use symbol::{
-    alphanumeric_id, canonical_id, section_ids, section_ids_with_conditionals, Anchor, IdStyle,
-    Section,
+    alphanumeric_id, canonical_id, plain_title, section_ids, section_ids_with_conditionals, Anchor,
+    IdStyle, Section,
 };
 
 /// The folders a workspace leaves out unless `[workspace] ignore` says otherwise: the index,

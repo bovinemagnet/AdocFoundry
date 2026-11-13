@@ -50,7 +50,7 @@ use gpui_component::{
     h_flex,
     input::{Input, InputEvent, InputState},
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
-    v_flex, ActiveTheme as _, IconName, Selectable as _, Sizable as _,
+    v_flex, ActiveTheme as _, IconName, Selectable as _, Sizable as _, TitleBar,
 };
 
 use crate::{
@@ -2287,6 +2287,9 @@ impl Render for GraphView {
                     .size_full()
                     .bg(cx.theme().background)
                     .text_color(cx.theme().foreground)
+                    // The window's title bar is transparent: this one keeps the toolbar clear
+                    // of the macOS window buttons and draws them on Windows and Linux.
+                    .child(TitleBar::new().child("Graph"))
                     .child(self.render_toolbar(cx))
                     .child(
                         h_flex()
