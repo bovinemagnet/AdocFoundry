@@ -217,6 +217,8 @@ pub struct WorkspaceView {
     build_scroll: gpui::UniformListScrollHandle,
     /// The playbook folders whose build the user agreed to run in this window.
     trusted_builds: HashSet<PathBuf>,
+    /// The folder the missing-playbook notice was last shown for, so it shows once per folder.
+    playbook_notice_shown: Option<PathBuf>,
     /// The component version the Impact panel shows, or all.
     impact_filter: Option<impact::ImpactFacet>,
     /// The tab last right-clicked, which the tab strip's menu acts on; `None` over empty strip.
@@ -565,6 +567,7 @@ impl WorkspaceView {
             tab_reveals: std::cell::Cell::new(0),
             build_scroll: gpui::UniformListScrollHandle::new(),
             trusted_builds: HashSet::new(),
+            playbook_notice_shown: None,
             impact_filter: None,
             tab_menu_target: Rc::default(),
             sidebar_tab: SidebarTab::Navigation,
@@ -750,9 +753,11 @@ impl WorkspaceView {
             self.change_rows = None;
         }
         match event {
-            EngineEvent::WorkspaceIndexed { .. } | EngineEvent::CatalogChanged { .. } => {
+            EngineEvent::WorkspaceIndexed { .. } => {
                 self.rebuild_catalog_trees(cx);
+                self.show_playbook_notice(window, cx);
             }
+            EngineEvent::CatalogChanged { .. } => self.rebuild_catalog_trees(cx),
             EngineEvent::ProblemsChanged => self.show_problems(cx),
             EngineEvent::AuditChanged => self.show_quality(cx),
             EngineEvent::NavigationChanged => self.follow_active(window, cx),
@@ -2352,6 +2357,45 @@ impl WorkspaceView {
         for warning in warnings {
             window.push_notification(warning, cx);
         }
+    }
+
+    /// Says, once for the folder, that its Antora components have no playbook, so what a site
+    /// sets there (such as `experimental`, which `kbd:[…]` needs) is not applied (#600).
+    fn show_playbook_notice(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(root) = self.app.read(cx).engine.playbook_notice() else {
+            return;
+        };
+        if self.playbook_notice_shown.as_ref() == Some(&root) {
+            return;
+        }
+        self.playbook_notice_shown = Some(root.clone());
+        let name = root.file_name().map_or_else(
+            || root.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        let app = self.app.clone();
+        window.push_notification(
+            Notification::info(format!(
+                "No antora-playbook.yml was found in {name}, so attributes a site sets in its \
+                 playbook, such as experimental, are not applied. To use them, open the folder \
+                 that holds the playbook."
+            ))
+            .title("No Antora playbook")
+            .action(move |_, _, cx| {
+                let (app, notification) = (app.clone(), cx.entity());
+                Button::new("playbook-notice-dismiss")
+                    .small()
+                    .label("Don't Show Again")
+                    .debug_selector(|| "playbook-notice-dismiss".to_owned())
+                    .on_click(move |_, window, cx| {
+                        app.update(cx, |app, _| app.engine.dismiss_playbook_notice());
+                        notification.update(cx, |notification, cx| {
+                            notification.dismiss(window, cx);
+                        });
+                    })
+            }),
+            cx,
+        );
     }
 
     fn reload_settings_if_edited(&mut self, id: DocumentId, cx: &mut Context<Self>) {

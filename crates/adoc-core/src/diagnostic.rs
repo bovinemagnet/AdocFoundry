@@ -23,11 +23,14 @@ pub enum DiagnosticCode {
     /// A constrained code span whose closing backtick is followed by an apostrophe or a word
     /// character, so Asciidoctor does not close it there (#593).
     BrokenCodeSpan,
+    /// A keyboard, button or menu macro where the `experimental` attribute is not set, so
+    /// Asciidoctor shows it as text (#600).
+    UiMacroNotEnabled,
 }
 
 impl DiagnosticCode {
     /// Every code, in declaration order.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::UnresolvedXrefFile,
         Self::UnresolvedAnchor,
         Self::UnresolvedInclude,
@@ -47,6 +50,7 @@ impl DiagnosticCode {
         Self::AntoraInvalidAttributeValue,
         Self::AntoraUnresolvedStartPage,
         Self::BrokenCodeSpan,
+        Self::UiMacroNotEnabled,
     ];
 
     /// The code whose stable name ([`DiagnosticCode::as_str`]) is `name`.
@@ -77,6 +81,7 @@ impl DiagnosticCode {
             Self::AntoraInvalidAttributeValue => "adoc.antora.invalid-attribute-value",
             Self::AntoraUnresolvedStartPage => "adoc.antora.unresolved-start-page",
             Self::BrokenCodeSpan => "adoc.broken-code-span",
+            Self::UiMacroNotEnabled => "adoc.ui-macro-not-enabled",
         }
     }
 }
@@ -133,6 +138,7 @@ mod tests {
             DiagnosticCode::AntoraInvalidAttributeValue => 16,
             DiagnosticCode::AntoraUnresolvedStartPage => 17,
             DiagnosticCode::BrokenCodeSpan => 18,
+            DiagnosticCode::UiMacroNotEnabled => 19,
         }
     }
 

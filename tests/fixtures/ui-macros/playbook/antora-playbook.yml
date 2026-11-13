@@ -1,0 +1,9 @@
+site:
+  title: UI macros
+content:
+  sources:
+  - url: .
+    start_path: docs
+asciidoc:
+  attributes:
+    experimental: ''

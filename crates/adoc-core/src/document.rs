@@ -59,7 +59,19 @@ pub struct Document {
     pub references: Vec<Reference>,
     pub includes: Vec<IncludeDirective>,
     pub images: Vec<ImageDirective>,
+    /// The keyboard, button and menu macros in prose, in document order.
+    pub ui_macros: Vec<UiMacro>,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+/// A keyboard, button or menu macro (`kbd:[Ctrl+S]`, `btn:[Save]`, `menu:File[Save]`), which
+/// Asciidoctor reads as one only while the `experimental` attribute is set.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UiMacro {
+    /// `kbd`, `btn` or `menu`.
+    pub name: &'static str,
+    /// The whole macro, from its name to its closing bracket.
+    pub range: SourceRange,
 }
 
 impl Document {

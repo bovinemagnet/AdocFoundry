@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use adoc_core::{
     Anchor, AttributeDeclaration, ImageDirective, IncludeDirective, Reference, ReferenceKind,
-    SourceRange,
+    SourceRange, UiMacro,
 };
 
 pub(crate) struct Heading<'a> {
@@ -924,6 +924,71 @@ pub(crate) fn broken_code_spans(line: &str, offset: usize) -> Vec<(SourceRange, 
         ));
     }
     found
+}
+
+/// The keyboard, button and menu macros in `line` (passthroughs already blanked), as
+/// Asciidoctor's patterns read them: `kbd:[…]` and `btn:[…]` with text, `menu:target[…]` with a
+/// target beginning with a word character or `&`, none written with a backslash before it.
+pub(crate) fn find_ui_macros(line: &str, offset: usize) -> Vec<UiMacro> {
+    let mut found = Vec::new();
+    let mut index = 0;
+    while let Some(relative) = line[index..].find(':') {
+        let colon = index + relative;
+        index = colon + 1;
+        let Some(name) = ["kbd", "btn", "menu"]
+            .into_iter()
+            .find(|name| line[..colon].ends_with(name))
+        else {
+            continue;
+        };
+        let start = colon - name.len();
+        if line[..start].ends_with('\\') {
+            continue;
+        }
+        let rest = &line[colon + 1..];
+        let end = if name == "menu" {
+            menu_macro_end(rest)
+        } else {
+            rest.strip_prefix('[').and_then(|text| {
+                let close = bracket_end(text)?;
+                (close > 0).then_some(close + 2)
+            })
+        };
+        if let Some(end) = end {
+            found.push(UiMacro {
+                name,
+                range: SourceRange::new(offset + start, offset + colon + 1 + end),
+            });
+            index = colon + 1 + end;
+        }
+    }
+    found
+}
+
+/// Where `text`'s first `]` without a backslash before it is.
+fn bracket_end(text: &str) -> Option<usize> {
+    text.match_indices(']')
+        .map(|(at, _)| at)
+        .find(|&at| !text[..at].ends_with('\\'))
+}
+
+/// The length of a menu macro's `target[…]`, read after `menu:`.
+fn menu_macro_end(rest: &str) -> Option<usize> {
+    let open = rest.find(['[', '\n'])?;
+    let target = &rest[..open];
+    let is_word = |character: char| character.is_alphanumeric() || character == '_';
+    let first = target.chars().next()?;
+    let last = target.chars().next_back()?;
+    let shaped = if target.len() == first.len_utf8() {
+        is_word(first)
+    } else {
+        (is_word(first) || first == '&') && !last.is_whitespace()
+    };
+    if !shaped || !rest[open..].starts_with('[') {
+        return None;
+    }
+    let close = bracket_end(&rest[open + 1..])?;
+    Some(open + 1 + close + 1)
 }
 
 /// `line` with every inline passthrough blanked to spaces of the same byte length.

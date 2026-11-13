@@ -10,8 +10,8 @@ use std::{
 
 use adoc_engine::{
     commands::ids, normalize_path, CommandArgs, CommandOutcome, DocumentId, EditorMode, Engine,
-    EngineEvent, OpenDisposition, Settings, TabItem, WindowPlacement, RECENT_FOLDERS_FILE,
-    SESSION_FILE,
+    EngineEvent, OpenDisposition, Settings, TabItem, WindowPlacement, PLAYBOOK_NOTICES_FILE,
+    RECENT_FOLDERS_FILE, SESSION_FILE,
 };
 
 /// A state folder, and a workspace of three pages and an image.
@@ -527,4 +527,42 @@ fn a_pdf_preview_still_closes_what_it_opened_after_a_restart() {
         .unwrap();
     let layout = engine.preview_layout();
     assert!(!layout.visible && !layout.detached && !layout.pdf);
+}
+
+/// Issue #600: a workspace with Antora components but no playbook says so, so that what the
+/// site sets in its playbook (such as `experimental`) is known to be missing, until dismissed
+/// for that folder, in this session and the next.
+#[test]
+fn a_workspace_with_components_but_no_playbook_says_so_until_dismissed() {
+    let fixtures = normalize_path(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/ui-macros"),
+    );
+    let (bare, with_playbook) = (fixtures.join("bare"), fixtures.join("playbook"));
+    let setup = Setup::new();
+    {
+        let mut engine = setup.engine();
+        // A plain folder of AsciiDoc has no components, so needs no playbook.
+        open_workspace(&mut engine, &setup.root());
+        assert_eq!(engine.playbook_notice(), None);
+        open_workspace(&mut engine, &bare);
+        assert_eq!(engine.playbook_notice(), Some(bare.clone()));
+        open_workspace(&mut engine, &with_playbook);
+        assert_eq!(engine.playbook_notice(), None);
+
+        open_workspace(&mut engine, &bare);
+        engine.dismiss_playbook_notice();
+        assert_eq!(engine.playbook_notice(), None);
+    }
+    assert!(setup.state.path().join(PLAYBOOK_NOTICES_FILE).is_file());
+    let mut engine = setup.engine();
+    open_workspace(&mut engine, &bare);
+    assert_eq!(engine.playbook_notice(), None);
+
+    // Only a front end that can remember the choice is told: one keeping sessions, with a
+    // state folder.
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    open_workspace(&mut engine, &bare);
+    assert_eq!(engine.playbook_notice(), None);
+    engine.enable_sessions();
+    assert_eq!(engine.playbook_notice(), None);
 }

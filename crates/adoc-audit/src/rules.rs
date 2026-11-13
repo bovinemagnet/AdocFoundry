@@ -194,7 +194,7 @@ fn diagnostic_category(code: DiagnosticCode) -> Category {
         | DiagnosticCode::AntoraMissingKey
         | DiagnosticCode::AntoraUnknownKey
         | DiagnosticCode::AntoraInvalidAttributeValue => Category::Descriptor,
-        DiagnosticCode::BrokenCodeSpan => Category::Page,
+        DiagnosticCode::BrokenCodeSpan | DiagnosticCode::UiMacroNotEnabled => Category::Page,
     }
 }
 

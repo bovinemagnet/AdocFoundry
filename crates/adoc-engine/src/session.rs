@@ -26,6 +26,10 @@ pub const SESSION_FILE: &str = "session.json";
 /// The file the folders opened recently are kept in, in the state folder.
 pub const RECENT_FOLDERS_FILE: &str = "recent-folders.json";
 
+/// The file the folders whose missing-playbook notice was dismissed are kept in, in the state
+/// folder.
+pub const PLAYBOOK_NOTICES_FILE: &str = "playbook-notices.json";
+
 /// How many folders opened recently are remembered.
 pub const RECENT_FOLDERS: usize = 10;
 
@@ -38,6 +42,8 @@ pub(crate) struct SessionState {
     recent: Vec<PathBuf>,
     /// Where the graph window was last.
     graph_window: Option<WindowPlacement>,
+    /// The folders, as first roots, whose missing-playbook notice was dismissed.
+    playbook_dismissed: Vec<PathBuf>,
 }
 
 /// A window's size and place on screen, in logical pixels.
@@ -150,6 +156,56 @@ impl Engine {
             .filter(|saved| saved.version == FORMAT_VERSION)
             .map(|saved| saved.folders)
             .unwrap_or_default();
+        self.session.playbook_dismissed = self
+            .state_file(PLAYBOOK_NOTICES_FILE)
+            .and_then(|file| fs::read_to_string(file).ok())
+            .and_then(|text| serde_json::from_str::<SavedFolders>(&text).ok())
+            .filter(|saved| saved.version == FORMAT_VERSION)
+            .map(|saved| saved.folders)
+            .unwrap_or_default();
+    }
+
+    /// The folder to say has no playbook: the first root, when the workspace has Antora
+    /// components but no `antora-playbook.yml` was found, so the attributes a site sets there
+    /// (such as `experimental`) are not applied, unless the notice was dismissed for it. Only
+    /// where a dismissal is remembered: with sessions enabled (the app) and a state folder, so
+    /// the notice never comes back at every open.
+    #[must_use]
+    pub fn playbook_notice(&self) -> Option<PathBuf> {
+        let antora = &self.workspace.antora;
+        let root = self.roots.first()?;
+        (self.session.enabled
+            && self.settings.state_dir().is_some()
+            && antora.playbook().is_none()
+            && antora.components().next().is_some()
+            && !self.session.playbook_dismissed.contains(root))
+        .then(|| root.clone())
+    }
+
+    /// Stops [`Engine::playbook_notice`] naming the first root, in this session and, with
+    /// sessions enabled, the next.
+    pub fn dismiss_playbook_notice(&mut self) {
+        let Some(root) = self.roots.first().cloned() else {
+            return;
+        };
+        if self.session.playbook_dismissed.contains(&root) {
+            return;
+        }
+        self.session.playbook_dismissed.push(root);
+        if !self.session.enabled {
+            return;
+        }
+        let saved = SavedFolders {
+            version: FORMAT_VERSION,
+            folders: self.session.playbook_dismissed.clone(),
+        };
+        // Written on the writer; a failure costs only the choice.
+        if let (Some(file), Ok(json)) = (
+            self.state_file(PLAYBOOK_NOTICES_FILE),
+            serde_json::to_string_pretty(&saved),
+        ) {
+            self.write_later(file, move || Some(json));
+        }
     }
 
     /// The folders opened recently that are still there, most recent first.
