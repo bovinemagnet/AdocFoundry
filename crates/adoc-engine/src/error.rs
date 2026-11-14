@@ -16,6 +16,12 @@ pub enum EngineError {
     },
     InvalidEdit(String),
     InvalidRequest(String),
+    /// Something is in the way of what a request would make; `kind` says what, so callers
+    /// never have to read the message, which is shown as `InvalidRequest`'s is.
+    Conflict {
+        kind: ConflictKind,
+        message: String,
+    },
     NotFound(String),
     Settings(String),
     /// A visual edit that cannot be made without changing text the user did not edit.
@@ -37,6 +43,15 @@ pub enum EngineError {
     },
 }
 
+/// What is in the way of a file, folder or module a request would make.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConflictKind {
+    /// It exists already.
+    Exists,
+    /// The folder it would be made in holds files already.
+    NotEmpty,
+}
+
 impl EngineError {
     pub(crate) fn io(path: impl Into<PathBuf>, source: io::Error) -> Self {
         Self::Io {
@@ -56,7 +71,9 @@ impl fmt::Display for EngineError {
                 write!(formatter, "`{command}` expects {expected}")
             }
             Self::InvalidEdit(message) => write!(formatter, "invalid edit: {message}"),
-            Self::InvalidRequest(message) => formatter.write_str(message),
+            Self::InvalidRequest(message) | Self::Conflict { message, .. } => {
+                formatter.write_str(message)
+            }
             Self::NotFound(message) => formatter.write_str(message),
             Self::Settings(message) => write!(formatter, "settings: {message}"),
             Self::Refused(message) => formatter.write_str(message),

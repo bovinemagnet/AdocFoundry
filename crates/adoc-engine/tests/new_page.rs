@@ -7,7 +7,8 @@ use std::{
 };
 
 use adoc_engine::{
-    commands::ids, normalize_path, CommandArgs, CommandOutcome, Engine, NavItem, NewPage, Settings,
+    commands::ids, normalize_path, CommandArgs, CommandOutcome, ConflictKind, Engine, EngineError,
+    NavItem, NewPage, Settings,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -274,6 +275,37 @@ fn a_new_page_is_refused_without_a_name_a_module_or_a_free_file() {
             "antora-multi-component/alpha/modules/ROOT/pages/guide.adoc"
         ))
         .unwrap()
+    );
+}
+
+/// A page there already is a conflict, told apart by its kind and not its message, which is
+/// the one the app, the CLI and the MCP server show; a request with nothing to make is not.
+#[test]
+fn a_new_page_over_an_existing_file_is_a_conflict() {
+    let mut setup = Setup::new();
+    let alpha = setup.alpha();
+    let request = |title: &str| NewPage {
+        module: alpha.clone(),
+        title: title.to_owned(),
+        add_to_nav: false,
+        file: None,
+    };
+    let staged = setup.engine.stage_new_page(&request("Guide")).unwrap_err();
+    let made = setup.new_page(alpha.clone(), "Guide", false).unwrap_err();
+    for error in [staged, made] {
+        match &error {
+            EngineError::Conflict {
+                kind: ConflictKind::Exists,
+                message,
+            } => assert!(message.ends_with("guide.adoc already exists"), "{message}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(error.to_string().ends_with("guide.adoc already exists"));
+    }
+    let untitled = setup.engine.stage_new_page(&request(" ?! ")).unwrap_err();
+    assert!(
+        matches!(untitled, EngineError::InvalidRequest(_)),
+        "{untitled:?}"
     );
 }
 

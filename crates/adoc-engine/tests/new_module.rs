@@ -11,8 +11,8 @@ use std::{
 
 use adoc_core::SourceRange;
 use adoc_engine::{
-    commands::ids, normalize_path, CommandArgs, CommandOutcome, Engine, EngineError, NewModule,
-    ResourceFamily, Settings,
+    commands::ids, normalize_path, CommandArgs, CommandOutcome, ConflictKind, Engine, EngineError,
+    NewModule, ResourceFamily, Settings,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -176,6 +176,44 @@ fn new_module_refuses_an_existing_name() {
         assert!(setup.make(setup.request(bad)).is_err(), "{bad}");
     }
     assert_eq!(setup.descriptor(), before, "nothing written");
+}
+
+/// A module or folder there already is a conflict, told apart by its kind and not its
+/// message, which is the one the app, the CLI and the MCP server show; a bad name is not.
+#[test]
+fn a_module_or_folder_there_already_is_a_conflict() {
+    let mut setup = Setup::new(None);
+    // Joined part by part, so the message's separators are the system's on Windows too.
+    let drafts = setup.root.join("modules").join("drafts");
+    fs::create_dir_all(&drafts).unwrap();
+    for (name, expected) in [
+        (
+            "security",
+            "the module `security` exists already".to_owned(),
+        ),
+        ("drafts", format!("{} exists already", drafts.display())),
+    ] {
+        let checked = setup
+            .engine
+            .check_new_module(&setup.root, name)
+            .unwrap_err();
+        let made = setup.make(setup.request(name)).unwrap_err();
+        for error in [checked, made] {
+            match &error {
+                EngineError::Conflict {
+                    kind: ConflictKind::Exists,
+                    message,
+                } => assert_eq!(*message, expected),
+                other => panic!("{name}: {other:?}"),
+            }
+            assert_eq!(error.to_string(), expected);
+        }
+    }
+    let bad = setup
+        .engine
+        .check_new_module(&setup.root, "Bad Name")
+        .unwrap_err();
+    assert!(matches!(bad, EngineError::InvalidRequest(_)), "{bad:?}");
 }
 
 #[test]

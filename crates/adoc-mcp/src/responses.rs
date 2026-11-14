@@ -116,6 +116,7 @@ impl From<EngineError> for Failure {
             | EngineError::InvalidRequest(_)
             | EngineError::Settings(_) => ErrorCode::InvalidArgument,
             EngineError::Refused(_)
+            | EngineError::Conflict { .. }
             | EngineError::SaveConflict { .. }
             | EngineError::GroupBlocked { .. } => ErrorCode::Conflict,
             EngineError::PreviewStale { .. } => ErrorCode::StalePreview,

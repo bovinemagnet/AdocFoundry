@@ -292,10 +292,12 @@ fn check_hash(state: &State, path: &Path, expected: Option<&String>) -> Result<(
 
 /// The change one operation makes, worked out against the workspace as it is.
 fn stage(state: &mut State, operation: &Operation) -> Result<ChangeSet, Failure> {
+    // A page there already is refused as an invalid argument here, as it always has been,
+    // where `create_page` answers `conflict`: clients branch on these codes.
     let engine_failure = |error: EngineError| match error {
-        EngineError::InvalidRequest(_) | EngineError::InvalidEdit(_) => {
-            Failure::invalid(error.to_string())
-        }
+        EngineError::InvalidRequest(_)
+        | EngineError::InvalidEdit(_)
+        | EngineError::Conflict { .. } => Failure::invalid(error.to_string()),
         other => Failure::from(other),
     };
     match operation {
