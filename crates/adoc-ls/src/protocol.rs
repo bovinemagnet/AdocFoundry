@@ -409,8 +409,8 @@ impl ProtocolServer {
     }
 
     /// Each change becomes one `edit.replace_range`, its range mapped through the text as the
-    /// previous changes left it, which is kept here as they are applied rather than copied from
-    /// the engine for each.
+    /// previous changes left it, which is kept here with its lines as they are applied rather
+    /// than copied from the engine and scanned for each.
     fn did_change(
         &mut self,
         params: DidChangeTextDocumentParams,
@@ -418,11 +418,12 @@ impl ProtocolServer {
         let Some(id) = self.id_for(params.text_document.uri.as_str()) else {
             return Ok(Vec::new());
         };
-        let mut text = self
-            .engine
-            .document(id)
-            .map(adoc_engine::OpenDocument::text_string)
-            .unwrap_or_default();
+        let mut text = Lines::owned(
+            self.engine
+                .document(id)
+                .map(adoc_engine::OpenDocument::text_string)
+                .unwrap_or_default(),
+        );
         for change in params.content_changes {
             // A change that cannot be applied is reported and skipped: one bad notification
             // never ends the server, and LSP offers no way to ask for the whole text again.
@@ -441,9 +442,7 @@ impl ProtocolServer {
                     Ok((range, replacement))
                 });
             match applied {
-                Ok((range, replacement)) => {
-                    text.replace_range(range.start..range.end, &replacement)
-                }
+                Ok((range, replacement)) => text.replace(range, &replacement),
                 Err(error) => eprintln!(
                     "adoc-ls: skipped a change to {}: {error}",
                     params.text_document.uri.as_str()
@@ -709,14 +708,14 @@ impl ProtocolServer {
         let Some(text) = self.text_of(id) else {
             return Vec::new();
         };
+        let lines = Lines::new(text);
         let (Some(start), Some(end)) = (
-            self.encoding.offset(text, params.range.start),
-            self.encoding.offset(text, params.range.end),
+            self.encoding.offset(&lines, params.range.start),
+            self.encoding.offset(&lines, params.range.end),
         ) else {
             return Vec::new();
         };
         let user = self.engine.settings().user_file().is_some();
-        let lines = Lines::new(text);
         let mut actions = Vec::new();
         for misspelling in self.engine.misspellings(id) {
             if misspelling.range.start > end || misspelling.range.end < start {
@@ -1077,7 +1076,9 @@ impl ProtocolServer {
     fn definition_response(&self, params: &GotoDefinitionParams) -> Option<GotoDefinitionResponse> {
         let position = &params.text_document_position_params;
         let id = self.id_for(position.text_document.uri.as_str())?;
-        let offset = self.encoding.offset(self.text_of(id)?, position.position)?;
+        let offset = self
+            .encoding
+            .offset(&Lines::new(self.text_of(id)?), position.position)?;
         let location = match self.engine.definition(id, offset)? {
             DefinitionTarget::Location(location) => location,
             // An image or attachment: the file itself, at its start, which needs no reading.
@@ -1122,7 +1123,9 @@ impl ProtocolServer {
     fn references_response(&self, params: &ReferenceParams) -> Option<Vec<Location>> {
         let position = &params.text_document_position;
         let id = self.id_for(position.text_document.uri.as_str())?;
-        let offset = self.encoding.offset(self.text_of(id)?, position.position)?;
+        let offset = self
+            .encoding
+            .offset(&Lines::new(self.text_of(id)?), position.position)?;
         Some(self.lsp_locations(&self.engine.references(id, offset)))
     }
 
@@ -1141,7 +1144,7 @@ impl ProtocolServer {
             .and_then(|document| {
                 let offset = self
                     .encoding
-                    .offset(self.text_of(document)?, position.position)?;
+                    .offset(&Lines::new(self.text_of(document)?), position.position)?;
                 self.engine
                     .anchor_rename_edits(document, offset, &params.new_name)
             });
@@ -1290,24 +1293,23 @@ impl ProtocolServer {
     fn hover_response(&self, params: &HoverParams) -> Option<Hover> {
         let position = &params.text_document_position_params;
         let id = self.id_for(position.text_document.uri.as_str())?;
-        let text = self.text_of(id)?;
-        let offset = self.encoding.offset(text, position.position)?;
+        let lines = Lines::new(self.text_of(id)?);
+        let offset = self.encoding.offset(&lines, position.position)?;
         let content = self.engine.hover(id, offset)?;
         Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
                 value: content.markdown,
             }),
-            range: self.encoding.range(&Lines::new(text), content.range),
+            range: self.encoding.range(&lines, content.range),
         })
     }
 
     fn completion_response(&self, params: &CompletionParams) -> Option<CompletionResponse> {
         let position = &params.text_document_position;
         let id = self.id_for(position.text_document.uri.as_str())?;
-        let text = self.text_of(id)?;
-        let offset = self.encoding.offset(text, position.position)?;
-        let lines = Lines::new(text);
+        let lines = Lines::new(self.text_of(id)?);
+        let offset = self.encoding.offset(&lines, position.position)?;
         let items = self
             .engine
             .completions(id, offset)
@@ -1351,12 +1353,15 @@ fn decode_notification<T: serde::de::DeserializeOwned>(value: serde_json::Value)
 /// The byte range of `text` a change replaces, and its new text; a change without a range
 /// replaces the whole document.
 fn change_range(
-    text: &str,
+    text: &Lines<'_>,
     change: TextDocumentContentChangeEvent,
     encoding: PositionEncoding,
 ) -> Result<(adoc_core::SourceRange, String), ServerError> {
     let Some(range) = change.range else {
-        return Ok((adoc_core::SourceRange::new(0, text.len()), change.text));
+        return Ok((
+            adoc_core::SourceRange::new(0, text.text().len()),
+            change.text,
+        ));
     };
     let start = encoding
         .offset(text, range.start)
@@ -1432,7 +1437,7 @@ mod tests {
     use adoc_engine::{Engine, Settings};
 
     use crate::{
-        position::PositionEncoding,
+        position::{Lines, PositionEncoding},
         preview::{BrowserSink, Launcher, PreviewError},
     };
 
@@ -1465,7 +1470,7 @@ mod tests {
     #[test]
     fn applies_incremental_utf16_changes() {
         let (range, text) = change_range(
-            "A😀B\n",
+            &Lines::new("A😀B\n"),
             TextDocumentContentChangeEvent {
                 range: Some(Range::new(Position::new(0, 1), Position::new(0, 3))),
                 range_length: Some(2),
@@ -1476,6 +1481,51 @@ mod tests {
         .unwrap();
 
         assert_eq!((range.start, range.end, text.as_str()), (1, 5, "C"));
+    }
+
+    #[test]
+    fn each_change_in_a_notification_maps_through_the_text_the_last_one_left() {
+        let mut server = server();
+        open(&mut server, PAGE, "first\n");
+        let change =
+            |range: Option<((u32, u32), (u32, u32))>, text: &str| TextDocumentContentChangeEvent {
+                range: range.map(|((start_line, start), (end_line, end))| {
+                    Range::new(
+                        Position::new(start_line, start),
+                        Position::new(end_line, end),
+                    )
+                }),
+                range_length: None,
+                text: text.to_owned(),
+            };
+        server
+            .handle_notification(Notification::new(
+                DidChangeTextDocument::METHOD.to_owned(),
+                DidChangeTextDocumentParams {
+                    text_document: VersionedTextDocumentIdentifier::new(PAGE.parse().unwrap(), 2),
+                    content_changes: vec![
+                        // The whole text, then lines that exist only after the change before.
+                        change(None, "a\r\nb\n"),
+                        change(Some(((0, 0), (0, 0))), "x\ny\n"),
+                        change(Some(((2, 0), (2, 1))), "😀"),
+                        change(Some(((2, 2), (2, 2))), "z"),
+                        // Joining two lines, then a line's end before its `\r\n`.
+                        change(Some(((1, 1), (2, 0))), ""),
+                        change(Some(((1, 9), (2, 0))), "-"),
+                        // Past the last line: the end of the text.
+                        change(Some(((5, 0), (5, 0))), "!"),
+                        // Inside the surrogate pair: skipped.
+                        change(Some(((1, 2), (1, 2))), "?"),
+                    ],
+                },
+            ))
+            .unwrap();
+
+        let id = server.id_for(PAGE).unwrap();
+        assert_eq!(
+            server.engine.document(id).unwrap().text_string(),
+            "x\ny😀z-b\n!"
+        );
     }
 
     #[test]
