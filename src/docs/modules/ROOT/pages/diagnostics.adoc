@@ -17,7 +17,7 @@ Diagnostics are deliberately conservative.
 The editor does not evaluate the condition, and only one branch is built.
 * A reference to a version of a known component that is not in the workspace produces none either, unless the playbook and repository say another branch publishes it (`adoc.antora.version-not-on-branch`).
 * Includes are recognised only as whole-line directives, and block images only at the start of a line or table cell, matching Asciidoctor.
-Inline images are recognised anywhere in text except inside passthroughs, literal monospace and verbatim blocks.
+Inline images are recognised anywhere in text except inside passthroughs, literal monospace, literal table cells and verbatim blocks.
 * An anchor is `+[[id]]+`, `+[[id,reftext]]+`, `+anchor:id[]+`, the `#id` shorthand of a block attribute line, or `+[id=...]+`.
 The shorthand is recognised also after a style or role (`+[source#id,ruby]+`, `+[.lead#id]+`) and in the attribute list straight before a formatting mark (`+[#id]#text#+`).
 Text that only looks like an anchor is not one: link text such as `+https://example.com/issues/12[#12]+`, an escaped `+\[[id]]+`, or an id Asciidoctor would not accept, since it must start with a letter, `_` or `:`.
@@ -26,18 +26,19 @@ An id made with an attribute reference (`+[[{prefix}-a]]+`) is never a duplicate
 Any other target (`+<<intro>>+`, `+<<other.adoc>>+`) is an id in the page itself.
 A target must start straight after `+<<+` or `xref:` with a word character or one of `#/.:{`, so shift operators such as `x << 2` are not references.
 Nothing inside a `$$...$$` passthrough is a reference.
+Nothing in a literal table cell is a reference or an anchor either, since Asciidoctor shows the cell as written, whether the cell is styled (`l|`) or its column is (`[cols="1,1l"]`).
 * A section's id is its anchor, else the id the build generates from the title.
 The anchor is a line above the section, past block attribute lines, block titles, comments and attribute entries, or a `+[[id]]+` ending its title line.
 Two-line (underlined) titles are read as titles.
 A page saved with a byte order mark is read after it.
 * A constrained code span whose closing backtick is followed by an apostrophe or a letter or digit is reported as `adoc.broken-code-span`.
 The message gives the unconstrained form to write instead.
-It is left alone inside listing, literal, passthrough and comment blocks, in comments, in inline passthroughs (the plus form and `+pass:[...]+`), for unconstrained spans, escaped backticks, curved quotes and a curved apostrophe, in attribute entries, block attribute lines and indented literal lines, and on a line with a STEM macro.
+It is left alone inside listing, literal, passthrough and comment blocks, in comments, in inline passthroughs (the plus form and `+pass:[...]+`), for unconstrained spans, escaped backticks, curved quotes and a curved apostrophe, in literal table cells, in attribute entries, block attribute lines and indented literal lines, and on a line with a STEM macro.
 * A keyboard, button or menu macro (`+kbd:[...]+`, `+btn:[...]+`, `+menu:File[Save]+`) where the `experimental` attribute is not set is reported as `adoc.ui-macro-not-enabled`, since Asciidoctor shows such a macro as plain text until it is set.
 The attribute counts as set when the page header (`+:experimental:+`), a file the page includes, the component's `antora.yml` (`asciidoc.attributes`) or the playbook sets it.
 In a partial, the hint is given only when no page that includes the partial sets it.
 The value counted is the one at the macro, so a page that unsets it (`+:experimental!:+`) gets hints after that point.
-No hint is given in passthroughs, for escaped macros (`+\kbd:[...]+`), in verbatim blocks, comments, attribute entries or indented literal lines, or on a line with a STEM macro.
+No hint is given in passthroughs, for escaped macros (`+\kbd:[...]+`), in verbatim blocks, literal table cells, comments, attribute entries or indented literal lines, or on a line with a STEM macro.
 
 Codes are stable strings, so you can filter on them in scripts.
 

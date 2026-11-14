@@ -28,6 +28,7 @@ include::example$adoc-parser-flow.mmd[]
 It reads half-typed input without panicking.
 Inside listing, literal, passthrough and comment blocks it reads only include directives (none in comment blocks), because a block closes on a line matching its own delimiter.
 It tracks `ifdef`, `ifndef` and `ifeval` blocks, so an anchor or include that a build may not see is marked `conditional`.
+In a table it follows the cells as Asciidoctor's table parser does (`table.rs`), and reads only include directives in a literal cell.
 A leading byte order mark is skipped, and ranges still count it.
 
 `completion_context` is the other entry point.
