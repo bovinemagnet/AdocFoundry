@@ -150,7 +150,7 @@ The four front ends use it as follows.
   See xref:adocfoundry-cli.adoc[adocfoundry-cli].
 * `adoc-ls` opens the client's buffers with `Engine::open_client_text`, which the watcher never replaces and which keeps no undo history, and publishes diagnostics from `DiagnosticsUpdated`.
   See xref:adoc-ls.adoc[adoc-ls].
-* `adoc-mcp` locks the engine on a blocking thread for each tool call, and sets `FileAccess::Within(roots)` before it opens a workspace.
+* `adoc-mcp` locks the engine on a blocking thread for each tool call, and sets `FileAccess::within(roots)` before it opens a workspace.
   See xref:adoc-mcp.adoc[adoc-mcp].
 
 == Where it sits
