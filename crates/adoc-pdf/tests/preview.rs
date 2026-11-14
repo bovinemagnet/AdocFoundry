@@ -131,7 +131,7 @@ fn a_kept_theme_is_current_until_one_of_its_files_changes() {
     );
     assert!(kept.is_current(&source, &FileAccess::Any));
     assert!(!kept.is_current(&ThemeSource::Bundled("default".into()), &FileAccess::Any));
-    let elsewhere = FileAccess::Within(vec![directory.path().join("fonts")]);
+    let elsewhere = FileAccess::within(vec![directory.path().join("fonts")]);
     assert!(
         !kept.is_current(&source, &elsewhere),
         "read with other access"

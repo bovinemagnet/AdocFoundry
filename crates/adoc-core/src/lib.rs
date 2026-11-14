@@ -6,7 +6,7 @@ pub mod probe;
 mod reference;
 mod symbol;
 
-pub use access::FileAccess;
+pub use access::{ConfinedRoots, FileAccess};
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticSeverity, Related};
 pub use document::{
     AttributeDeclaration, Document, DocumentTitle, LineIndex, Location, SourceRange, UiMacro,
