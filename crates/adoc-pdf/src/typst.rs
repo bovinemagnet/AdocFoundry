@@ -107,12 +107,24 @@ pub(crate) fn color(color: &Color) -> String {
     }
 }
 
+/// A length written as text (`1.5in`, `-0.8em`, `200`), split into the number it starts with
+/// and the unit after it, as written: empty when there is none, and with any space before it,
+/// which a caller that accepts it trims. Space around the whole is trimmed. Besides digits and
+/// `.`, the number may hold only the characters in `signs` (`'-'`, `'+'`). `None` when what
+/// comes first does not read as a number. The units each caller accepts, and what they come
+/// to, are the caller's: `theme::to_pt` for asciidoctor-pdf's.
+pub(crate) fn number_and_unit<'a>(text: &'a str, signs: &[char]) -> Option<(f64, &'a str)> {
+    let text = text.trim();
+    let split = text
+        .find(|c: char| !(c.is_ascii_digit() || c == '.' || signs.contains(&c)))
+        .unwrap_or(text.len());
+    let (number, unit) = text.split_at(split);
+    Some((number.parse().ok()?, unit))
+}
+
 /// A relative length written as text in a theme (`1.2em`, `10%`), or `None`.
 pub(crate) fn relative_length(text: &str) -> Option<String> {
-    let text = text.trim();
-    let split = text.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))?;
-    let (number, unit) = text.split_at(split);
-    let value: f64 = number.parse().ok()?;
+    let (value, unit) = number_and_unit(text, &['-'])?;
     match unit {
         "em" | "rem" => Some(format!("{}em", trim(value))),
         "%" => Some(format!("{}%", trim(value))),
@@ -250,5 +262,27 @@ mod tests {
         assert!(!is_length_key("heading_line_height"));
         assert_eq!(relative_length("0.8em"), Some("0.8em".into()));
         assert_eq!(relative_length("FitH"), None);
+    }
+
+    #[test]
+    fn relative_lengths_are_ems_or_percentages() {
+        assert_eq!(relative_length("1.2em"), Some("1.2em".into()));
+        assert_eq!(relative_length(".5em"), Some("0.5em".into()));
+        assert_eq!(relative_length("1.50em"), Some("1.5em".into()));
+        // A `rem` is written as an `em`.
+        assert_eq!(relative_length("2rem"), Some("2em".into()));
+        assert_eq!(relative_length("55%"), Some("55%".into()));
+        // A minus sign may lead; a plus may not.
+        assert_eq!(relative_length("-0.5em"), Some("-0.5em".into()));
+        assert_eq!(relative_length("+1em"), None);
+        // Space around the whole is trimmed; space before the unit is not.
+        assert_eq!(relative_length(" 1.2em "), Some("1.2em".into()));
+        assert_eq!(relative_length("1.2 em"), None);
+        // No unit, another unit, no number or two points.
+        assert_eq!(relative_length("1.2"), None);
+        assert_eq!(relative_length("12pt"), None);
+        assert_eq!(relative_length("em"), None);
+        assert_eq!(relative_length(""), None);
+        assert_eq!(relative_length("1.2.3em"), None);
     }
 }

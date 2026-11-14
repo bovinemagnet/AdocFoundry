@@ -466,24 +466,7 @@ pub(crate) fn current_year() -> i64 {
     let seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_secs());
-    year_of_day(i64::try_from(seconds / 86_400).unwrap_or(0))
-}
-
-/// The proleptic Gregorian year of `days` since 1970-01-01 (Howard Hinnant's `civil_from_days`).
-fn year_of_day(days: i64) -> i64 {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let day_of_era = z.rem_euclid(146_097);
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_index = (5 * day_of_year + 2) / 153;
-    let year = year_of_era + era * 400;
-    if month_index >= 10 {
-        year + 1
-    } else {
-        year
-    }
+    adoc_core::civil_from_days(i64::try_from(seconds / 86_400).unwrap_or(0)).0
 }
 
 impl Engine {
@@ -750,14 +733,7 @@ mod tests {
     }
 
     #[test]
-    fn years_are_counted_from_days() {
-        assert_eq!(year_of_day(0), 1970);
-        assert_eq!(year_of_day(364), 1970);
-        assert_eq!(year_of_day(365), 1971);
-        // 2026-11-04 and 2024-12-31 (a leap year's last day).
-        assert_eq!(year_of_day(20_761), 2026);
-        assert_eq!(year_of_day(20_088), 2024);
-        assert_eq!(year_of_day(20_089), 2025);
+    fn the_year_is_read_from_the_clock() {
         assert!(current_year() >= 2026);
     }
 }

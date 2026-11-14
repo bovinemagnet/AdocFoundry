@@ -1562,11 +1562,7 @@ fn svg_length(value: &str) -> Option<Natural> {
     if let Some(percent) = value.strip_suffix('%') {
         return percent.trim().parse().ok().map(Natural::Percent);
     }
-    let split = value
-        .find(|c: char| !(c.is_ascii_digit() || matches!(c, '.' | '-' | '+')))
-        .unwrap_or(value.len());
-    let (number, unit) = value.split_at(split);
-    let number: f64 = number.parse().ok()?;
+    let (number, unit) = typst::number_and_unit(value, &['-', '+'])?;
     let points = match unit.trim() {
         "px" => number * 0.75,
         "em" => number * 16.0,
@@ -1995,12 +1991,12 @@ fn image_extent(value: &str) -> Option<Natural> {
             .and_then(positive)
             .map(Natural::Percent);
     }
-    let (number, unit) = match value.find(|c: char| !(c.is_ascii_digit() || c == '.')) {
-        Some(split) => value.split_at(split),
-        None => (value, "px"),
+    let (number, unit) = typst::number_and_unit(value, &[])?;
+    let unit = match unit.trim() {
+        "" => "px",
+        unit => unit,
     };
-    let number: f64 = number.parse().ok()?;
-    crate::theme::to_pt(number, unit.trim())
+    crate::theme::to_pt(number, unit)
         .and_then(positive)
         .map(Natural::Points)
 }
@@ -2100,6 +2096,85 @@ mod tests {
         assert_eq!(image_size("60%").as_deref(), Some("60%"));
         assert_eq!(image_size("200").as_deref(), Some("150pt"));
         assert_eq!(image_size("1in").as_deref(), Some("72pt"));
+        assert_eq!(image_size("1.5in").as_deref(), Some("108pt"));
+        assert_eq!(image_size("12.5%").as_deref(), Some("12.5%"));
+        assert_eq!(image_size("\"50%\"").as_deref(), Some("50%"));
+        assert_eq!(image_size("0"), None);
+        assert_eq!(image_size("-5%"), None);
+        assert_eq!(image_size("10em"), None);
+        assert_eq!(image_size(""), None);
+    }
+
+    #[test]
+    fn image_extents_are_positive_percentages_or_lengths_in_pixels_by_default() {
+        use super::{image_extent, Natural};
+        let points = |value: &str| match image_extent(value) {
+            Some(Natural::Points(points)) => Some(points),
+            other => panic!("{value}: {other:?}"),
+        };
+        assert_eq!(image_extent("60%"), Some(Natural::Percent(60.0)));
+        assert_eq!(image_extent(" 12.5 % "), Some(Natural::Percent(12.5)));
+        assert_eq!(image_extent("'60%'"), Some(Natural::Percent(60.0)));
+        assert_eq!(image_extent("1e2%"), Some(Natural::Percent(100.0)));
+        assert_eq!(image_extent("0%"), None);
+        assert_eq!(image_extent("-5%"), None);
+        assert_eq!(image_extent("%"), None);
+        // No unit is pixels at 96 dpi.
+        assert_eq!(points("200"), Some(150.0));
+        assert_eq!(points("1in"), Some(72.0));
+        assert_eq!(points("1.5in"), Some(108.0));
+        assert_eq!(points("10pt"), Some(10.0));
+        assert_eq!(points("2pc"), Some(24.0));
+        assert_eq!(points("8px"), Some(6.0));
+        assert!((points("2.54cm").unwrap() - 72.0).abs() < 1e-9);
+        assert!((points("25.4mm").unwrap() - 72.0).abs() < 1e-9);
+        // Space is trimmed around the whole and before the unit, and quotes around the whole.
+        assert_eq!(points(" 1 in "), Some(72.0));
+        assert_eq!(points("\"1in\""), Some(72.0));
+        // An unknown unit, a sign, zero, no number or two points.
+        assert_eq!(image_extent("10em"), None);
+        assert_eq!(image_extent("-5"), None);
+        assert_eq!(image_extent("+5"), None);
+        assert_eq!(image_extent("0"), None);
+        assert_eq!(image_extent("in"), None);
+        assert_eq!(image_extent(""), None);
+        assert_eq!(image_extent("1.2.3in"), None);
+    }
+
+    #[test]
+    fn svg_lengths_are_read_as_prawn_svg_reads_them() {
+        use super::{svg_length, Natural};
+        let points = |value: &str| match svg_length(value) {
+            Some(Natural::Points(points)) => Some(points),
+            other => panic!("{value}: {other:?}"),
+        };
+        assert_eq!(points("100"), Some(100.0));
+        assert_eq!(points("100pt"), Some(100.0));
+        assert_eq!(points("100px"), Some(75.0));
+        assert_eq!(points("2em"), Some(32.0));
+        assert_eq!(points("2ex"), Some(16.0));
+        assert_eq!(points("2pc"), Some(30.0));
+        assert_eq!(points("1in"), Some(72.0));
+        assert_eq!(points("1.5"), Some(1.5));
+        assert!((points("2.54cm").unwrap() - 72.0).abs() < 1e-9);
+        assert!((points("25.4mm").unwrap() - 72.0).abs() < 1e-9);
+        // An unknown unit is points.
+        assert_eq!(points("10foo"), Some(10.0));
+        // A sign may lead, but the length must be positive.
+        assert_eq!(points("+5"), Some(5.0));
+        assert_eq!(svg_length("-5"), None);
+        assert_eq!(svg_length("0"), None);
+        assert_eq!(svg_length("1-2"), None);
+        // Space is trimmed around the whole and before the unit.
+        assert_eq!(points(" 10 px "), Some(7.5));
+        // A percentage is any number Rust reads, unchecked.
+        assert_eq!(svg_length("50%"), Some(Natural::Percent(50.0)));
+        assert_eq!(svg_length(" 50 % "), Some(Natural::Percent(50.0)));
+        assert_eq!(svg_length("-5%"), Some(Natural::Percent(-5.0)));
+        assert_eq!(svg_length("1e2%"), Some(Natural::Percent(100.0)));
+        assert_eq!(svg_length("px"), None);
+        assert_eq!(svg_length(""), None);
+        assert_eq!(svg_length("1.2.3"), None);
     }
 
     /// Over the render and PDF fixtures: every map entry lies within the generated source,
