@@ -372,7 +372,7 @@ impl VisualView {
                 .walk()
                 .into_iter()
                 .rev()
-                .find(|(_, node)| node.range.start <= offset && offset <= node.range.end)
+                .find(|(_, node)| node.range.contains_or_ends_at(offset))
                 .is_some_and(|(_, node)| node.text.is_some())
         });
         if has_text {

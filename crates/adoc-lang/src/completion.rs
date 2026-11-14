@@ -138,10 +138,10 @@ fn anchor_candidates(
         return Vec::new();
     };
 
-    let mut candidates: Vec<Candidate> = crate::xref::section_ids(antora, path, document)
-        .into_iter()
+    let mut candidates: Vec<Candidate> = crate::xref::section_ids(index, antora, path, document)
+        .iter()
         .filter(|label| !label.is_empty())
-        .map(|label| candidate(label, range))
+        .map(|label| candidate(label.clone(), range))
         .collect();
 
     let section_ids: HashSet<&str> = document

@@ -11,8 +11,8 @@ use std::{
 };
 
 use adoc_core::{
-    alphanumeric_id, canonical_id, section_ids, section_ids_with_conditionals, Document, IdStyle,
-    IncludeDirective, Reference, ReferenceKind, SourceRange,
+    alphanumeric_id, canonical_id, Document, IdStyle, IncludeDirective, Reference, ReferenceKind,
+    SectionIds, SourceRange,
 };
 use adoc_parser::parse;
 
@@ -65,6 +65,8 @@ pub struct FileEntry {
     pub uri: String,
     /// The parse; its `text` is empty for a file indexed from disk.
     pub document: Document,
+    /// Its sections' ids, generated once when it was indexed.
+    section_ids: SectionIds,
     /// The length and hash of the text parsed, so text read back is known to be that text.
     text_len: usize,
     text_hash: u64,
@@ -82,6 +84,13 @@ impl FileEntry {
         let text = fs::read_to_string(&self.path).ok()?;
         (text.len() == self.text_len && hash_text(&text) == self.text_hash)
             .then_some(Cow::Owned(text))
+    }
+
+    /// The ids of the document's sections in each style, numbered as [`adoc_core::section_ids`]
+    /// numbers them, generated when the file was indexed.
+    #[must_use]
+    pub fn section_ids(&self) -> &SectionIds {
+        &self.section_ids
     }
 }
 
@@ -113,11 +122,12 @@ impl Parsed {
 }
 
 impl FileEntry {
-    fn of(path: PathBuf, parsed: Parsed) -> Self {
+    fn of(path: PathBuf, parsed: Parsed, section_ids: SectionIds) -> Self {
         Self {
             uri: parsed.document.uri.clone(),
             path,
             document: parsed.document,
+            section_ids,
             text_len: parsed.text_len,
             text_hash: parsed.text_hash,
         }
@@ -134,6 +144,7 @@ pub struct PreparedFile {
     shared: Arc<Path>,
     parsed: Parsed,
     anchors: BTreeMap<String, SourceRange>,
+    section_ids: SectionIds,
     include_targets: Vec<PathBuf>,
     symbols: Vec<WorkspaceSymbol>,
     words: BTreeSet<String>,
@@ -168,28 +179,22 @@ impl PreparedFile {
         }
         // Sections are reachable without an explicit anchor, so register the ids Asciidoctor
         // generates for them. They are deliberately not added to `document.anchors`, which
-        // stays the record of explicitly declared anchors for duplicate detection.
-        for section in &document.sections {
-            for id in section.implicit_ids() {
+        // stays the record of explicitly declared anchors for duplicate detection. Each
+        // title's id is generated once per style, for these and the numbered ids alike.
+        let (section_ids, implicit) =
+            SectionIds::with_implicit_ids(&document.sections, &document.anchors);
+        for (section, ids) in document.sections.iter().zip(implicit) {
+            for id in ids {
                 anchor(id, section.selection_range);
             }
         }
         // A generated id already in use is numbered (`_parameters_2`, `parameters-2`), in a
         // build with the conditional anchors and in one without them.
-        let conditional = document.anchors.iter().any(|anchor| anchor.conditional);
         for style in [IdStyle::Antora, IdStyle::Asciidoctor] {
-            let mut builds = vec![section_ids(&document.sections, &document.anchors, style)];
-            if conditional {
-                builds.push(section_ids_with_conditionals(
-                    &document.sections,
-                    &document.anchors,
-                    style,
-                ));
-            }
-            for ids in builds {
+            for ids in section_ids.builds(style) {
                 for (section, id) in document.sections.iter().zip(ids) {
                     if section.id.is_none() && !id.is_empty() {
-                        anchor(id, section.selection_range);
+                        anchor(id.clone(), section.selection_range);
                     }
                 }
             }
@@ -202,6 +207,7 @@ impl PreparedFile {
             shared,
             parsed,
             anchors,
+            section_ids,
             include_targets,
             symbols,
             words,
@@ -351,6 +357,7 @@ impl WorkspaceIndex {
             shared,
             parsed,
             anchors,
+            section_ids,
             include_targets,
             symbols,
             words,
@@ -364,7 +371,7 @@ impl WorkspaceIndex {
         self.symbols.insert(shared.clone(), symbols);
         self.files
             .entry(shared)
-            .or_insert(FileEntry::of(path, parsed))
+            .or_insert(FileEntry::of(path, parsed, section_ids))
     }
 
     /// Replaces the entry of a file whose tables share `prepared.shared`, visiting only the keys
@@ -376,6 +383,7 @@ impl WorkspaceIndex {
             shared,
             parsed,
             anchors,
+            section_ids,
             include_targets,
             symbols,
             words,
@@ -442,7 +450,8 @@ impl WorkspaceIndex {
             BTreeSet::new()
         };
         self.symbols.insert(shared.clone(), symbols);
-        self.files.insert(shared, FileEntry::of(path, parsed));
+        self.files
+            .insert(shared, FileEntry::of(path, parsed, section_ids));
         Retired {
             entry: Some(old),
             anchors: old_anchors,
@@ -867,6 +876,50 @@ mod tests {
     };
 
     use super::{PreparedFile, WorkspaceIndex};
+
+    /// Issue #533: indexing a page generates each section's id once in each style, though it
+    /// registers the forgiving forms and the numbered ids of the builds with and without a
+    /// conditional anchor, and keeps the numbered ids with the entry.
+    #[test]
+    fn each_title_becomes_an_id_once_per_style() {
+        use adoc_core::{
+            probe::{self, Probe},
+            section_ids, section_ids_with_conditionals, IdStyle,
+        };
+        let path = PathBuf::from("docs/guide.adoc");
+        let text = "= Guide\n\nifdef::internal[]\n[[parameters]]\nInternal.\nendif::[]\n\n\
+                    == Parameters\n\n== Parameters\n\n[[own]]\n== Notes\n";
+        let mut index = WorkspaceIndex::new();
+        probe::reset();
+        let entry = index.index_source(&path, text);
+        assert_eq!(
+            probe::count(Probe::SectionId),
+            6,
+            "three sections, two styles"
+        );
+
+        let document = &entry.document;
+        let ids = entry.section_ids();
+        for style in [IdStyle::Antora, IdStyle::Asciidoctor] {
+            assert_eq!(
+                ids.numbered(style),
+                section_ids(&document.sections, &document.anchors, style)
+            );
+            assert_eq!(
+                ids.with_conditionals(style),
+                section_ids_with_conditionals(&document.sections, &document.anchors, style)
+            );
+        }
+        for id in [
+            "parameters",
+            "parameters-2",
+            "parameters-3",
+            "_parameters_2",
+            "own",
+        ] {
+            assert!(index.resolve_anchor(&path, id).is_some(), "{id}");
+        }
+    }
 
     #[test]
     fn replacing_a_document_removes_stale_contributions() {

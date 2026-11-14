@@ -21,7 +21,7 @@ pub fn definition_at_offset(
     if let Some(reference) = document
         .references
         .iter()
-        .find(|reference| contains_offset(reference.range, offset))
+        .find(|reference| reference.range.contains(offset))
     {
         if let Some(target) = resolve_antora_reference(index, antora, current_path, reference) {
             return Some(target);
@@ -32,7 +32,7 @@ pub fn definition_at_offset(
     let include = document
         .includes
         .iter()
-        .find(|include| contains_offset(include.range, offset))?;
+        .find(|include| include.range.contains(offset))?;
     resolve_antora_include(index, antora, current_path, include)
         .or_else(|| resolve_include(index, current_path, document, include))
 }
@@ -184,10 +184,6 @@ pub fn resolve_include(
         path,
         range: SourceRange::new(0, 0),
     })
-}
-
-fn contains_offset(range: SourceRange, offset: usize) -> bool {
-    range.start <= offset && offset < range.end
 }
 
 #[cfg(test)]

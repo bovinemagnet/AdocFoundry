@@ -950,7 +950,7 @@ fn with_change_bar(
         .take_while(|hunk| hunk.range.start <= range.end)
         .filter(|hunk| {
             if hunk.range.is_empty() {
-                range.start <= hunk.range.start && hunk.range.start < range.end
+                range.contains(hunk.range.start)
             } else {
                 hunk.range.start < range.end && range.start < hunk.range.end
             }

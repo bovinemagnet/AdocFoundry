@@ -29,7 +29,7 @@ pub fn choices(engine: &Engine, document: DocumentId, offset: usize) -> Vec<(Str
     let Some(misspelling) = engine
         .misspellings(document)
         .iter()
-        .find(|misspelling| misspelling.range.start <= offset && offset <= misspelling.range.end)
+        .find(|misspelling| misspelling.range.contains_or_ends_at(offset))
     else {
         return Vec::new();
     };

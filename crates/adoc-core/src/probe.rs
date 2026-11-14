@@ -54,9 +54,11 @@ pub enum Probe {
     HistoryCommit,
     /// A typeset formula's image read for its measures, `adoc_render::formula_image`.
     FormulaRead,
+    /// A section's id generated from its title in one style, `IdStyle::generate`.
+    SectionId,
 }
 
-const PROBES: usize = 23;
+const PROBES: usize = 24;
 
 #[cfg(feature = "probe")]
 thread_local! {
@@ -98,4 +100,4 @@ pub fn reset() {
 }
 
 // Every probe has a counter.
-const _: () = assert!(Probe::FormulaRead as usize == PROBES - 1);
+const _: () = assert!(Probe::SectionId as usize == PROBES - 1);
