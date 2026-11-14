@@ -22,7 +22,7 @@ include::example$crate-layers.mmd[]
 
 |L0
 |`adoc-core`
-|Domain types and the few helpers every layer shares: `Document`, `LineIndex` (columns in bytes), `SourceRange` (byte offsets), `Section`, `Anchor`, `Reference`, `IncludeDirective`, `ImageDirective`, `Location`, `Related`, and `Diagnostic` with its `DiagnosticCode`; section ids (`IdStyle`, `section_ids`); lexical paths (`normalize_path`); the default ignore list and its rule (`DEFAULT_IGNORED_DIRECTORIES`, `is_ignored_beneath`); `FileAccess`, which reads files only within given roots, following links to check them; and the `probe` counters tests read. It has no dependencies at all.
+|Domain types and the few helpers every layer shares: `Document`, `LineIndex` (columns in bytes), `SourceRange` (byte offsets), `Section`, `Anchor`, `Reference`, `IncludeDirective`, `ImageDirective`, `Location`, `Related`, and `Diagnostic` with its `DiagnosticCode`; section ids (`IdStyle`, `section_ids`); lexical paths (`normalize_path`); the calendar date of a day count (`civil_from_days`); the default ignore list and its rule (`DEFAULT_IGNORED_DIRECTORIES`, `is_ignored_beneath`); `FileAccess`, which reads files only within given roots, following links to check them; and the `probe` counters tests read. It has no dependencies at all.
 
 |L1
 |`adoc-parser`

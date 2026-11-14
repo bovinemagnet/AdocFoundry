@@ -757,12 +757,7 @@ fn page_size(value: &str) -> Option<(f64, f64)> {
 
 /// A length with an optional unit (`in`, `mm`, `cm`, `pt`, `px`, `pc`), in points.
 fn measurement(value: &str) -> Option<f64> {
-    let value = value.trim();
-    let split = value
-        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
-        .unwrap_or(value.len());
-    let (number, unit) = value.split_at(split);
-    let number: f64 = number.parse().ok()?;
+    let (number, unit) = crate::typst::number_and_unit(value, &[])?;
     crate::theme::to_pt(number, unit).filter(|points| points.is_finite())
 }
 
@@ -907,5 +902,37 @@ fn running_start(theme: &LoadedTheme, facts: &Facts<'_>) -> (RunningAt, u32) {
             1,
         ),
         _ => (RunningAt::Body, 1),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::measurement;
+
+    #[test]
+    fn measurements_are_an_unsigned_number_and_a_theme_unit() {
+        assert_eq!(measurement("1in"), Some(72.0));
+        assert_eq!(measurement("8.5in"), Some(612.0));
+        assert_eq!(measurement(".5in"), Some(36.0));
+        assert_eq!(measurement("2pc"), Some(24.0));
+        assert_eq!(measurement("4px"), Some(3.0));
+        assert_eq!(measurement("10pt"), Some(10.0));
+        assert!((measurement("25.4mm").unwrap() - 72.0).abs() < 1e-9);
+        assert!((measurement("2.54cm").unwrap() - 72.0).abs() < 1e-9);
+        // No unit is points.
+        assert_eq!(measurement("10"), Some(10.0));
+        assert_eq!(measurement("0"), Some(0.0));
+        // Space around the whole is trimmed; space before the unit is not.
+        assert_eq!(measurement(" 1in "), Some(72.0));
+        assert_eq!(measurement("1 in"), None);
+        // An unknown unit, a sign, no number or two points.
+        assert_eq!(measurement("10em"), None);
+        assert_eq!(measurement("10%"), None);
+        assert_eq!(measurement("-1in"), None);
+        assert_eq!(measurement("+1in"), None);
+        assert_eq!(measurement("in"), None);
+        assert_eq!(measurement(""), None);
+        assert_eq!(measurement("1.2.3in"), None);
+        assert_eq!(measurement("1e2"), None);
     }
 }

@@ -57,7 +57,7 @@ The common thread in both ArtCraft apps is a headless engine with a swappable fr
 
 | Crate | What it already does | Role in AdocFoundry |
 | --- | --- | --- |
-| `adoc-core` | Editor-independent types: `Document`, `LineIndex`, `SourceRange` (byte offsets), `Section`, `Anchor`, `Reference`, `IncludeDirective`, `Diagnostic` with stable codes; also section ids, `normalize_path`, the default ignore list and its rule, `FileAccess` (reads confined to roots, links followed) and test `probe` counters | Unchanged; the shared vocabulary of every layer |
+| `adoc-core` | Editor-independent types: `Document`, `LineIndex`, `SourceRange` (byte offsets), `Section`, `Anchor`, `Reference`, `IncludeDirective`, `Diagnostic` with stable codes; also section ids, `normalize_path`, `civil_from_days`, the default ignore list and its rule, `FileAccess` (reads confined to roots, links followed) and test `probe` counters | Unchanged; the shared vocabulary of every layer |
 | `adoc-parser` | Line-oriented semantic parser (titles, sections, attributes, anchors, xrefs, includes, images) that tolerates half-typed input; `completion_context` | Phase 1 outline, link following and completion. Replaced for rendering by a full AST parser in Phase 2 but kept for its speed and tolerance |
 | `adoc-antora` | `antora.yml` descriptor parsing, `AntoraCatalog`, `parse_resource_id`, `AntoraResolver` with typed errors; model already carries component and version | The Antora catalog described above. Gaps to close: cross-component and cross-version resolution, descriptor re-read on change, `page-aliases` |
 | `adoc-index` | `WorkspaceIndex` with replacement updates and direct lookups (never full scans) | The workspace index behind the sidebar, diagnostics and go-to-definition |
