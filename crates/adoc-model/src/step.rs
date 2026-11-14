@@ -316,8 +316,7 @@ impl Model {
                 matches!(
                     unit.kind,
                     UnitKind::Atom(Atom::Link { .. } | Atom::Xref { .. })
-                ) && range.start <= at
-                    && at <= range.end
+                ) && range.contains_or_ends_at(at)
             })
             .ok_or(StepError::Unsupported("there is no link here"))?;
         let mut units = flat.units.clone();

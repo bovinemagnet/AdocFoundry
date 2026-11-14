@@ -924,7 +924,7 @@ Use Open from the peek to open it in a tab.
 Find References (kbd:[Alt+Shift+F12]) lists where the thing under the source caret is used.
 It is also in the Go menu, after Peek Include, and in the command palette (`navigate.find_references`).
 
-* With the caret on an anchor (`+[[id]]+` or `+[#id]+`) or on a reference to one (`+<<id>>+` or `+xref:page.adoc#id[]+`), it lists every reference to that anchor.
+* With the caret on or just after an anchor (`+[[id]]+` or `+[#id]+`) or on a reference to one (`+<<id>>+` or `+xref:page.adoc#id[]+`), it lists every reference to that anchor.
 This includes references from other components, such as `+xref:alpha::guide.adoc#setup[]+`.
 * With the caret on a section heading, it lists every reference to that section's id, whether the id is declared (`+[[id]]+` or `+[#id]+` above the heading) or generated from the title, such as `+_first_steps+`.
 * Anywhere else in a page, it lists every xref, include and navigation entry that names the page itself.

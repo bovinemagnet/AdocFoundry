@@ -40,7 +40,7 @@ impl VisualView {
                     atom: Atom::Link { target, text } | Atom::Xref { target, text },
                     range,
                     ..
-                } if range.start <= at && at <= range.end => Some((target.clone(), text.clone())),
+                } if range.contains_or_ends_at(at) => Some((target.clone(), text.clone())),
                 Piece::Mark { children, .. } => find(children, at),
                 _ => None,
             })
@@ -137,7 +137,7 @@ impl VisualView {
                     .into_iter()
                     .find_map(|(_, node)| match &node.kind {
                         adoc_engine::NodeKind::Image { target, alt }
-                            if node.range.start <= at && at <= node.range.end =>
+                            if node.range.contains_or_ends_at(at) =>
                         {
                             Some((target.clone(), alt.clone()))
                         }
