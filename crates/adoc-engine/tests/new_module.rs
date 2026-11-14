@@ -183,8 +183,9 @@ fn new_module_refuses_an_existing_name() {
 #[test]
 fn a_module_or_folder_there_already_is_a_conflict() {
     let mut setup = Setup::new(None);
-    fs::create_dir_all(setup.root.join("modules/drafts")).unwrap();
-    let drafts = setup.root.join("modules/drafts");
+    // Joined part by part, so the message's separators are the system's on Windows too.
+    let drafts = setup.root.join("modules").join("drafts");
+    fs::create_dir_all(&drafts).unwrap();
     for (name, expected) in [
         (
             "security",
