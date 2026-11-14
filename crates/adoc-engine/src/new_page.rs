@@ -19,8 +19,8 @@ use adoc_index::{is_asciidoc_path, normalize_path};
 use crate::{
     commands::{ids, register, spec},
     engine::UndoMode,
-    CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry, Engine,
-    EngineError, TextEdit, UndoGroup,
+    CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry, ConflictKind,
+    Engine, EngineError, TextEdit, UndoGroup,
 };
 
 /// What `page.new` makes.
@@ -280,10 +280,10 @@ impl Engine {
             })?;
         let path = normalize_path(&module.root.join("pages").join(&file));
         if path.exists() || self.document_for_path(&path).is_some() {
-            return Err(EngineError::InvalidRequest(format!(
-                "{} already exists",
-                path.display()
-            )));
+            return Err(EngineError::Conflict {
+                kind: ConflictKind::Exists,
+                message: format!("{} already exists", path.display()),
+            });
         }
         let nav = match (request.add_to_nav, &module.nav) {
             (false, _) => None,

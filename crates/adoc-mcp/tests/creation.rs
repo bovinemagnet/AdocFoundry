@@ -332,6 +332,7 @@ fn mcp_create_project_reuses_engine_command() {
             json!({ "path": "product", "name": "x", "subfolder": "v3" }),
             "conflict",
         ),
+        (json!({ "path": "product", "name": "x" }), "conflict"),
         (
             json!({ "path": "missing", "name": "x" }),
             "invalid_argument",

@@ -20,8 +20,8 @@ use crate::{
     commands::{ids, register, spec},
     engine::UndoMode,
     new_page::{create_file, CreatedFile},
-    CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry, DocumentId,
-    Engine, EngineError, TextEdit, UndoGroup,
+    CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry, ConflictKind,
+    DocumentId, Engine, EngineError, TextEdit, UndoGroup,
 };
 
 /// What `module.new` makes.
@@ -302,19 +302,26 @@ impl Engine {
 
     /// Why `name` cannot be a new module of the component version at `component`, or the
     /// module's folder when it can; checked before anything is written, and as a dialog types.
-    pub fn check_new_module(&self, component: &Path, name: &str) -> Result<PathBuf, String> {
+    /// A module or folder there already is an [`EngineError::Conflict`], anything else an
+    /// [`EngineError::InvalidRequest`].
+    pub fn check_new_module(&self, component: &Path, name: &str) -> Result<PathBuf, EngineError> {
         let root = normalize_path(component);
         let descriptor = self
             .workspace
             .antora
             .components()
             .find(|descriptor| normalize_path(&descriptor.root) == root)
-            .ok_or_else(|| format!("{} is not a component version", root.display()))?;
+            .ok_or_else(|| {
+                EngineError::InvalidRequest(format!(
+                    "{} is not a component version",
+                    root.display()
+                ))
+            })?;
         if !valid_module_name(name) {
-            return Err(format!(
+            return Err(EngineError::InvalidRequest(format!(
                 "`{name}` is not a module name: use lower-case letters, digits, `.`, `_` and \
                  `-`, starting with a letter or digit"
-            ));
+            )));
         }
         let existing: Vec<String> = self
             .workspace
@@ -322,12 +329,16 @@ impl Engine {
             .modules_of(&descriptor.name, descriptor.version.as_deref())
             .map(|module| module.name.clone())
             .collect();
+        let exists = |message| EngineError::Conflict {
+            kind: ConflictKind::Exists,
+            message,
+        };
         if existing.iter().any(|module| module == name) {
-            return Err(format!("the module `{name}` exists already"));
+            return Err(exists(format!("the module `{name}` exists already")));
         }
         let folder = root.join("modules").join(name);
         if folder.exists() {
-            return Err(format!("{} exists already", folder.display()));
+            return Err(exists(format!("{} exists already", folder.display())));
         }
         Ok(folder)
     }
@@ -336,9 +347,7 @@ impl Engine {
     /// has one (returned). Everything is checked before anything is written.
     pub fn new_module(&mut self, request: &NewModule) -> Result<Option<DocumentId>, EngineError> {
         let root = normalize_path(&request.component);
-        let folder = self
-            .check_new_module(&root, &request.name)
-            .map_err(EngineError::InvalidRequest)?;
+        let folder = self.check_new_module(&root, &request.name)?;
         let descriptor = root.join("antora.yml");
         let descriptor_edit = if request.nav {
             let text = self.current_text(&descriptor).ok_or_else(|| {

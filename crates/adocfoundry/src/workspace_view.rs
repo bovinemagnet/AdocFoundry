@@ -2912,6 +2912,7 @@ impl WorkspaceView {
                             .read(cx)
                             .engine
                             .check_new_module(&chosen.root, &typed)
+                            .map_err(|problem| problem.to_string())
                     })
                     .unwrap_or_else(|| Err(String::new()))
             });

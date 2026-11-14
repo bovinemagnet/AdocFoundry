@@ -150,6 +150,11 @@ fn mcp_preview_does_not_mutate() {
             json!([{ "kind": "create_page", "component": "product", "version": "~", "module": "nope", "title": "X" }]),
             "not_found",
         ),
+        // A page there already: `create_page` itself answers `conflict`.
+        (
+            json!([{ "kind": "create_page", "component": "product", "version": "~", "module": "ROOT", "title": "Install" }]),
+            "invalid_argument",
+        ),
         (
             json!([{ "kind": "create_partial", "component": "product", "version": "~", "module": "ROOT", "file_name": "../../escape.adoc" }]),
             "invalid_argument",

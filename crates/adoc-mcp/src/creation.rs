@@ -151,15 +151,13 @@ impl Server {
             };
             // Worked out first, without changing anything: the page's path and the navigation
             // entry the command will make, checked against the roots and the expected hash.
-            let staged = state.engine.stage_new_page(&request).map_err(|error| {
-                let message = error.to_string();
-                let code = if message.ends_with("already exists") {
-                    ErrorCode::Conflict
-                } else {
-                    ErrorCode::InvalidArgument
-                };
-                Failure::new(code, message)
-            })?;
+            let staged = state
+                .engine
+                .stage_new_page(&request)
+                .map_err(|error| match error {
+                    adoc_engine::EngineError::Conflict { .. } => Failure::from(error),
+                    other => Failure::invalid(other.to_string()),
+                })?;
             for path in staged.paths() {
                 state.confine(&path.to_string_lossy())?;
             }
@@ -280,17 +278,11 @@ impl Server {
                     }
                 }
             }
+            // A module or folder there already is a conflict; anything else an invalid argument.
             let folder = state
                 .engine
                 .check_new_module(&root, &args.name)
-                .map_err(|problem| {
-                    let code = if problem.contains("exists already") {
-                        ErrorCode::Conflict
-                    } else {
-                        ErrorCode::InvalidArgument
-                    };
-                    Failure::new(code, problem)
-                })?;
+                .map_err(Failure::from)?;
             state.confine(&folder.to_string_lossy())?;
             let request = adoc_engine::NewModule {
                 component: root.clone(),
@@ -389,19 +381,12 @@ impl Server {
                 template,
                 ..adoc_engine::NewProject::new(root.clone(), &args.name)
             };
+            // A folder that is not empty or a subfolder there already is a conflict; anything
+            // else an invalid argument.
             let component = state
                 .engine
                 .check_new_project(&request)
-                .map_err(|problem| {
-                    let conflict = problem.message.contains("exists already")
-                        || problem.message.contains("not empty");
-                    let code = if conflict {
-                        ErrorCode::Conflict
-                    } else {
-                        ErrorCode::InvalidArgument
-                    };
-                    Failure::new(code, problem.message)
-                })?;
+                .map_err(|problem| Failure::from(adoc_engine::EngineError::from(problem)))?;
             state.confine(&component.to_string_lossy())?;
             // Listed before, as what is planned depends on what is there already.
             let mut made: Vec<String> = state

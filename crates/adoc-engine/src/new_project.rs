@@ -24,8 +24,8 @@ use crate::{
         current_year, join_relative, substitute, Template, TemplateField, Variables,
         DEFAULT_TEMPLATE,
     },
-    CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry, DocumentId,
-    Engine, EngineError, UndoGroup,
+    CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry, ConflictKind,
+    DocumentId, Engine, EngineError, UndoGroup,
 };
 
 /// What `project.new` makes.
@@ -143,6 +143,21 @@ pub enum NewProjectField {
 pub struct NewProjectProblem {
     pub field: NewProjectField,
     pub message: String,
+    /// What is in the way on disk, when that is the problem: a folder that is not empty or a
+    /// subfolder there already.
+    pub conflict: Option<ConflictKind>,
+}
+
+impl From<NewProjectProblem> for EngineError {
+    fn from(problem: NewProjectProblem) -> Self {
+        match problem.conflict {
+            Some(kind) => Self::Conflict {
+                kind,
+                message: problem.message,
+            },
+            None => Self::InvalidRequest(problem.message),
+        }
+    }
 }
 
 impl std::fmt::Display for NewProjectProblem {
@@ -588,6 +603,7 @@ impl Engine {
             .map_err(|message| NewProjectProblem {
                 field: NewProjectField::Template,
                 message,
+                conflict: None,
             })?;
         self.check_new_project_with(request, &template)
     }
@@ -598,7 +614,20 @@ impl Engine {
         template: &Template,
     ) -> Result<PathBuf, NewProjectProblem> {
         use NewProjectField::{Git, Location, Name, Subfolder, Version};
-        let problem = |field, message: String| Err(NewProjectProblem { field, message });
+        let problem = |field, message: String| {
+            Err(NewProjectProblem {
+                field,
+                message,
+                conflict: None,
+            })
+        };
+        let in_the_way = |field, kind, message: String| {
+            Err(NewProjectProblem {
+                field,
+                message,
+                conflict: Some(kind),
+            })
+        };
         let root = normalize_path(&request.root);
         if root.as_os_str().is_empty() {
             return problem(Location, "choose a folder for the project".to_owned());
@@ -632,14 +661,19 @@ impl Engine {
                     );
                 }
                 if component.exists() {
-                    return problem(Subfolder, format!("{} exists already", component.display()));
+                    return in_the_way(
+                        Subfolder,
+                        ConflictKind::Exists,
+                        format!("{} exists already", component.display()),
+                    );
                 }
             }
             _ => match is_empty_folder(&root) {
                 Err(message) => return problem(Location, message),
                 Ok(false) => {
-                    return problem(
+                    return in_the_way(
                         Location,
+                        ConflictKind::NotEmpty,
                         format!(
                             "{} is not empty: choose an empty folder, or make the project in a \
                              subfolder such as `docs`",
@@ -697,6 +731,7 @@ impl Engine {
         let plan = plan(request, template, None, None).map_err(|message| NewProjectProblem {
             field: NewProjectField::Template,
             message,
+            conflict: None,
         })?;
         Ok(plan.components.first().cloned().unwrap_or(plan.index))
     }
@@ -771,8 +806,7 @@ impl Engine {
         let template = self
             .template(&request.template)
             .map_err(EngineError::InvalidRequest)?;
-        self.check_new_project_with(request, &template)
-            .map_err(|problem| EngineError::InvalidRequest(problem.message))?;
+        self.check_new_project_with(request, &template)?;
         let root = normalize_path(&request.root);
         // The repository the project is in, or the one it makes, which its playbook builds from.
         let existing = crate::git::repository_root(&root);

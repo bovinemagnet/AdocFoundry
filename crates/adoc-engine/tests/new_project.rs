@@ -10,8 +10,8 @@ use std::{
 
 use adoc_core::SourceRange;
 use adoc_engine::{
-    commands::ids, normalize_path, CommandArgs, CommandOutcome, Engine, EngineError, NewPage,
-    NewProject, NewProjectField, Settings, Welcome,
+    commands::ids, normalize_path, CommandArgs, CommandOutcome, ConflictKind, Engine, EngineError,
+    NewPage, NewProject, NewProjectField, Settings, Welcome,
 };
 use adoc_git::{testing::TestRepo, Repository};
 
@@ -234,6 +234,56 @@ fn new_project_in_a_subfolder_of_a_code_repo() {
         .antora
         .component("demo", None)
         .is_some());
+}
+
+/// A folder that is not empty, or a subfolder there already, is a conflict, told apart by its
+/// kind and not its message, which is the one the app, the CLI and the MCP server show; a
+/// folder that is missing is not.
+#[test]
+fn a_folder_in_the_way_is_a_conflict() {
+    let mut setup = Setup::new();
+    let request = setup.request();
+    let root = request.root.clone();
+    fs::write(root.join("notes.txt"), "kept\n").unwrap();
+    fs::create_dir(root.join("docs")).unwrap();
+    let in_a_subfolder = NewProject {
+        subfolder: Some("docs".to_owned()),
+        ..request.clone()
+    };
+    for (request, kind, expected) in [
+        (
+            request.clone(),
+            ConflictKind::NotEmpty,
+            format!(
+                "{} is not empty: choose an empty folder, or make the project in a subfolder \
+                 such as `docs`",
+                root.display()
+            ),
+        ),
+        (
+            in_a_subfolder,
+            ConflictKind::Exists,
+            format!("{} exists already", root.join("docs").display()),
+        ),
+    ] {
+        let problem = setup.engine.check_new_project(&request).unwrap_err();
+        assert_eq!(problem.conflict, Some(kind), "{problem}");
+        assert_eq!(problem.message, expected);
+        match setup.make(request).unwrap_err() {
+            EngineError::Conflict {
+                kind: made,
+                message,
+            } => {
+                assert_eq!((made, message), (kind, expected));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    let missing = setup
+        .engine
+        .check_new_project(&NewProject::new(setup.workspace.join("missing"), "demo"))
+        .unwrap_err();
+    assert_eq!(missing.conflict, None, "{missing}");
 }
 
 #[test]
