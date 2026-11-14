@@ -906,7 +906,7 @@ impl Engine {
         let text = document.text.to_string();
         let head = head.like(&text);
         let lines = adoc_core::LineIndex::new(head);
-        let start = |line: usize| lines.offset(line, 0).unwrap_or(head.len());
+        let start = |line: usize| lines.line_start(line).unwrap_or(head.len());
         Ok(head[start(hunk.head_lines.start)..start(hunk.head_lines.end)].to_owned())
     }
 

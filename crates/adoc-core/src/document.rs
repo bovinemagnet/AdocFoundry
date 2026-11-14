@@ -93,8 +93,6 @@ impl Document {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LineIndex {
     line_starts: Vec<usize>,
-    /// Where each line's content ends, before its `\n` or `\r\n`.
-    line_ends: Vec<usize>,
     text_len: usize,
 }
 
@@ -102,16 +100,9 @@ impl LineIndex {
     #[must_use]
     pub fn new(text: &str) -> Self {
         let mut line_starts = vec![0];
-        let mut line_ends = Vec::new();
-        for (offset, _) in text.match_indices('\n') {
-            line_starts.push(offset + 1);
-            let crlf = text[..offset].ends_with('\r');
-            line_ends.push(if crlf { offset - 1 } else { offset });
-        }
-        line_ends.push(text.len());
+        line_starts.extend(text.match_indices('\n').map(|(offset, _)| offset + 1));
         Self {
             line_starts,
-            line_ends,
             text_len: text.len(),
         }
     }
@@ -136,12 +127,10 @@ impl LineIndex {
         (line, column)
     }
 
-    /// The offset of 0-based `line` and `column`, the column in bytes, clamped to the end of the
-    /// line's content; `None` past the last line.
+    /// The offset at which 0-based `line` starts; `None` past the last line.
     #[must_use]
-    pub fn offset(&self, line: usize, column: usize) -> Option<usize> {
-        let start = *self.line_starts.get(line)?;
-        Some((start + column).min(self.line_ends[line]))
+    pub fn line_start(&self, line: usize) -> Option<usize> {
+        self.line_starts.get(line).copied()
     }
 }
 
@@ -155,17 +144,18 @@ mod tests {
 
         assert_eq!(index.line_column(0), (0, 0));
         assert_eq!(index.line_column(5), (1, 1));
-        assert_eq!(index.offset(1, 2), Some(6));
-        assert_eq!(index.offset(9, 0), None);
     }
 
     #[test]
-    fn a_column_past_the_end_of_a_line_is_its_end() {
-        // Issue #533: not the start of the next line.
-        assert_eq!(LineIndex::new("one\ntwo\n").offset(0, 99), Some(3));
-        assert_eq!(LineIndex::new("one\r\ntwo\r\n").offset(0, 99), Some(3));
-        assert_eq!(LineIndex::new("one\ntwo").offset(1, 99), Some(7));
-        assert_eq!(LineIndex::new("one\n").offset(1, 5), Some(4));
+    fn a_line_starts_after_the_line_ending_before_it() {
+        // Issue #533: the start of a line is all a caller asks for, and is always a character
+        // boundary, where a byte column need not be.
+        let index = LineIndex::new("héllo\r\ntwo\n");
+        assert_eq!(index.line_start(0), Some(0));
+        assert_eq!(index.line_start(1), Some(8));
+        assert_eq!(index.line_start(2), Some(12), "after the last line ending");
+        assert_eq!(index.line_start(3), None);
+        assert_eq!(LineIndex::new("").line_start(0), Some(0));
     }
 
     #[test]
