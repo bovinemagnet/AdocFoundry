@@ -13,6 +13,7 @@ adoc-index.workspace = true
 adoc-parser.workspace = true
 
 [dev-dependencies]
+adoc-core = { workspace = true, features = ["probe"] }
 tempfile.workspace = true
 
 [lints]

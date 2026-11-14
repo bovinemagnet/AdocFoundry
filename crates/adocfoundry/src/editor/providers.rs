@@ -88,7 +88,7 @@ fn file_uri(path: &Path) -> Uri {
 /// editor underlines while hovering with the modifier held.
 fn link_range(app: &AppState, document: DocumentId, offset: usize) -> Option<SourceRange> {
     let parsed = &app.engine.document(document)?.parsed();
-    let contains = |range: &SourceRange| range.start <= offset && offset < range.end;
+    let contains = |range: &SourceRange| range.contains(offset);
     parsed
         .references
         .iter()

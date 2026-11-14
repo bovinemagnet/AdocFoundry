@@ -22,7 +22,7 @@ pub mod xref;
 use std::path::{Path, PathBuf};
 
 use adoc_antora::ResourceFamily;
-use adoc_core::{Diagnostic, Document, SourceRange};
+use adoc_core::{Diagnostic, Document};
 use adoc_index::normalize_path;
 use adoc_parser::parse;
 
@@ -96,7 +96,7 @@ pub fn definition_in(
         if let Some(image) = document
             .images
             .iter()
-            .find(|image| contains(image.range, offset))
+            .find(|image| image.range.contains(offset))
         {
             return images::resolve_image(&ws.index, &ws.antora, path, document, &image.target)
                 .map(DefinitionTarget::External);
@@ -132,10 +132,6 @@ fn attribute_definition(
         .winning_step()?
         .location
         .clone()
-}
-
-fn contains(range: SourceRange, offset: usize) -> bool {
-    range.start <= offset && offset < range.end
 }
 
 #[must_use]

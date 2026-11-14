@@ -42,7 +42,7 @@ pub fn hover_at_offset(
     if let Some(reference) = document
         .references
         .iter()
-        .find(|reference| contains_offset(reference.range, offset))
+        .find(|reference| reference.range.contains(offset))
     {
         let target = definition_at_offset(index, antora, current_path, document, offset)?;
         let anchor = match reference.kind {
@@ -63,7 +63,7 @@ pub fn hover_at_offset(
     if let Some(include) = document
         .includes
         .iter()
-        .find(|include| contains_offset(include.range, offset))
+        .find(|include| include.range.contains(offset))
     {
         let target = definition_at_offset(index, antora, current_path, document, offset)?;
         return Some(HoverContent {
@@ -75,7 +75,7 @@ pub fn hover_at_offset(
     let image = document
         .images
         .iter()
-        .find(|image| contains_offset(image.range, offset))?;
+        .find(|image| image.range.contains(offset))?;
     let path = resolve_image(index, antora, current_path, document, &image.target)?;
     Some(HoverContent {
         markdown: describe_file(index, antora, current_path, &path, None),
@@ -256,10 +256,6 @@ fn display_path(path: &Path, current_path: &Path) -> String {
         Some(relative) => slashed(relative),
         None => path.display().to_string(),
     }
-}
-
-fn contains_offset(range: SourceRange, offset: usize) -> bool {
-    range.start <= offset && offset < range.end
 }
 
 #[cfg(test)]

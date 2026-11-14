@@ -4,9 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use adoc_core::{
-    section_ids, Document, IdStyle, Location, Reference, ReferenceKind, Section, SourceRange,
-};
+use adoc_core::{Document, IdStyle, Location, Reference, ReferenceKind, Section, SourceRange};
 use adoc_index::{normalize_path, FileEntry, IncludeLocation, ReferenceLocation};
 
 use crate::{definition::reference_target_path, with_document, WorkspaceState};
@@ -120,7 +118,7 @@ pub fn anchor_at(
     if let Some(anchor) = document
         .anchors
         .iter()
-        .find(|anchor| anchor.range.start <= offset && offset < anchor.range.end)
+        .find(|anchor| anchor.range.contains(offset))
     {
         return Some(AnchorTarget {
             path: path.to_path_buf(),
@@ -131,23 +129,35 @@ pub fn anchor_at(
     if let Some(section) = document
         .sections
         .iter()
-        .position(|section| section.range.start <= offset && offset <= section.range.end)
+        .position(|section| section.range.contains_or_ends_at(offset))
     {
-        let id = crate::xref::section_ids(&ws.antora, path, document).swap_remove(section);
+        let id = crate::xref::section_ids(&ws.index, &ws.antora, path, document)[section].clone();
         return (!id.is_empty()).then(|| AnchorTarget {
             path: path.to_path_buf(),
             id,
         });
     }
-    let reference = document
+    if let Some(reference) = document
         .references
         .iter()
-        .find(|reference| reference.range.start <= offset && offset < reference.range.end)?;
-    let (target, id) = fragment_target(ws, path, reference)?;
-    Some(AnchorTarget {
-        path: target,
-        id: id.to_owned(),
-    })
+        .find(|reference| reference.range.contains(offset))
+    {
+        let (target, id) = fragment_target(ws, path, reference)?;
+        return Some(AnchorTarget {
+            path: target,
+            id: id.to_owned(),
+        });
+    }
+    // A caret just after an anchor, at the end of its line say, still names it, as one at the
+    // end of a heading does; a reference beginning there was taken above.
+    document
+        .anchors
+        .iter()
+        .find(|anchor| anchor.range.contains_or_ends_at(offset))
+        .map(|anchor| AnchorTarget {
+            path: path.to_path_buf(),
+            id: anchor.id.clone(),
+        })
 }
 
 /// Renames the anchor at `offset` to `new_id`: the edits to its declaration and to every
@@ -265,9 +275,8 @@ fn anchor_ids(ws: &WorkspaceState, anchor: &AnchorTarget) -> Vec<String> {
     if let Some(file) = ws.index.file(&anchor.path) {
         let document = &file.document;
         if let Some((at, section)) = generated_section(ws, &anchor.path, document, &anchor.id) {
-            let numbered = [IdStyle::Antora, IdStyle::Asciidoctor].map(|style| {
-                section_ids(&document.sections, &document.anchors, style).swap_remove(at)
-            });
+            let numbered = [IdStyle::Antora, IdStyle::Asciidoctor]
+                .map(|style| file.section_ids().numbered(style)[at].clone());
             let unnumbered = [IdStyle::Antora, IdStyle::Asciidoctor]
                 .map(|style| style.generate(&section.title).unwrap_or_default());
             if numbered == unnumbered {
@@ -290,13 +299,13 @@ fn generated_section<'a>(
     document: &'a Document,
     id: &str,
 ) -> Option<(usize, &'a Section)> {
-    let ids = crate::xref::section_ids(&ws.antora, path, document);
+    let ids = crate::xref::section_ids(&ws.index, &ws.antora, path, document);
     document
         .sections
         .iter()
-        .zip(ids)
+        .zip(ids.iter())
         .enumerate()
-        .find(|(_, (section, generated))| section.id.is_none() && generated == id)
+        .find(|(_, (section, generated))| section.id.is_none() && *generated == id)
         .map(|(at, (section, _))| (at, section))
 }
 
@@ -450,6 +459,32 @@ mod tests {
         assert_eq!(found, expected);
     }
 
+    /// Issue #533: a caret just after `[[setup]]`, at the end of its line, names the anchor, as a
+    /// caret at the end of a heading names its section, rather than the page.
+    #[test]
+    fn a_caret_at_the_end_of_an_anchor_names_it() {
+        let ws = workspace();
+        let index = fixture("index.adoc");
+        let text = std::fs::read_to_string(&index).unwrap();
+        let inside = text.find("[[setup]]").unwrap() + 3;
+        let at_end = text.find("[[setup]]").unwrap() + "[[setup]]".len();
+        assert_eq!(
+            references_at(&ws, &index, &text, at_end),
+            references_at(&ws, &index, &text, inside)
+        );
+        assert!(rename_anchor(&ws, &index, &text, at_end, "install").is_some());
+        // A reference that begins where an anchor ends is still the reference's.
+        let text = "= Page\n\n[[here]]<<there>>\n\n[[there]]\nText.\n";
+        let page = normalize_path(Path::new("/docs/page.adoc"));
+        let mut ws = WorkspaceState::new();
+        ws.index.index_source(&page, text);
+        let between = text.find("<<there>>").unwrap();
+        let named = with_document(&ws, &page, text, |document| {
+            anchor_at(&ws, &page, document, between)
+        });
+        assert_eq!(named.map(|anchor| anchor.id).as_deref(), Some("there"));
+    }
+
     #[test]
     fn renaming_an_anchor_edits_its_declaration_and_references() {
         let ws = workspace();
@@ -549,6 +584,27 @@ mod tests {
         let heading = text.find("First").unwrap();
         let found = references_at(&ws, &page, &text, heading);
         assert_eq!(found.len(), 2, "{found:?}");
+    }
+
+    /// Issue #533: a heading's id, and the ids its references may use, come from the ids kept
+    /// with the page's index entry, not from generating every section's id again.
+    #[test]
+    fn a_heading_reads_its_ids_from_the_index() {
+        use adoc_core::probe::{self, Probe};
+        let mut ws = WorkspaceState::new();
+        let page = normalize_path(Path::new("/docs/page.adoc"));
+        let mut text = String::from("= Page\n\n");
+        for n in 0..20 {
+            text.push_str(&format!("== Topic {n}\n\nText.\n\n"));
+        }
+        text.push_str("See <<_topic_19>>.\n");
+        ws.index.index_source(&page, &text);
+        let heading = text.find("== Topic 19").unwrap() + 3;
+        probe::reset();
+        let found = references_at(&ws, &page, &text, heading);
+        assert_eq!(found.len(), 1, "{found:?}");
+        // The one section's forms, in each style, whatever the number of sections.
+        assert_eq!(probe::count(Probe::SectionId), 4);
     }
 
     /// The second of two sections with one title is `_parameters_2`, so its references are

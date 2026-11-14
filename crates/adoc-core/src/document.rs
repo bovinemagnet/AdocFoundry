@@ -23,6 +23,20 @@ impl SourceRange {
     pub const fn is_empty(self) -> bool {
         self.start >= self.end
     }
+
+    /// Whether `offset` is one of the range's bytes: at or after its start and before its end.
+    /// An empty range contains nothing; [`SourceRange::contains_or_ends_at`] also takes the end.
+    #[must_use]
+    pub const fn contains(self, offset: usize) -> bool {
+        self.start <= offset && offset < self.end
+    }
+
+    /// Whether `offset` is in the range or at its end, as a caret just after the last character
+    /// of a word is still taken to be on it.
+    #[must_use]
+    pub const fn contains_or_ends_at(self, offset: usize) -> bool {
+        self.start <= offset && offset <= self.end
+    }
 }
 
 /// A range in a file.
@@ -147,7 +161,33 @@ impl LineIndex {
 
 #[cfg(test)]
 mod tests {
-    use super::LineIndex;
+    use super::{LineIndex, SourceRange};
+
+    #[test]
+    fn a_range_contains_its_start_but_not_its_end() {
+        let range = SourceRange::new(2, 5);
+        assert!(!range.contains(1));
+        assert!(range.contains(2));
+        assert!(range.contains(4));
+        assert!(!range.contains(5));
+        assert!(
+            !SourceRange::new(3, 3).contains(3),
+            "an empty range holds nothing"
+        );
+    }
+
+    #[test]
+    fn a_range_contains_or_ends_at_its_end() {
+        let range = SourceRange::new(2, 5);
+        assert!(!range.contains_or_ends_at(1));
+        assert!(range.contains_or_ends_at(2));
+        assert!(range.contains_or_ends_at(5));
+        assert!(!range.contains_or_ends_at(6));
+        assert!(
+            SourceRange::new(3, 3).contains_or_ends_at(3),
+            "a caret at an empty range is at its end"
+        );
+    }
 
     #[test]
     fn maps_offsets_to_zero_based_lines_and_columns() {

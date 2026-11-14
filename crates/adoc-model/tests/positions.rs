@@ -16,7 +16,7 @@ fn build(text: &str) -> Model {
 fn by_walking(model: &Model, offset: usize) -> Option<BlockPath> {
     model
         .text_blocks()
-        .filter(|(_, _, text)| text.range.start <= offset && offset <= text.range.end)
+        .filter(|(_, _, text)| text.range.contains_or_ends_at(offset))
         .last()
         .map(|(path, ..)| path)
 }
