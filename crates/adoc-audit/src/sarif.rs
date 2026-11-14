@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use adoc_core::SourceRange;
+use adoc_core::{LineIndex, SourceRange};
 use serde_json::{json, Value};
 
 use crate::{AuditReport, Completeness, Finding, FindingCode, Location, Severity};
@@ -26,21 +26,14 @@ pub struct Region {
 }
 
 impl Region {
-    /// The region of `range` in `text`, counting columns in characters. Offsets past the end, or
+    /// The region of `range` in `text`, counting columns in characters; `lines` is the
+    /// [`LineIndex`] of `text`, built once for all of a file's regions. Offsets past the end, or
     /// inside a character, are moved back to a character boundary.
     #[must_use]
-    pub fn of(text: &str, range: SourceRange) -> Self {
+    pub fn of(text: &str, lines: &LineIndex, range: SourceRange) -> Self {
         let place = |offset: usize| {
-            let mut offset = offset.min(text.len());
-            while !text.is_char_boundary(offset) {
-                offset -= 1;
-            }
-            let before = &text[..offset];
-            let line_start = before.rfind('\n').map_or(0, |newline| newline + 1);
-            (
-                before.matches('\n').count() + 1,
-                text[line_start..offset].chars().count() + 1,
-            )
+            let (line, column) = lines.line_character(text, offset);
+            (line + 1, column + 1)
         };
         let (start_line, start_column) = place(range.start);
         let (end_line, end_column) = place(range.end.max(range.start));
@@ -236,9 +229,10 @@ mod tests {
     #[test]
     fn regions_count_lines_and_characters_from_one() {
         let text = "= Café\n\nimage::a.png[]\n";
+        let lines = LineIndex::new(text);
         let start = text.find("image").unwrap();
         assert_eq!(
-            Region::of(text, SourceRange::new(start, start + 5)),
+            Region::of(text, &lines, SourceRange::new(start, start + 5)),
             Region {
                 start_line: 3,
                 start_column: 1,
@@ -247,13 +241,13 @@ mod tests {
             }
         );
         let after = text.find('é').unwrap() + 'é'.len_utf8();
-        let region = Region::of(text, SourceRange::new(after, after));
+        let region = Region::of(text, &lines, SourceRange::new(after, after));
         assert_eq!(
             (region.start_line, region.start_column),
             (1, 7),
             "é is one column"
         );
-        let region = Region::of(text, SourceRange::new(after - 1, 999));
+        let region = Region::of(text, &lines, SourceRange::new(after - 1, 999));
         assert_eq!(
             region.start_column, 6,
             "inside a character moves back to its start"

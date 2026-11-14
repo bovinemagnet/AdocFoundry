@@ -11,7 +11,7 @@ pub fn line_hunks(head: &str, current: &str) -> Vec<Hunk> {
     let input = InternedInput::new(head, current);
     let diff = Diff::compute(Algorithm::Myers, &input);
     let index = LineIndex::new(current);
-    let line_start = |line: usize| index.offset(line, 0).unwrap_or(current.len());
+    let line_start = |line: usize| index.line_start(line).unwrap_or(current.len());
     diff.hunks()
         .map(|hunk| {
             let head_lines = hunk.before.start as usize..hunk.before.end as usize;

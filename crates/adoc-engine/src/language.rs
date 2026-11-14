@@ -114,7 +114,7 @@ impl Engine {
                 };
                 let lines = LineIndex::new(&text);
                 let (line, _) = lines.line_column(location.range.start);
-                let start = lines.offset(line, 0).unwrap_or(0);
+                let start = lines.line_start(line).unwrap_or(0);
                 let end = text[start..]
                     .find('\n')
                     .map_or(text.len(), |end| start + end);

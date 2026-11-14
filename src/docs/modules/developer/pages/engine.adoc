@@ -942,7 +942,7 @@ The engine holds one policy (`Engine::set_file_access` and `Engine::file_access`
 `adoc-pdf` receives it through `PdfOptions::access`.
 When the policy is confined, the engine chooses `Diagrams::in_process`, so only Mermaid renders and Graphviz, PlantUML and D2 are not run, as they can read files themselves.
 
-`adoc-mcp` sets `FileAccess::Within(roots)` before it opens the workspace.
+`adoc-mcp` sets `FileAccess::within(roots)` before it opens the workspace.
 The application, `adocfoundry-cli` and `adoc-ls` leave it at `Any`.
 
 == Search, replace and rename previews

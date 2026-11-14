@@ -68,7 +68,7 @@ fn find_matches(regex: &Regex, path: &Path, text: &str, limit: usize, out: &mut 
     {
         let lines = lines.get_or_insert_with(|| LineIndex::new(text));
         let (line, _) = lines.line_column(found.start());
-        let line_start = lines.offset(line, 0).unwrap_or(0);
+        let line_start = lines.line_start(line).unwrap_or(0);
         let line_end = text[line_start..]
             .find('\n')
             .map_or(text.len(), |end| line_start + end);

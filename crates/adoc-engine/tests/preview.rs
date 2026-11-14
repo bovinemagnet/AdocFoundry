@@ -621,12 +621,12 @@ fn confined_access_reads_no_include_outside_the_roots() {
         "{any}"
     );
 
-    let confined = rendered(adoc_engine::FileAccess::Within(vec![root.clone()]));
+    let confined = rendered(adoc_engine::FileAccess::within(vec![root.clone()]));
     assert!(confined.contains("Inside text."), "{confined}");
     assert!(!confined.contains("OUTSIDE-MARKER"), "{confined}");
 
     let mut engine = Engine::new(Settings::default());
-    engine.set_file_access(adoc_engine::FileAccess::Within(vec![root.clone()]));
+    engine.set_file_access(adoc_engine::FileAccess::within(vec![root.clone()]));
     assert!(engine.open(&outside.join("outside.adoc")).is_err());
 }
 

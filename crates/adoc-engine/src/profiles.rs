@@ -182,7 +182,7 @@ impl Engine {
         );
         // A profile comes with the workspace's files, so it writes only inside the workspace,
         // lexically and once links are followed; a front end's own output choice is not limited.
-        if !FileAccess::Within(vec![root.clone()]).permits(&output) {
+        if !FileAccess::within(vec![root.clone()]).permits(&output) {
             return Err(EngineError::Refused(format!(
                 "PDF profile `{name}` writes {}, which is outside the workspace",
                 output.display()
