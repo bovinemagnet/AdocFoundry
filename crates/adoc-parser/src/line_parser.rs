@@ -1014,8 +1014,29 @@ pub(crate) fn mask_passthroughs(line: &str) -> Cow<'_, str> {
 /// The byte spans of `pass:[…]`, `+++…+++`, `++…++`, `$$…$$` and constrained `+…+`
 /// passthroughs.
 fn passthrough_spans(line: &str) -> Vec<(usize, usize)> {
+    scan_passthroughs(line).spans
+}
+
+/// Where the passthrough that `line` leaves open begins, read as `passthrough_spans` reads
+/// passthroughs: the first opening that could begin one and finds no close. Completion asks
+/// with the text before the caret, which then stands inside it.
+///
+/// An unclosed run of plus signs counts only where a constrained `+` could open, after a
+/// non-word character and before a non-space one: a closed `++` may open after a word, but
+/// an unclosed one there is far more often `C++`.
+pub(crate) fn open_passthrough(line: &str) -> Option<usize> {
+    scan_passthroughs(line).open
+}
+
+#[derive(Default)]
+struct Passthroughs {
+    spans: Vec<(usize, usize)>,
+    open: Option<usize>,
+}
+
+fn scan_passthroughs(line: &str) -> Passthroughs {
     let bytes = line.as_bytes();
-    let mut spans = Vec::new();
+    let mut found = Passthroughs::default();
     let mut index = 0;
     while index < bytes.len() {
         match bytes[index] {
@@ -1025,19 +1046,27 @@ fn passthrough_spans(line: &str) -> Vec<(usize, usize)> {
             b'p' if line[index..].starts_with("pass:") && is_boundary(line, index) => {
                 match pass_macro_end(line, index) {
                     Some(end) => {
-                        spans.push((index, end));
+                        found.spans.push((index, end));
                         index = end;
                     }
-                    None => index += 1,
+                    None => {
+                        if pass_macro_content(line, index).is_some() {
+                            found.open.get_or_insert(index);
+                        }
+                        index += 1;
+                    }
                 }
             }
             b'$' if line[index..].starts_with("$$") => match line[index + 2..].find("$$") {
                 Some(relative) => {
                     let end = index + 2 + relative + 2;
-                    spans.push((index, end));
+                    found.spans.push((index, end));
                     index = end;
                 }
-                None => index += 2,
+                None => {
+                    found.open.get_or_insert(index);
+                    index += 2;
+                }
             },
             b'+' => {
                 let run = bytes[index..]
@@ -1046,31 +1075,48 @@ fn passthrough_spans(line: &str) -> Vec<(usize, usize)> {
                     .count();
                 match plus_passthrough_end(line, index, run) {
                     Some(end) => {
-                        spans.push((index, end));
+                        found.spans.push((index, end));
                         index = end;
                     }
-                    None => index += run,
+                    None => {
+                        if run <= 3 && plus_opens(line, index, run) {
+                            found.open.get_or_insert(index);
+                        }
+                        index += run;
+                    }
                 }
             }
             _ => index += 1,
         }
     }
-    spans
+    found
+}
+
+/// Where the content of `pass:subs[` starting at `start` begins, when its substitutions are
+/// a list Asciidoctor reads.
+fn pass_macro_content(line: &str, start: usize) -> Option<usize> {
+    let after = start + "pass:".len();
+    let open = after + line[after..].find('[')?;
+    let substitutions = &line[after..open];
+    substitutions
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || character == ',')
+        .then_some(open + 1)
 }
 
 /// The end of `pass:subs[content]` starting at `start`.
 fn pass_macro_end(line: &str, start: usize) -> Option<usize> {
-    let after = start + "pass:".len();
-    let open = after + line[after..].find('[')?;
-    let substitutions = &line[after..open];
-    if !substitutions
-        .chars()
-        .all(|character| character.is_ascii_alphanumeric() || character == ',')
-    {
-        return None;
-    }
-    let close = open + 1 + line[open + 1..].find(']')?;
+    let content = pass_macro_content(line, start)?;
+    let close = content + line[content..].find(']')?;
     Some(close + 1)
+}
+
+/// Whether a run of `run` plus signs at `start` may open a constrained passthrough: after a
+/// non-word character, and with no space after it.
+fn plus_opens(line: &str, start: usize, run: usize) -> bool {
+    line[..start].chars().next_back().is_none_or(|character| {
+        !character.is_alphanumeric() && !matches!(character, '_' | ';' | ':')
+    }) && !line[start + run..].starts_with(|character: char| character.is_whitespace())
 }
 
 /// The end of a passthrough opened by a run of `run` plus signs at `start`.
@@ -1086,13 +1132,10 @@ fn plus_passthrough_end(line: &str, start: usize, run: usize) -> Option<usize> {
         // `+…+` is constrained: it opens after a non-word character, and its content starts
         // and ends with a non-space character before a closing `+` that ends a word.
         1 => {
-            let opens = line[..start].chars().next_back().is_none_or(|character| {
-                !character.is_alphanumeric() && !matches!(character, '_' | ';' | ':')
-            });
-            let content = start + 1;
-            if !opens || line[content..].starts_with(|character: char| character.is_whitespace()) {
+            if !plus_opens(line, start, run) {
                 return None;
             }
+            let content = start + 1;
             line[content..]
                 .match_indices('+')
                 .map(|(relative, _)| content + relative)
