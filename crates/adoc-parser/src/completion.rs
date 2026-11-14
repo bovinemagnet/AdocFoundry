@@ -1,6 +1,10 @@
 use adoc_core::SourceRange;
 
-use crate::line_parser::{content, is_boundary, is_line_comment, Verbatim, VerbatimBlocks};
+use crate::line_parser::{
+    content, find_anchors, is_block_metadata, is_boundary, is_line_comment, mask_passthroughs,
+    open_passthrough, Verbatim, VerbatimBlocks,
+};
+use crate::table::Tables;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CompletionKind {
@@ -46,7 +50,7 @@ pub fn completion_context(text: &str, offset: usize) -> Option<CompletionContext
     let line_start = text[..offset].rfind('\n').map_or(0, |newline| newline + 1);
     let typed = &text[line_start..offset];
 
-    match block_state(text, line_start) {
+    match block_state(text, line_start, offset) {
         // Asciidoctor expands nothing inside a comment block.
         BlockState::Comment => None,
         // Asciidoctor processes includes inside listing, literal and passthrough blocks,
@@ -63,24 +67,89 @@ enum BlockState {
     Comment,
 }
 
-fn block_state(text: &str, line_start: usize) -> BlockState {
+/// Where the line starting at `line_start` falls among the blocks, the caret at `offset`: a
+/// literal table cell is read as verbatim content, as `parse_document` reads it.
+fn block_state(text: &str, line_start: usize, offset: usize) -> BlockState {
     let mut verbatim = VerbatimBlocks::default();
+    let mut tables = Tables::default();
+    let mut attributes = Vec::new();
     let before = &text[..line_start];
-    for line in before
-        .strip_prefix('\u{feff}')
-        .unwrap_or(before)
-        .split_inclusive('\n')
-    {
+    let lines = before.strip_prefix('\u{feff}').unwrap_or(before);
+    let mut end = before.len() - lines.len();
+    for line in lines.split_inclusive('\n') {
+        end += line.len();
         let line = content(line);
         // Conditional lines are removed first, as `parse_document` removes them.
-        if verbatim.directive(line).is_none() {
-            verbatim.line(line.trim());
+        if verbatim.directive(line).is_some() {
+            continue;
         }
+        let kind = verbatim.line(line.trim());
+        tables.line(line, kind == Verbatim::No, &attributes, &text[end..]);
+        keep_block_attributes(&mut attributes, line, kind);
     }
     match verbatim.next() {
         Verbatim::Comment => BlockState::Comment,
         Verbatim::Content => BlockState::Verbatim,
-        Verbatim::No | Verbatim::Delimiter | Verbatim::Underline(_) => BlockState::Body,
+        Verbatim::No | Verbatim::Delimiter | Verbatim::Underline(_) => {
+            let rest = &text[line_start..];
+            let rest = match rest.strip_prefix('\u{feff}') {
+                Some(stripped) if line_start == 0 => stripped,
+                _ => rest,
+            };
+            let caret = offset - (text.len() - rest.len()).min(offset);
+            let line = content(rest.split_inclusive('\n').next().unwrap_or_default());
+            let literal = if verbatim.directive(line).is_some() {
+                Vec::new()
+            } else {
+                // The line cannot open a table here: the caret on `|===` completes nothing.
+                tables.line(line, false, &attributes, "")
+            };
+            if literal
+                .iter()
+                .any(|&(start, end)| start <= caret && caret <= end)
+            {
+                BlockState::Verbatim
+            } else {
+                BlockState::Body
+            }
+        }
+    }
+}
+
+/// Keeps the block attribute lists since the last block as `parse_document` keeps them, for
+/// the `cols` and options of a table that opens: a block attribute line adds its list, and
+/// other block metadata, a lone anchor, a line comment and a blank line keep those before.
+fn keep_block_attributes(attributes: &mut Vec<String>, line: &str, kind: Verbatim) {
+    let trimmed = line.trim();
+    match kind {
+        Verbatim::No => {}
+        // A comment block is no block.
+        Verbatim::Comment => return,
+        Verbatim::Delimiter if trimmed.starts_with('/') => return,
+        Verbatim::Delimiter | Verbatim::Content | Verbatim::Underline(_) => {
+            attributes.clear();
+            return;
+        }
+    }
+    if is_line_comment(trimmed) {
+        return;
+    }
+    if let Some(inside) = trimmed
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+    {
+        if !trimmed.starts_with("[[") {
+            attributes.push(inside.to_owned());
+        }
+        return;
+    }
+    let anchors = find_anchors(&mask_passthroughs(line), 0);
+    let anchor_only = matches!(
+        anchors.as_slice(),
+        [anchor] if anchor.range == SourceRange::new(0, line.trim_end().len())
+    );
+    if !trimmed.is_empty() && !anchor_only && !is_block_metadata(trimmed) {
+        attributes.clear();
     }
 }
 
@@ -103,6 +172,18 @@ fn line_context(
         }
     }
 
+    // Nothing inside a passthrough is a reference: none is offered inside one closed before
+    // the caret, as the parser reads none there, nor inside one still open (#532). An include
+    // is a line of its own, read before passthroughs are.
+    let open = open_passthrough(typed).is_some();
+    let masked = mask_passthroughs(typed);
+    let source = |marker: Marker| {
+        if marker == Marker::Include {
+            typed
+        } else {
+            &*masked
+        }
+    };
     let mut best: Option<(usize, usize, Marker)> = None;
 
     for (prefix, marker) in [
@@ -110,15 +191,15 @@ fn line_context(
         ("xref:", Marker::Xref),
         ("image:", Marker::Image),
     ] {
-        if includes_only && marker != Marker::Include {
+        if marker != Marker::Include && (includes_only || open) {
             continue;
         }
-        let Some(start) = last_macro_start(typed, prefix) else {
+        let Some(start) = last_macro_start(source(marker), prefix) else {
             continue;
         };
         let mut target_start = start + prefix.len();
         // `image::` is the block form of the same macro.
-        if marker == Marker::Image && typed[target_start..].starts_with(':') {
+        if marker == Marker::Image && masked[target_start..].starts_with(':') {
             target_start += 1;
         }
         if best.is_none_or(|(existing, _, _)| start > existing) {
@@ -126,11 +207,11 @@ fn line_context(
         }
     }
 
-    if !includes_only {
+    if !includes_only && !open {
         // `<<<` is a page break, and `\<<` shows the brackets as written.
-        if let Some(start) = typed
+        if let Some(start) = masked
             .rfind("<<")
-            .filter(|&start| !typed[..start].ends_with(['<', '\\']))
+            .filter(|&start| !masked[..start].ends_with(['<', '\\']))
         {
             if best.is_none_or(|(existing, _, _)| start > existing) {
                 best = Some((start, start + 2, Marker::Anchor));
@@ -139,7 +220,7 @@ fn line_context(
     }
 
     let (_, target_start, marker) = best?;
-    let target = &typed[target_start..];
+    let target = &source(marker)[target_start..];
     // A `[` closes the target, and no target spans whitespace: the cursor has left it.
     if target.contains('[') || target.chars().any(char::is_whitespace) {
         return None;
@@ -312,6 +393,116 @@ mod tests {
     fn offers_no_anchor_after_a_page_break_or_an_escape() {
         for text in ["<<<", "\\<<int"] {
             assert_eq!(completion_context(text, text.len()), None, "{text}");
+        }
+    }
+
+    /// Nothing inside a passthrough is a reference, so while one opened earlier on the line is
+    /// still unclosed no target is offered, though an include still is (#532).
+    #[test]
+    fn offers_no_reference_inside_a_half_typed_passthrough() {
+        for text in [
+            "See +xref:ge",
+            "(+xref:ge",
+            "pass:[xref:ge",
+            "pass:q,a[xref:ge",
+            "+++xref:ge",
+            "See ++xref:ge",
+            "$$xref:ge",
+            "pass:[xref:other.adoc#det",
+            "See +<<int",
+            "pass:[<<int",
+            "+++image:arch",
+            "$$image::arch",
+        ] {
+            assert_eq!(completion_context(text, text.len()), None, "{text}");
+        }
+
+        let text = "include::partial$no";
+        let context = completion_context(text, text.len()).expect("a context");
+        assert_eq!(context.kind, CompletionKind::IncludeTarget);
+    }
+
+    /// A plus sign that cannot open a constrained passthrough, after a word character or
+    /// before a space, leaves the line to complete as before, as does an escaped opening.
+    #[test]
+    fn completes_after_plus_signs_that_open_no_passthrough() {
+        for (text, kind) in [
+            ("C++ xref:ge", CompletionKind::XrefTarget),
+            ("Use C++ or <<int", CompletionKind::LocalAnchor),
+            ("a + b xref:ge", CompletionKind::XrefTarget),
+            ("1+xref:ge", CompletionKind::XrefTarget),
+            ("\\+xref:ge", CompletionKind::XrefTarget),
+            ("\\pass:[xref:ge", CompletionKind::XrefTarget),
+            ("pass: [xref:ge", CompletionKind::XrefTarget),
+            ("costs $5 image:arch", CompletionKind::ImageTarget),
+        ] {
+            let context = completion_context(text, text.len()).expect(text);
+            assert_eq!(context.kind, kind, "{text}");
+        }
+    }
+
+    /// A closed passthrough reads as the parser reads it: nothing inside it completes, and
+    /// what follows it does.
+    #[test]
+    fn a_closed_passthrough_hides_only_what_it_holds() {
+        for text in [
+            "See +xref:a+",
+            "pass:[xref:a]",
+            "+++xref:a+++",
+            "$$xref:a$$",
+        ] {
+            assert_eq!(completion_context(text, text.len()), None, "{text}");
+        }
+        for (text, kind, prefix) in [
+            ("+xref:a+ then xref:ge", CompletionKind::XrefTarget, "ge"),
+            ("pass:[xref:a] xref:ge", CompletionKind::XrefTarget, "ge"),
+            ("$$a$$ <<int", CompletionKind::LocalAnchor, "int"),
+            ("++<<a>>++ image:arch", CompletionKind::ImageTarget, "arch"),
+        ] {
+            let context = completion_context(text, text.len()).expect(text);
+            assert_eq!(context.kind, kind, "{text}");
+            assert_eq!(context.prefix, prefix, "{text}");
+        }
+    }
+
+    /// A literal table cell is shown as written, so only an include completes in it, as in a
+    /// listing block (#532).
+    #[test]
+    fn offers_only_includes_in_a_literal_table_cell() {
+        for text in [
+            "|===\n|a l|xref:ge",
+            "|===\nl|first\nsecond <<int",
+            "[cols=\"1,1l\"]\n|===\n|a |xref:ge",
+            "[cols=\"1,1l\"]\n.Title\n\n|===\n|a |image:arch",
+            "|===\nl|{prod",
+        ] {
+            assert_eq!(completion_context(text, text.len()), None, "{text}");
+        }
+
+        // The caret in a literal cell with more cells after it.
+        let text = "|===\nl|xref:ge |b\n|===\n";
+        let offset = text.find(" |b").expect("the next cell");
+        assert_eq!(completion_context(text, offset), None);
+
+        let text = "|===\nl|x\ninclude::partial$no";
+        let context = completion_context(text, text.len()).expect("a context");
+        assert_eq!(context.kind, CompletionKind::IncludeTarget);
+    }
+
+    /// Other cells, the header row, text after the table and a `|===` inside a listing block
+    /// complete as before.
+    #[test]
+    fn completes_outside_literal_table_cells() {
+        for text in [
+            "|===\nl|a |xref:ge",
+            "[%header]\n|===\nl|xref:ge",
+            "[cols=\"1,1l\"]\n|===\n|a |b\n\n|c d|xref:ge",
+            "|===\nl|<<a>>\n|===\n\nSee xref:ge",
+            "----\n|===\n----\nl|xref:ge",
+            "[cols=\"1,1l\"]\n\nSee xref:a[]\n\n|===\n|a |xref:ge",
+        ] {
+            let context = completion_context(text, text.len()).expect(text);
+            assert_eq!(context.kind, CompletionKind::XrefTarget, "{text}");
         }
     }
 
