@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 use adoc_core::{
     Anchor, Diagnostic, DiagnosticCode, DiagnosticSeverity, Document, DocumentTitle,
@@ -11,6 +11,7 @@ use crate::line_parser::{
     parse_attribute, parse_heading, trailing_anchor, Conditional, Heading, Verbatim,
     VerbatimBlocks,
 };
+use crate::table::Tables;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParseResult {
@@ -47,6 +48,7 @@ pub fn parse(uri: &str, text: &str) -> ParseResult {
 fn parse_document(uri: &str, text: &str) -> ParseResult {
     let mut document = Document::new(uri, text);
     let mut verbatim = VerbatimBlocks::default();
+    let mut tables = Tables::default();
     let mut pending_anchor: Option<String> = None;
     // The last line read as text: where it starts, its content and the anchor before it, for
     // a two-line title whose underline follows.
@@ -66,6 +68,7 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         Some(source) => (source, '\u{feff}'.len_utf8()),
         None => (text, 0),
     };
+    let start = offset;
 
     for line in source.split_inclusive('\n') {
         let line_content = content(line);
@@ -130,7 +133,15 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
 
         // A heading only where a block begins, judged before the line is read.
         let heading = parse_heading(line, offset).filter(|_| verbatim.begins_block());
-        match verbatim.line(trimmed) {
+        let kind = verbatim.line(trimmed);
+        // The text of literal table cells, which Asciidoctor shows as it is written.
+        let literal = tables.line(
+            line_content,
+            kind == Verbatim::No,
+            &block_attributes,
+            &source[offset - start + line.len()..],
+        );
+        match kind {
             Verbatim::No => {}
             Verbatim::Underline(marker_level) => {
                 if let Some((start, title_line, pending)) = previous.take() {
@@ -195,7 +206,7 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         previous = Some((offset, line_content, pending_anchor.clone()));
 
         // Inline extraction sees passthroughs blanked out; includes are whole-line directives.
-        let inline = mask_passthroughs(line);
+        let inline = mask_spans(mask_passthroughs(line), &literal);
         let anchors = find_anchors(&inline, offset);
         let anchor_only = anchors.len() == 1
             && anchors[0].range == SourceRange::new(offset, offset + line_content.trim_end().len());
@@ -281,6 +292,18 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         .diagnostics
         .sort_by_key(|diagnostic| diagnostic.range);
     ParseResult { document }
+}
+
+/// `line` with the byte ranges `spans` blanked out, offsets kept.
+fn mask_spans<'a>(line: Cow<'a, str>, spans: &[(usize, usize)]) -> Cow<'a, str> {
+    if spans.is_empty() {
+        return line;
+    }
+    let mut masked = line.into_owned();
+    for &(start, end) in spans {
+        masked.replace_range(start..end, &" ".repeat(end - start));
+    }
+    Cow::Owned(masked)
 }
 
 /// An attribute value's text without the ` \` that continues it on the next line, and whether
@@ -1687,5 +1710,96 @@ image::diagram.png[Architecture]\n";
             let _ = broken_code_spans(source);
         }
         assert_eq!(broken_code_spans("`é`s\n").len(), 1);
+    }
+
+    /// The targets of `source`'s cross references, in order.
+    fn targets(source: &str) -> Vec<String> {
+        parse("file:///doc.adoc", source)
+            .document
+            .references
+            .into_iter()
+            .map(|reference| reference.target)
+            .collect()
+    }
+
+    /// Issue #532: Asciidoctor shows a literal table cell (`l|`, or a cell of a column `cols`
+    /// marks `l`) as it is written, so what looks like a reference or an anchor in it is
+    /// text. Each case was checked against Asciidoctor 2.0.26.
+    #[test]
+    fn a_literal_table_cell_holds_no_references_or_anchors() {
+        let cell_specs = "|===\n\
+                          |a l|<<raw1>> [[c1]] |<<real1>>\n\
+                          2+l|span <<raw2>>\n\
+                          .2+^.>l|<<raw3>> |<<real2>>\n\
+                          |<<real3>>\n\
+                          3*l|<<raw4>>\n\
+                          |xl|<<real4>>\n\
+                          |===\n";
+        assert_eq!(targets(cell_specs), ["real1", "real2", "real3", "real4"]);
+        let document = parse("file:///doc.adoc", cell_specs).document;
+        assert!(document.anchors.is_empty(), "{:?}", document.anchors);
+
+        // A column's style, which a cell's own style overrides; the header row takes none.
+        let columns = "[cols=\"1,1l\"]\n|===\n|<<hdr1>> |<<hdr2>>\n\n\
+                       |<<body1>> |<<raw1>>\n|<<body3>> d|<<body4>>\n|===\n";
+        assert_eq!(
+            targets(columns),
+            ["hdr1", "hdr2", "body1", "body3", "body4"]
+        );
+
+        // A literal cell runs on over the lines that follow it, to the next cell.
+        let lines = "|===\nl|first <<raw1>>\nsecond <<raw2>>\n|<<after>>\n|===\n";
+        assert_eq!(targets(lines), ["after"]);
+
+        // A rowspan from above does not move a cell to another column's style: a cell takes
+        // the style of the column at its place among the row's cells, as Asciidoctor reads it.
+        let rowspan = "[cols=\"1,1,1l\"]\n|===\n.2+|span |b |<<raw1>>\n|<<rs2>> |<<rs3>>\n|===\n";
+        assert_eq!(targets(rowspan), ["rs2", "rs3"]);
+        let colspan = "[cols=\"1,1,1l\"]\n|===\n2+|<<cs1>> |<<cs2>>\n|===\n";
+        assert_eq!(targets(colspan), ["cs1", "cs2"]);
+
+        // `2*l` styles two columns; a column count names no style.
+        let repeated = "[cols=\"2*l,1\"]\n|===\n|<<raw1>> |<<raw2>> |<<m3>>\n|===\n";
+        assert_eq!(targets(repeated), ["m3"]);
+        let counted = "[cols=\"2\"]\n|===\n  l|<<raw1>> |<<sp2>>\n|===\n";
+        assert_eq!(targets(counted), ["sp2"]);
+    }
+
+    /// The header row, implicit or asked for, is never literal, even under `l|`; without a
+    /// header the first row is a row like any other.
+    #[test]
+    fn a_header_row_is_never_literal() {
+        let implicit = "|===\nl|<<eh1>> |<<eh2>>\n\n|a |b\n|===\n";
+        assert_eq!(targets(implicit), ["eh1", "eh2"]);
+        let option = "[%header]\n|===\nl|<<oh1>> |x\n|a |b\n|===\n";
+        assert_eq!(targets(option), ["oh1"]);
+        let named = "[cols=\"1l\",options=\"header\"]\n|===\n|<<h3>>\n|<<raw1>>\n|===\n";
+        assert_eq!(targets(named), ["h3"]);
+        let none = "[%noheader,cols=\"1l,1\"]\n|===\n|<<raw1>> |<<nh2>>\n\n|<<raw2>> |b\n|===\n";
+        assert_eq!(targets(none), ["nh2"]);
+        let unseparated = "[cols=\"1l,1\"]\n|===\n|<<raw1>> |<<nb2>>\n|<<raw2>> |b\n|===\n";
+        assert_eq!(targets(unseparated), ["nb2"]);
+    }
+
+    /// What a literal cell leaves out is only its own text: an escaped bar does not end it, a
+    /// line comment in a table is no cell's, an include still counts, and after the table
+    /// prose reads as before.
+    #[test]
+    fn a_literal_cell_ends_at_the_next_cell_and_only_there() {
+        let source =
+            "|===\nl|a \\| <<raw1>>\n// |<<comment>>\nmore <<raw2>>\ninclude::part.adoc[]\n\
+                      |<<cell>>\n|===\n\n<<prose>> [[anchor]]\n";
+        assert_eq!(targets(source), ["cell", "prose"]);
+        let document = parse("file:///doc.adoc", source).document;
+        assert_eq!(document.includes.len(), 1);
+        let anchors: Vec<_> = document
+            .anchors
+            .iter()
+            .map(|anchor| anchor.id.as_str())
+            .collect();
+        assert_eq!(anchors, ["anchor"]);
+        // Not a table: a `|===` inside a listing block opens none.
+        let listing = "----\n|===\n----\nl|<<prose2>>\n";
+        assert_eq!(targets(listing), ["prose2"]);
     }
 }

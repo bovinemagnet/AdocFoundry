@@ -755,6 +755,23 @@ mod tests {
             .collect()
     }
 
+    /// Issue #532: a literal table cell is shown as it is written, so a link in it is text
+    /// and is not reported unresolved; the same link in an ordinary cell still is.
+    #[test]
+    fn a_link_in_a_literal_table_cell_is_not_reported() {
+        let (mut index, antora, root) = antora_single_component();
+        let home = root.join("modules/ROOT/pages/index.adoc");
+        let page = "= Home\n\n[cols=\"1,1l\"]\n|===\n\
+                    |Example |Source\n\n\
+                    |link l|xref:nowhere.adoc[] <<nothing>>\n\
+                    |xref:nowhere.adoc[] |as written\n\
+                    |===\n";
+        assert_eq!(
+            codes_for(&mut index, &antora, &home, page),
+            [DiagnosticCode::UnresolvedXrefFile]
+        );
+    }
+
     #[test]
     fn resolves_antora_images_in_the_module_s_images_family() {
         let (mut index, antora, root) = antora_single_component();
