@@ -451,6 +451,7 @@ Only source blocks are covered: a file named `Dockerfile` or ending in `.xml` op
 See xref:diagnostics.adoc[Diagnostics].
 * Hover on xref, include and image targets, anchors and `+{attributes}+`.
 * Completion after `xref:`, `include::`, `image::`, `{` and `#`.
+No reference target is offered where the page shows the text as written: inside a passthrough (`++pass:[…]++`, `pass:c[+++]`, `pass:c[++]`, `pass:c[$$]` or `pass:c[+]`), even one not yet closed, in a comment, or in a listing block or literal table cell, where only `include::` completes.
 * Undo and redo that treat a run of typing as one step.
 Typed characters within 500 ms of each other coalesce.
 
