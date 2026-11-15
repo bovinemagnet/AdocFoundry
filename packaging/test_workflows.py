@@ -124,6 +124,17 @@ class ReleaseWaitsForCi(unittest.TestCase):
         )
         self.assertEqual(chosen, ["linux-*", "macos", "windows-*"])
 
+    def test_the_flatpak_runtimes_are_writable_before_the_build(self):
+        # The image's runtimes lie in its lower layer, where flatpak cannot move their folders:
+        # once Flathub published newer ones, updating them failed with "Invalid cross-device
+        # link" and flatpak-builder crashed (v0.11.0). A copy lives in the container's own layer.
+        flatpak = "\n".join(jobs(read("release.yml"))["flatpak"])
+        copy = flatpak.find("cp -a /var/lib/flatpak ")
+        build = flatpak.find("uses: flatpak/flatpak-github-actions/flatpak-builder@")
+        self.assertNotEqual(copy, -1, "the installation is copied into the container's layer")
+        self.assertNotEqual(build, -1)
+        self.assertLess(copy, build, "before flatpak-builder updates the runtimes")
+
     def test_the_release_is_published_with_its_changelog_section(self):
         publish = "\n".join(jobs(read("release.yml"))["publish"])
         self.assertIn('packaging/release-version.py notes "${GITHUB_REF_NAME#v}"', publish)
