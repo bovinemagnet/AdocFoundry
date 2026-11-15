@@ -18,8 +18,8 @@ use std::{
 use adoc_core::{DiagnosticSeverity, LineIndex, SourceRange};
 use adoc_engine::{
     commands::ids, report::display_path, to_svg_laid_out, CommandArgs, CommandOutcome,
-    DefinitionTarget, Engine, EngineEvent, ExportArgs, ExportTarget, GraphFilter, GraphScope,
-    NavItem, SearchRequest, SvgStyle,
+    DefinitionTarget, Engine, EngineEvent, ExportArgs, ExportTarget, FileAccess, GraphFilter,
+    GraphScope, NavItem, SearchRequest, SvgStyle,
 };
 use rmcp::{
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
@@ -94,6 +94,8 @@ pub(crate) struct State {
     pub(crate) engine: Engine,
     events: Receiver<EngineEvent>,
     pub(crate) roots: Vec<PathBuf>,
+    /// Access within `roots`, which every path a tool is given must have.
+    access: FileAccess,
 }
 
 #[derive(Clone)]
@@ -316,7 +318,7 @@ impl State {
     }
 
     pub(crate) fn confine(&self, path: &str) -> Result<PathBuf, Failure> {
-        confine(&self.roots, path)
+        confine(&self.roots, &self.access, path)
     }
 
     /// The file a tool names by exactly one of `path` or `resource_id` (read from the page
@@ -503,6 +505,7 @@ impl Server {
             state: Arc::new(Mutex::new(State {
                 engine,
                 events,
+                access: FileAccess::within(roots.clone()),
                 roots,
             })),
             tool_router,

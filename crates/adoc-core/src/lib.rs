@@ -7,7 +7,7 @@ pub mod probe;
 mod reference;
 mod symbol;
 
-pub use access::FileAccess;
+pub use access::{ConfinedRoots, FileAccess};
 pub use date::civil_from_days;
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticSeverity, Related};
 pub use document::{

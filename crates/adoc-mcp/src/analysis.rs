@@ -6,6 +6,7 @@
 
 use std::{collections::HashMap, path::PathBuf};
 
+use adoc_core::LineIndex;
 use adoc_engine::{
     audit::{
         AuditReport, AuditScope, Completeness, FailOn, FindingCode, Policy, Region, Severity,
@@ -231,7 +232,7 @@ impl Server {
                 .collect();
             let page = page(findings, &query, revision, args.cursor.as_deref(), args.limit)?;
             // Regions for the page's findings alone, each file read once.
-            let mut texts: HashMap<PathBuf, Option<String>> = HashMap::new();
+            let mut texts: HashMap<PathBuf, Option<(String, LineIndex)>> = HashMap::new();
             let findings: Vec<Value> = page
                 .items
                 .into_iter()
@@ -241,11 +242,14 @@ impl Server {
                         (location.range, state.roots.get(location.root))
                     {
                         let path = root.join(&location.path);
-                        let text = texts
-                            .entry(path)
-                            .or_insert_with_key(|path| state.text(path).ok());
-                        if let Some(text) = text {
-                            let region = Region::of(text, range);
+                        let text = texts.entry(path).or_insert_with_key(|path| {
+                            state.text(path).ok().map(|text| {
+                                let lines = LineIndex::new(&text);
+                                (text, lines)
+                            })
+                        });
+                        if let Some((text, lines)) = text {
+                            let region = Region::of(text, lines, range);
                             json["region"] = json!({
                                 "start_line": region.start_line,
                                 "start_column": region.start_column,

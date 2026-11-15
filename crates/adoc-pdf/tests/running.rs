@@ -691,7 +691,7 @@ fn front_cover_is_the_first_page() {
     // A cover outside the workspace roots is left out and reported, as other images are.
     let elsewhere = tempfile::tempdir().unwrap();
     let options = PdfOptions {
-        access: adoc_core::FileAccess::Within(vec![elsewhere.path().to_path_buf()]),
+        access: adoc_core::FileAccess::within(vec![elsewhere.path().to_path_buf()]),
         ..PdfOptions::default()
     };
     let (typst, pages) = pages_in(

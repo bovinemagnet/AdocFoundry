@@ -95,7 +95,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
     let mut engine = Engine::new(settings);
     // Every read the engine makes for a tool stays inside the roots, as the tools' own paths
     // do: includes, images, themes and fonts included.
-    engine.set_file_access(FileAccess::Within(roots.clone()));
+    engine.set_file_access(FileAccess::within(roots.clone()));
     engine
         .open_workspace(roots.clone())
         .map_err(|error| error.to_string())?;

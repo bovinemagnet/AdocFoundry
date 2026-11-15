@@ -677,8 +677,13 @@ fn audit(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
                 roots
                     .get(location.root)
                     .and_then(|root| std::fs::read_to_string(root.join(&location.path)).ok())
+                    .map(|text| {
+                        let lines = LineIndex::new(&text);
+                        (text, lines)
+                    })
             });
-        text.as_deref().map(|text| audit::Region::of(text, range))
+        text.as_ref()
+            .map(|(text, lines)| audit::Region::of(text, lines, range))
     };
     let written = match format {
         "json" => serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?,
