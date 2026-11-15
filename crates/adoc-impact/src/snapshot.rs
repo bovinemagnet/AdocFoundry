@@ -335,9 +335,16 @@ impl<'a> DependencySnapshot<'a> {
             .iter()
             .map(|anchor| anchor.id.clone())
             .chain(
-                adoc_lang::xref::section_ids(&self.state.antora, path, &file.document)
-                    .into_iter()
-                    .filter(|id| !id.is_empty()),
+                adoc_lang::xref::section_ids(
+                    &self.state.index,
+                    &self.state.antora,
+                    path,
+                    &file.document,
+                )
+                .iter()
+                .filter(|id| !id.is_empty())
+                .cloned()
+                .collect::<Vec<_>>(),
             )
             .collect()
     }

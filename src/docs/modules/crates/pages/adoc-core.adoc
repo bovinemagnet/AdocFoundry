@@ -18,13 +18,13 @@ include::example$adoc-core-types.mmd[]
 ----
 
 * `Document` is one parsed page: its `uri`, its text (an `Arc<str>` shared by every copy), the title, `sections`, `attributes`, `anchors`, `references`, `includes`, `images` and `diagnostics`.
-* `SourceRange` is a pair of byte offsets, and `Location` is a range in a file.
+* `SourceRange` is a pair of byte offsets, with `contains` (the end excluded) and `contains_or_ends_at` (the end included), and `Location` is a range in a file.
   `LineIndex` converts offsets to lines and columns: `line_column` counts the column in bytes, `line_character` counts it in characters (as editors and CI annotations do), and `offset` goes back from a line and column.
 * `Section`, `Anchor`, `Reference` (with its `ReferenceKind`, of which the parser makes `Xref` and `LocalAnchor`), `IncludeDirective` and `ImageDirective` are the things a parse finds.
   An `IncludeDirective` records whether it sits in a conditional block (`conditional`) and whether it may supply the document header (`before_body`).
 * `Diagnostic` carries a `DiagnosticCode`, a `DiagnosticSeverity`, a message, a range and `Related` places.
   Diagnostic codes are stable strings such as `adoc.unresolved-xref-file` and `adoc.antora.unknown-module`; `DiagnosticCode::as_str` gives the string and `DiagnosticCode::from_name` reads it back.
-* Section ids come from `IdStyle` (`Antora` or `Asciidoctor`), `canonical_id`, `alphanumeric_id`, `section_ids` and `section_ids_with_conditionals`.
+* Section ids come from `IdStyle` (`Antora` or `Asciidoctor`), `canonical_id`, `alphanumeric_id`, `section_ids` and `section_ids_with_conditionals`; `SectionIds` keeps a document's ids in both styles together.
 * `xref_file` gives the page file an xref target names, as Asciidoctor 2.0 and Antora 3.2 read it.
 * `normalize_path` tidies a path lexically, never touching the file system.
 * `DEFAULT_IGNORED_DIRECTORIES`, `BUILD_OUTPUT_DIRECTORIES` and `is_ignored_beneath` are the one rule for folders that the index, Antora discovery and the file watcher skip.

@@ -271,7 +271,15 @@ impl Engine {
         self.workspace
             .index
             .file(&path)
-            .map(|file| adoc_lang::xref::section_ids(&self.workspace.antora, &path, &file.document))
+            .map(|file| {
+                adoc_lang::xref::section_ids(
+                    &self.workspace.index,
+                    &self.workspace.antora,
+                    &path,
+                    &file.document,
+                )
+                .into_owned()
+            })
             .unwrap_or_default()
     }
 

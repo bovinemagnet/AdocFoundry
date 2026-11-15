@@ -928,7 +928,7 @@ impl Engine {
 fn hunk_at(hunks: &[Hunk], offset: usize) -> Option<&Hunk> {
     hunks
         .iter()
-        .find(|hunk| hunk.range.start <= offset && offset < hunk.range.end)
+        .find(|hunk| hunk.range.contains(offset))
         .or_else(|| hunks.iter().find(|hunk| hunk.range.start == offset))
 }
 

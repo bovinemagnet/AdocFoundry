@@ -282,9 +282,7 @@ impl Model {
         self.walk()
             .into_iter()
             .filter(|(_, node)| {
-                matches!(node.kind, NodeKind::Image { .. })
-                    && node.range.start <= at
-                    && at <= node.range.end
+                matches!(node.kind, NodeKind::Image { .. }) && node.range.contains_or_ends_at(at)
             })
             .map(|(_, node)| node)
             .next_back()

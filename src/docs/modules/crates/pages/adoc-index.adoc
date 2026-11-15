@@ -17,7 +17,7 @@ xref:adoc-lang.adoc[adoc-lang] builds the language features on it, and the engin
 include::example$adoc-index-tables.mmd[]
 ----
 
-* Files: `FileEntry` holds the path, the URI and the `Document` parse.
+* Files: `FileEntry` holds the path, the URI, the `Document` parse and its sections' ids in both styles (`FileEntry::section_ids`), generated once when the file is indexed.
   `index_roots` and `index_roots_with` read and parse every AsciiDoc file beneath the roots on up to four threads, never entering a folder named in `ignore` or a link, and return an `IndexReport` of the files indexed and the `unreadable` folders left out.
   `on_directory` sees each folder before it is read, so a watch placed there misses nothing.
 * Replacing: `replace` keeps an open page's text, `replace_from_disk` and `index_file` keep the parse but not the text, and `remove` takes a file out.

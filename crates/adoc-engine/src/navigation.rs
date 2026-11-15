@@ -237,7 +237,7 @@ impl Engine {
             .parsed()
             .includes
             .iter()
-            .any(|include| include.range.start <= offset && offset < include.range.end);
+            .any(|include| include.range.contains(offset));
         if !on_include {
             return Err(EngineError::NotFound(format!(
                 "no include directive at offset {offset}"

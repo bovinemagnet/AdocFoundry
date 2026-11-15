@@ -17,9 +17,21 @@ impl Section {
     /// Asciidoctor generate for it, and forgiving forms of both that any punctuation matches.
     #[must_use]
     pub fn implicit_ids(&self) -> Vec<String> {
+        self.implicit_ids_from(
+            IdStyle::Antora.generate(&self.title),
+            IdStyle::Asciidoctor.generate(&self.title),
+        )
+    }
+
+    /// [`Section::implicit_ids`] given the ids each style generates for the title.
+    fn implicit_ids_from(
+        &self,
+        antora: Option<String>,
+        asciidoctor: Option<String>,
+    ) -> Vec<String> {
         let mut ids = vec![self.title.clone()];
-        ids.extend(IdStyle::Antora.generate(&self.title));
-        ids.extend(IdStyle::Asciidoctor.generate(&self.title));
+        ids.extend(antora);
+        ids.extend(asciidoctor);
         ids.extend([
             canonical_id(&self.title),
             generated_id(&self.title, "_", '_'),
@@ -74,6 +86,7 @@ impl IdStyle {
     /// title holds an attribute reference or a macro, or leaves nothing.
     #[must_use]
     pub fn generate(self, title: &str) -> Option<String> {
+        crate::probe::hit(crate::probe::Probe::SectionId);
         if title.contains('{') || title.contains("<<") || holds_a_macro(title) {
             return None;
         }
@@ -122,10 +135,17 @@ impl IdStyle {
 ///
 /// An anchor declared inside `ifdef`, `ifndef` or `ifeval` is not counted: it numbers the id
 /// only in a build that includes it, so the id offered is the one without it, and
-/// [`section_ids_with_conditionals`] gives the other.
+/// [`section_ids_with_conditionals`] gives the other. [`SectionIds`] gives both, in both
+/// styles, generating each title's id once.
 #[must_use]
 pub fn section_ids(sections: &[Section], anchors: &[Anchor], style: IdStyle) -> Vec<String> {
-    numbered_ids(sections, anchors, style, false)
+    numbered_ids(
+        sections,
+        anchors,
+        style,
+        &generated_ids(sections, style, false),
+        false,
+    )
 }
 
 /// The id of each section as [`section_ids`] gives it, in a build where every anchor declared
@@ -136,13 +156,129 @@ pub fn section_ids_with_conditionals(
     anchors: &[Anchor],
     style: IdStyle,
 ) -> Vec<String> {
-    numbered_ids(sections, anchors, style, true)
+    numbered_ids(
+        sections,
+        anchors,
+        style,
+        &generated_ids(sections, style, false),
+        true,
+    )
 }
 
+/// Every section's id in both styles, as [`section_ids`] and [`section_ids_with_conditionals`]
+/// give them, with each title's id generated once per style: what the index keeps with a
+/// page's entry, so a question about one section's id need not number every section again.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SectionIds {
+    antora: Builds,
+    asciidoctor: Builds,
+}
+
+/// One style's numbered ids, without the conditional anchors and with them.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Builds {
+    without_conditionals: Vec<String>,
+    /// `None` when no anchor is conditional, so both builds number alike.
+    with_conditionals: Option<Vec<String>>,
+}
+
+impl SectionIds {
+    /// The ids of `sections`, whose document declares `anchors`.
+    #[must_use]
+    pub fn new(sections: &[Section], anchors: &[Anchor]) -> Self {
+        Self::generate(sections, anchors, false).0
+    }
+
+    /// [`SectionIds::new`], and each section's [`Section::implicit_ids`], from the same
+    /// generated ids.
+    #[must_use]
+    pub fn with_implicit_ids(sections: &[Section], anchors: &[Anchor]) -> (Self, Vec<Vec<String>>) {
+        Self::generate(sections, anchors, true)
+    }
+
+    fn generate(
+        sections: &[Section],
+        anchors: &[Anchor],
+        implicit: bool,
+    ) -> (Self, Vec<Vec<String>>) {
+        // A section with an anchor needs its title's ids only for its implicit ids.
+        let antora = generated_ids(sections, IdStyle::Antora, implicit);
+        let asciidoctor = generated_ids(sections, IdStyle::Asciidoctor, implicit);
+        let conditional = anchors.iter().any(|anchor| anchor.conditional);
+        let builds = |style: IdStyle, generated: &[Option<String>]| Builds {
+            without_conditionals: numbered_ids(sections, anchors, style, generated, false),
+            with_conditionals: conditional
+                .then(|| numbered_ids(sections, anchors, style, generated, true)),
+        };
+        let ids = Self {
+            antora: builds(IdStyle::Antora, &antora),
+            asciidoctor: builds(IdStyle::Asciidoctor, &asciidoctor),
+        };
+        let implicit = if implicit {
+            sections
+                .iter()
+                .zip(antora.into_iter().zip(asciidoctor))
+                .map(|(section, (antora, asciidoctor))| {
+                    section.implicit_ids_from(antora, asciidoctor)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        (ids, implicit)
+    }
+
+    fn style(&self, style: IdStyle) -> &Builds {
+        match style {
+            IdStyle::Antora => &self.antora,
+            IdStyle::Asciidoctor => &self.asciidoctor,
+        }
+    }
+
+    /// Each section's id in `style`, as [`section_ids`] gives it.
+    #[must_use]
+    pub fn numbered(&self, style: IdStyle) -> &[String] {
+        &self.style(style).without_conditionals
+    }
+
+    /// Each section's id in `style`, as [`section_ids_with_conditionals`] gives it.
+    #[must_use]
+    pub fn with_conditionals(&self, style: IdStyle) -> &[String] {
+        let builds = self.style(style);
+        builds
+            .with_conditionals
+            .as_deref()
+            .unwrap_or(&builds.without_conditionals)
+    }
+
+    /// The ids of each build in `style`: [`SectionIds::numbered`], then, when an anchor is
+    /// conditional and so may number them differently, [`SectionIds::with_conditionals`].
+    pub fn builds(&self, style: IdStyle) -> impl Iterator<Item = &[String]> {
+        let builds = self.style(style);
+        std::iter::once(builds.without_conditionals.as_slice())
+            .chain(builds.with_conditionals.as_deref())
+    }
+}
+
+/// The id `style` generates for each section without an anchor, or for `every` section;
+/// `None` for the rest.
+fn generated_ids(sections: &[Section], style: IdStyle, every: bool) -> Vec<Option<String>> {
+    sections
+        .iter()
+        .map(|section| {
+            (every || section.id.is_none())
+                .then(|| style.generate(&section.title))
+                .flatten()
+        })
+        .collect()
+}
+
+/// Each section's id: its anchor, else its `generated` id numbered past those taken before it.
 fn numbered_ids(
     sections: &[Section],
     anchors: &[Anchor],
     style: IdStyle,
+    generated: &[Option<String>],
     conditionals: bool,
 ) -> Vec<String> {
     let mut taken = HashSet::new();
@@ -151,7 +287,7 @@ fn numbered_ids(
         .filter(|anchor| conditionals || !anchor.conditional)
         .peekable();
     let mut ids = Vec::with_capacity(sections.len());
-    for section in sections {
+    for (section, generated) in sections.iter().zip(generated) {
         while let Some(anchor) = anchors.next_if(|anchor| anchor.range.start < section.range.start)
         {
             taken.insert(anchor.id.clone());
@@ -159,7 +295,7 @@ fn numbered_ids(
         let id = match &section.id {
             Some(id) => id.clone(),
             None => {
-                let id = style.generate(&section.title).unwrap_or_default();
+                let id = generated.clone().unwrap_or_default();
                 if id.is_empty() || !taken.contains(&id) {
                     id
                 } else {
@@ -548,6 +684,50 @@ mod tests {
         assert_eq!(
             section("parameters", None, 0).implicit_ids(),
             ["parameters", "_parameters"]
+        );
+    }
+
+    /// `SectionIds` gives what `section_ids`, `section_ids_with_conditionals` and
+    /// `implicit_ids` give, from one generated id per title and style (#533).
+    #[test]
+    fn section_ids_kept_together_match_each_on_its_own() {
+        let sections = [
+            section("Parameters", None, 20),
+            section("What's new?", Some("news"), 30),
+            section("Parameters", None, 40),
+            section("Using {product}", None, 50),
+        ];
+        let anchors = [
+            Anchor {
+                conditional: true,
+                ..anchor("parameters", 0)
+            },
+            anchor("_parameters", 10),
+        ];
+        let (ids, implicit) = SectionIds::with_implicit_ids(&sections, &anchors);
+        for style in [IdStyle::Antora, IdStyle::Asciidoctor] {
+            let numbered = section_ids(&sections, &anchors, style);
+            let conditional = section_ids_with_conditionals(&sections, &anchors, style);
+            assert_eq!(ids.numbered(style), numbered);
+            assert_eq!(ids.with_conditionals(style), conditional);
+            assert_eq!(
+                ids.builds(style).collect::<Vec<_>>(),
+                [numbered.as_slice(), conditional.as_slice()]
+            );
+        }
+        let each: Vec<_> = sections.iter().map(Section::implicit_ids).collect();
+        assert_eq!(implicit, each);
+        assert_eq!(SectionIds::new(&sections, &anchors), ids);
+
+        let plain = SectionIds::new(&sections, &[]);
+        assert_eq!(
+            plain.builds(IdStyle::Antora).count(),
+            1,
+            "no conditional anchor"
+        );
+        assert_eq!(
+            plain.with_conditionals(IdStyle::Antora),
+            plain.numbered(IdStyle::Antora)
         );
     }
 

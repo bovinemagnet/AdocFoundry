@@ -1,11 +1,14 @@
 //! The xref that links one page to another, or to a section of it, as written when a page is
 //! dragged into an editor.
 
-use std::path::{Component, Path};
+use std::{
+    borrow::Cow,
+    path::{Component, Path},
+};
 
 use adoc_antora::{parse_resource_id, AntoraCatalog, ResourceFamily};
 use adoc_core::{Document, IdStyle, SourceRange};
-use adoc_index::{is_asciidoc_path, normalize_path};
+use adoc_index::{is_asciidoc_path, normalize_path, WorkspaceIndex};
 
 use crate::WorkspaceState;
 
@@ -47,7 +50,7 @@ pub fn xref_to(
 ) -> Option<XrefLink> {
     let from = normalize_path(from);
     let to = normalize_path(to);
-    let mut ids = section_ids(&ws.antora, &to, target);
+    let ids = section_ids(&ws.index, &ws.antora, &to, target);
     // A section whose id only rendering could tell is linked as its page.
     let section = section
         .and_then(|at| {
@@ -67,7 +70,7 @@ pub fn xref_to(
             text: page_title(),
         });
     };
-    let id = ids.swap_remove(section);
+    let id = ids[section].clone();
     let section = &target.sections[section];
     let target = if from == to {
         id
@@ -83,13 +86,37 @@ pub fn xref_to(
 /// The id a reference to each section of `document`, the page at `path`, uses: its anchor,
 /// else the id the page's build generates, Antora's inside a module and plain Asciidoctor's
 /// elsewhere, numbered where an earlier one holds it; empty where only rendering could tell.
-pub fn section_ids(antora: &AntoraCatalog, path: &Path, document: &Document) -> Vec<String> {
-    let style = if antora.context_for_path(path).is_some() {
+///
+/// When `document` is the parse `index` holds for the page, the ids are those kept with it;
+/// otherwise, for text the index does not hold, they are generated here.
+pub fn section_ids<'a>(
+    index: &'a WorkspaceIndex,
+    antora: &AntoraCatalog,
+    path: &Path,
+    document: &'a Document,
+) -> Cow<'a, [String]> {
+    let style = section_style(antora, path);
+    match index.file(path) {
+        Some(file) if std::ptr::eq(&file.document, document) => {
+            Cow::Borrowed(file.section_ids().numbered(style))
+        }
+        _ => Cow::Owned(adoc_core::section_ids(
+            &document.sections,
+            &document.anchors,
+            style,
+        )),
+    }
+}
+
+/// How the build of the page at `path` generates section ids: Antora's inside a module, plain
+/// Asciidoctor's elsewhere.
+#[must_use]
+pub fn section_style(antora: &AntoraCatalog, path: &Path) -> IdStyle {
+    if antora.context_for_path(path).is_some() {
         IdStyle::Antora
     } else {
         IdStyle::Asciidoctor
-    };
-    adoc_core::section_ids(&document.sections, &document.anchors, style)
+    }
 }
 
 /// How `from` names the page at `to`.
