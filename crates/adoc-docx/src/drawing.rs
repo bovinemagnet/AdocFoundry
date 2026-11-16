@@ -1,7 +1,7 @@
 //! Pictures in the text: images, diagrams and formulas as inline DrawingML, each a relationship
 //! of the part it is in to its media part. Sizes follow the image's `width` and `height`, else
-//! its own size, never wider than the text; a formula takes the measures it was typeset with,
-//! and sits on the line's baseline.
+//! its own size, never wider than the text nor taller than the page's text less a line for a
+//! caption; a formula takes the measures it was typeset with, and sits on the line's baseline.
 
 use adoc_render::{DiagramView, FormulaImage, ViewImage, ViewInline};
 
@@ -16,6 +16,9 @@ const EMU_PER_PIXEL: f64 = 9525.0;
 const EMU_PER_POINT: f64 = 12700.0;
 /// Twentieths of a point in a pixel at 96 to the inch.
 const TWIPS_PER_PIXEL: f64 = 15.0;
+/// Room left below a picture as tall as the page's text, in twentieths of a point: a line for
+/// its caption, so the caption stays on the picture's page.
+const CAPTION_ROOM: u32 = 720;
 
 const PICTURE: &str = "http://schemas.openxmlformats.org/drawingml/2006/picture";
 
@@ -36,7 +39,8 @@ fn length(value: &str, whole: f64) -> Option<f64> {
 
 impl Writer<'_> {
     /// A picture's size in EMUs: as `width` and `height` ask, the picture's proportions kept
-    /// when only one is given, its own size otherwise, and no wider than the text.
+    /// when only one is given, its own size otherwise, and then shrunk, its proportions kept,
+    /// to no wider than the text and no taller than the page's text less [`CAPTION_ROOM`].
     fn picture_size(
         &self,
         picture: &Picture,
@@ -56,6 +60,18 @@ impl Writer<'_> {
         if width > text_width {
             height *= text_width / width;
             width = text_width;
+        }
+        let margins = &self.options.margins;
+        let text_height = f64::from(
+            self.options
+                .page_size()
+                .1
+                .saturating_sub(margins.top + margins.bottom + CAPTION_ROOM)
+                .max(1440),
+        ) / TWIPS_PER_PIXEL;
+        if height > text_height {
+            width *= text_height / height;
+            height = text_height;
         }
         (
             (width * EMU_PER_PIXEL).round() as i64,

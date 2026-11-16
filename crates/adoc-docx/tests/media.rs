@@ -379,3 +379,46 @@ fn write_sample() {
     let (bytes, _) = export(folder.path(), page, adoc_core::FileAccess::Any);
     fs::write(Path::new(&out).join("media.docx"), bytes).unwrap();
 }
+
+/// A picture is shrunk to fit the page's text both ways, keeping its proportions: no wider than
+/// the text, and no taller than the text's height less a line for its caption. A tall diagram
+/// scaled to the text's width alone ran off the page.
+#[test]
+fn pictures_fit_the_page() {
+    let folder = tempfile::tempdir().unwrap();
+    let svg = |width: u32, height: u32| {
+        format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\"><rect width=\"{width}\" height=\"{height}\" fill=\"#36c\"/></svg>"
+        )
+    };
+    fs::write(folder.path().join("tall.svg"), svg(100, 3000)).unwrap();
+    fs::write(folder.path().join("big.svg"), svg(2000, 4000)).unwrap();
+    fs::write(folder.path().join("architecture.svg"), svg(10, 10)).unwrap();
+    let page = "= Pictures\n\n.Tall\nimage::tall.svg[Tall]\n\nimage::big.svg[Big]\n\nimage::tall.svg[Asked for,width=300]\n";
+    let (bytes, report) = export(folder.path(), page, adoc_core::FileAccess::Any);
+    assert_eq!(report.diagnostics, Vec::new());
+    let entries = assert_valid_package(&bytes);
+    let found = pictures(&entries);
+
+    // A4 with an inch of margin: 9,026 by 13,958 twentieths of a point of text, less 720 for a
+    // caption's line.
+    let (text_width, text_height) = (9026 * 635, (13958 - 720) * 635);
+    for (alt, (width, height), _) in &found {
+        assert!(*width <= text_width, "{alt} is {width} wide");
+        assert!(*height <= text_height, "{alt} is {height} tall");
+    }
+    let size = |alt: &str| found.iter().find(|(found, _, _)| found == alt).unwrap().1;
+    let ratio = |(width, height): (i64, i64)| width as f64 / height as f64;
+    for (alt, own) in [
+        ("Tall", 100.0 / 3000.0),
+        ("Big", 0.5),
+        ("Asked for", 100.0 / 3000.0),
+    ] {
+        let size = size(alt);
+        assert_eq!(size.1, text_height, "{alt} fills the page's height");
+        assert!(
+            (ratio(size) - own).abs() < 0.001,
+            "{alt} keeps its proportions"
+        );
+    }
+}
