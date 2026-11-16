@@ -250,7 +250,7 @@ AdocFoundry/
     adoc-ls                  L4  LSP binary (from zed-asciidoc), on the engine since Phase 5
     adoc-mcp                 L4  Phase 5: MCP server over stdio, and Streamable HTTP since Phase 6
   grammars/                  tree-sitter-asciidoc, a git submodule on its master branch
-  vendor/                    evalexpr stand-in and patched comemo (see vendor/README.md)
+  vendor/                    evalexpr stand-in, patched comemo and notify (see vendor/README.md)
   xtask/                     layers, package, run, notices, bump
   packaging/                 icons, desktop entry, macOS bundle script, Flatpak manifest, smoke tests
   src/docs/                  the user and developer documentation, an Antora site
