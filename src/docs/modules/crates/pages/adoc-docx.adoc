@@ -193,7 +193,7 @@ A file may be at most 64 MB, and a picture at most 10,000 pixels on a side and 4
 It is written as a link to its address, when the address is a safe one, with a warning.
 * The size comes from `width` and `height`, in pixels (`120` or `120px`) or as a share of the text width (`50%`).
 When only one is given the other keeps the picture's proportions, and when neither is the picture has its own size at 96 pixels to the inch.
-A picture is never wider than the text, or than its cell in a table.
+A picture is shrunk, with its proportions kept, so that it is no wider than the text (or its cell in a table) and no taller than the page's text height less a line for its caption, so a tall diagram stays on one page.
 * A block image, diagram or formula is a paragraph aligned by the block's `align`, with formulas centred by default.
 Its title is the caption below it, aligned with it, as Asciidoctor places a figure's title.
 * A block image's `link` makes the picture a hyperlink.

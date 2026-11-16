@@ -506,6 +506,10 @@ Each front end builds the engine's `docx` feature and calls only the engine; non
   Word itself has not been run here; its checks are in the record's results table.
 - **Docs.** The user guide gains *Exporting to Word*. It covers what it makes, the three entry points, settings and profiles, warnings, safety, what Word does differently (reflow, fields, page counts) and what is deferred from this version. The developer pages cover the tests and the commit lock.
 
+### After D8: pictures fit the page's height
+
+Pictures were held to the text's width only, so a tall diagram scaled to the full width ran off the page (a real flowchart came out 1.9 times the A4 text height). They are now shrunk, with their proportions kept, to no taller than the page's text height less a line for a caption (`CAPTION_ROOM`, 36 pt), as well as to the text's or the cell's width. Covers keep their own sizing. `pictures_fit_the_page` (`crates/adoc-docx/tests/media.rs`) covers a narrow tall picture, one too wide and too tall, and one whose asked-for width would make it too tall.
+
 ## 15. References
 
 - Microsoft, [Structure of a WordprocessingML document](https://learn.microsoft.com/en-us/office/open-xml/word/structure-of-a-wordprocessingml-document)
