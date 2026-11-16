@@ -70,7 +70,9 @@ mod resolve {
         path::{Path, PathBuf},
     };
 
-    use adoc_theme::{LoadedTheme, PageGeometry, ThemeSource};
+    use adoc_core::FileAccess;
+    use adoc_docx::{FontFamily, FontSource};
+    use adoc_theme::{FontFile, LoadedTheme, PageGeometry, ThemeSource};
 
     use super::{DocxLook, ExportLook, LookChoice, LookKind};
     use crate::{DocxExportArgs, Engine};
@@ -113,14 +115,22 @@ mod resolve {
             }
         }
 
-        /// What the look gives the writer's styles, title page, covers and running content;
-        /// `attributes` are the document's, which running content may name.
+        /// What the look gives the writer's styles, title page, covers, running content and
+        /// fonts; `attributes` are the document's, which running content may name. A theme's
+        /// fonts are found as PDF export finds them: in `fonts_dirs`, then the theme's folder,
+        /// then among the bundled fonts, a file only where `access` permits.
         pub(crate) fn word_look(
             &self,
             attributes: &BTreeMap<String, String>,
+            fonts_dirs: &[PathBuf],
+            access: &FileAccess,
         ) -> adoc_docx::WordLook {
             match self {
-                Self::PdfTheme { theme, .. } => adoc_docx::WordLook::from_theme(theme, attributes),
+                Self::PdfTheme { theme, .. } => {
+                    let mut look = adoc_docx::WordLook::from_theme(theme, attributes);
+                    look.fonts = theme_fonts(theme, fonts_dirs, access);
+                    look
+                }
                 Self::None | Self::Template { .. } => adoc_docx::WordLook::default(),
             }
         }
@@ -133,6 +143,46 @@ mod resolve {
                 Self::None | Self::Template { .. } => None,
             }
         }
+    }
+
+    /// Each family of `theme`'s font catalogue with where its faces are.
+    fn theme_fonts(
+        theme: &LoadedTheme,
+        fonts_dirs: &[PathBuf],
+        access: &FileAccess,
+    ) -> Vec<FontFamily> {
+        let source = |file: &FontFile| {
+            adoc_theme::resolve_font(
+                file,
+                fonts_dirs,
+                theme.dir.as_deref(),
+                |name| adoc_theme::bundled_font(name).map(FontSource::Bundled),
+                |path| {
+                    (access.permits(path) && path.is_file())
+                        .then(|| FontSource::File(path.to_path_buf()))
+                },
+            )
+            .unwrap_or_else(|| {
+                FontSource::Missing(match file {
+                    FontFile::Bundled(name) => format!("GEM_FONTS_DIR/{name}"),
+                    FontFile::Path(path) => path.display().to_string(),
+                })
+            })
+        };
+        theme
+            .fonts
+            .iter()
+            .map(|(name, faces)| FontFamily {
+                name: name.clone(),
+                faces: [
+                    &faces.normal,
+                    &faces.bold,
+                    &faces.italic,
+                    &faces.bold_italic,
+                ]
+                .map(|file| file.as_ref().map(source)),
+            })
+            .collect()
     }
 
     impl Engine {

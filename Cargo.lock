@@ -188,6 +188,7 @@ dependencies = [
  "flate2",
  "resvg 0.46.0",
  "roxmltree 0.21.2",
+ "sha2 0.10.9",
  "tempfile",
 ]
 

@@ -611,6 +611,13 @@ See <<docx-looks>>.
 |Give odd and even pages their own headers and footers.
 When `false`, the odd page's lines are used on every page.
 
+|`docx.embed_fonts`
+|boolean
+|`true`
+|Embed the look's fonts in the document where their licences allow.
+When `false`, the document names the fonts without embedding them, so a reader's computer shows them only if it has them installed.
+See <<docx-looks>>.
+
 |`docx.margins.top`, `right`, `bottom` and `left`
 |length
 |`"1in"`
@@ -664,6 +671,7 @@ paper = "letter"
 orientation = "portrait"
 logo = "images/logo.png"
 odd_even = true
+embed_fonts = true                  # embed the look's fonts where their licences allow
 
 [docx.margins]
 top = "25mm"
@@ -741,8 +749,22 @@ Any other attribute is the document's value, and a line naming an attribute that
 ** Column widths (`header_columns`) are not used: Word's left, centre and right tab stops place the three slots.
 ** A `[docx.header]` or `[docx.footer]` written in the settings replaces the theme's, and so do written `margins.header`, `margins.footer` and `odd_even`.
 * A key that Word cannot express is ignored.
-* Still to come in a later release: the theme's fonts embedded in the document.
-Until then, Word shows the theme's fonts only where they are installed.
+* A theme gives fonts, which are embedded in the document, as Word itself embeds them:
+** Which: the fonts of the theme's font catalogue (`font_catalog`) that the Word styles use, with all four faces of each family the theme gives (regular, bold, italic and bold italic).
+The no-theme look embeds no fonts.
+** Where from: the fonts are found as PDF export finds them, in the PDF fonts folder (the page's `pdf-fontsdir` attribute, else `[pdf] fonts_dir`), then the theme's folder, then the bundled fonts.
+Only files inside the workspace's folders are read.
+** Names: Word and LibreOffice find an embedded font by the family name stored inside the font file, so the document names each family by that name, even when the theme's catalogue calls it something else.
+For example, a catalogue entry `Brand Serif` whose file is Noto Serif is named `Noto Serif` in the Word styles.
+** Licences: a font is embedded only when its OpenType embedding permission (`fsType`) allows it.
+Installable and editable fonts are embedded.
+A preview-and-print font is embedded with a warning that Word may open the document read-only.
+A restricted font, or one that allows only its bitmaps to be embedded, is named but not embedded, with a warning that names it.
+** Not embedded: fonts with CFF (PostScript) outlines, usually `.otf` files, since Word embeds TrueType outlines only; font collections (`.ttc`); and a font file that cannot be found or read.
+Each is named in the document, and each gives a warning.
+** Size: fonts are embedded whole, not subset, so they add to the document's size.
+The bundled default theme's two families add about half a megabyte.
+`[docx] embed_fonts = false` names the fonts without embedding them, so a reader's computer shows them only where they are installed.
 * A template is found and checked to exist, and the export reports it as the look used.
 Its contents, meaning its styles, page, and headers and footers, are applied in a later release.
 

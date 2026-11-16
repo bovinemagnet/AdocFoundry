@@ -13,6 +13,7 @@
 //! orientation = "portrait"  # or "landscape"
 //! logo = "images/logo.png"  # what `{logo}` shows, relative to the first workspace root
 //! odd_even = true           # odd and even pages' own headers and footers
+//! embed_fonts = true        # embed the look's fonts where their licences allow; false names them
 //!
 //! [docx.margins]            # millimetres, centimetres, inches or points; a number is points
 //! top = "25mm"
@@ -142,6 +143,8 @@ pub struct DocxSettings {
     pub odd_even: bool,
     /// The image `{logo}` shows, relative to the first workspace root.
     pub logo: Option<String>,
+    /// Whether the look's fonts are embedded where their licences allow, or only named.
+    pub embed_fonts: bool,
     pub styles: DocxStyles,
     pub profiles: Vec<DocxProfile>,
 }
@@ -171,6 +174,7 @@ impl Default for DocxSettings {
             },
             odd_even: true,
             logo: None,
+            embed_fonts: true,
             styles: DocxStyles::default(),
             profiles: Vec::new(),
         }
@@ -443,6 +447,10 @@ pub(crate) fn apply(
                 settings.written.insert("odd_even".to_owned());
             })
             .ok_or_else(|| "expected true or false".to_owned())),
+        "embed_fonts" => set(value
+            .as_bool()
+            .map(|embed| settings.embed_fonts = embed)
+            .ok_or_else(|| "expected true or false".to_owned())),
         "margins" => match value.as_table() {
             None => set(Err("expected a table".to_owned())),
             Some(table) => {
@@ -568,7 +576,7 @@ mod tests {
         let settings = load(
             None,
             "[docx]\npaper = \"Letter\"\norientation = \"landscape\"\nlogo = \"images/logo.png\"\n\
-             odd_even = false\n\
+             odd_even = false\nembed_fonts = false\n\
              [docx.margins]\ntop = \"25.4mm\"\nright = \"2.54cm\"\nbottom = \"1in\"\nleft = 72\n\
              header = \"36pt\"\nfooter = 18.5\n\
              [docx.header]\nleft = \"{document-title}\"\ncenter = \"Draft\"\nright = \"{logo}\"\n\
@@ -583,6 +591,8 @@ mod tests {
         assert_eq!(docx.paper, DocxPaper::Letter);
         assert!(docx.landscape);
         assert!(!docx.odd_even);
+        assert!(!docx.embed_fonts);
+        assert!(DocxSettings::default().embed_fonts);
         assert_eq!(docx.logo.as_deref(), Some("images/logo.png"));
         assert_eq!(
             docx.margins,
@@ -634,7 +644,7 @@ mod tests {
     fn what_cannot_be_used_is_warned_about() {
         let settings = load(
             None,
-            "[docx]\npaper = \"a3\"\norientation = \"sideways\"\nodd_even = \"yes\"\ntheme = \"acme\"\n\
+            "[docx]\npaper = \"a3\"\norientation = \"sideways\"\nodd_even = \"yes\"\nembed_fonts = 1\ntheme = \"acme\"\n\
              [docx.margins]\ntop = \"3 parsecs\"\nmiddle = \"1in\"\nleft = \"20in\"\n\
              [docx.header]\nleft = 3\nmiddle = \"x\"\neven = \"x\"\n\
              [docx.styles]\nbody_font = \"\"\nheading_colour = \"blue\"\nbody_size = 300\nshadow = true\n",
@@ -650,6 +660,7 @@ mod tests {
                 "docx.paper",
                 "docx.orientation",
                 "docx.odd_even",
+                "docx.embed_fonts",
                 "docx.theme",
                 "docx.margins.top",
                 "docx.margins.middle",

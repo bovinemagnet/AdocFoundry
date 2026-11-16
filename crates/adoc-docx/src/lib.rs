@@ -16,12 +16,14 @@ use std::{
 
 use adoc_dom::SourceSpan;
 use adoc_render::ViewTree;
+pub use fonts::{FontFamily, FontSource};
 pub use look::{
     Border, BorderSides, BoxLook, RunningLook, StyleLook, TitlePageLook, WordLook, MAPPED_KEYS,
 };
 
 mod body;
 mod drawing;
+mod fonts;
 mod inline;
 mod labels;
 mod look;
@@ -217,8 +219,10 @@ pub struct DocxOptions {
     /// The address of each page a reference out of the document may lead to; a reference to
     /// any other page outside the document is left as text.
     pub page_urls: HashMap<PathBuf, String>,
-    /// Which files the export may read: images, diagrams and formulas.
+    /// Which files the export may read: images, diagrams, formulas and fonts.
     pub access: adoc_core::FileAccess,
+    /// Name the look's fonts without embedding them (`[docx] embed_fonts = false`).
+    pub fonts_named_only: bool,
 }
 
 impl DocxOptions {
@@ -300,6 +304,16 @@ pub fn write_docx(
 ) -> Result<DocxReport, DocxError> {
     let mut writer = body::Writer::new(document, options);
     writer.document(document);
+    // The look's fonts the styles name, under the names the fonts give themselves.
+    let fonts = fonts::Fonts::new(
+        &options.look.fonts,
+        &parts::fonts_named(&options.styles, &options.look),
+        !options.fonts_named_only,
+        &options.access,
+    );
+    for warning in &fonts.warnings {
+        writer.warn(None, warning.clone());
+    }
     let relationship = |id: &str, kind, target: &str| package::Relationship {
         id: id.to_owned(),
         kind,
@@ -355,6 +369,9 @@ pub fn write_docx(
             relationships: links(body::Part::FOOTNOTES),
         });
     }
+    if !fonts.is_empty() {
+        document_relationships.push(relationship("rId5", parts::FONT_TABLE, "fontTable.xml"));
+    }
     document_relationships.extend(links(body::Part::DOCUMENT));
     // Odd and even pages differ only when the body has running content of its own for them.
     let odd_even = options.running.odd_even && !writer.running_parts.is_empty();
@@ -393,17 +410,40 @@ pub fn write_docx(
             package::Part {
                 name: "word/styles.xml".to_owned(),
                 content_type: parts::STYLES_TYPE,
-                data: parts::styles(writer.width, &options.styles, &options.look),
+                data: parts::styles(writer.width, &options.styles, &options.look, &fonts),
                 relationships: Vec::new(),
             },
             package::Part {
                 name: "word/settings.xml".to_owned(),
                 content_type: parts::SETTINGS_TYPE,
-                data: parts::settings(footnotes, odd_even, writer.wrote_toc),
+                data: parts::settings(footnotes, odd_even, writer.wrote_toc, fonts.embeds()),
                 relationships: Vec::new(),
             },
         ],
     );
+    if !fonts.is_empty() {
+        let (table, targets) = fonts.table_part();
+        parts.push(package::Part {
+            name: "word/fontTable.xml".to_owned(),
+            content_type: parts::FONT_TABLE_TYPE,
+            data: table,
+            relationships: targets
+                .into_iter()
+                .map(|(id, target)| package::Relationship {
+                    id,
+                    kind: parts::FONT,
+                    target,
+                    external: false,
+                })
+                .collect(),
+        });
+        parts.extend(fonts.into_parts().map(|(name, data)| package::Part {
+            name,
+            content_type: parts::FONT_TYPE,
+            data,
+            relationships: Vec::new(),
+        }));
+    }
     parts.push(package::Part {
         name: "docProps/core.xml".to_owned(),
         content_type: parts::CORE_TYPE,

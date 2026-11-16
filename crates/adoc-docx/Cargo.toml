@@ -14,6 +14,7 @@ adoc-theme.workspace = true
 crc32fast.workspace = true
 flate2.workspace = true
 resvg.workspace = true
+sha2.workspace = true
 # `testing`, for tests here and in the engine.
 roxmltree = { workspace = true, optional = true }
 

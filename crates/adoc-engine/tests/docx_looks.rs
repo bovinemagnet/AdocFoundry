@@ -716,3 +716,197 @@ fn docx_pdf_theme_running_content() {
         .filter(|name| name.starts_with("word/header"))
         .any(|name| adoc_docx::testing::text(&entries, name).contains("The Guide")));
 }
+
+/// `font` with its `fsType` set to `value`, found through the font's table directory.
+fn with_fs_type(font: &[u8], value: u16) -> Vec<u8> {
+    let at = |offset: usize| u32::from_be_bytes(font[offset..offset + 4].try_into().unwrap());
+    let tables = usize::from(u16::from_be_bytes([font[4], font[5]]));
+    let record = (0..tables)
+        .map(|index| 12 + index * 16)
+        .find(|record| &font[*record..*record + 4] == b"OS/2")
+        .expect("an OS/2 table");
+    let os2 = at(record + 8) as usize;
+    let mut font = font.to_vec();
+    font[os2 + 8..os2 + 10].copy_from_slice(&value.to_be_bytes());
+    font
+}
+
+/// A workspace whose theme names its fonts under a family name of its own: the regular face
+/// a file of its own, the bold face bundled, the italic one a file whose licence forbids
+/// embedding, the bold italic one missing; and the bundled monospace font for code.
+fn fonts_workspace(settings: &str) -> (tempfile::TempDir, PathBuf, Engine) {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_engine::normalize_path(directory.path());
+    let regular = adoc_theme::bundled_font("notoserif-regular-subset.ttf").unwrap();
+    fs::create_dir_all(root.join("themes/fonts")).unwrap();
+    fs::write(root.join("themes/fonts/brand-regular.ttf"), regular).unwrap();
+    fs::write(
+        root.join("themes/fonts/brand-italic.ttf"),
+        with_fs_type(
+            adoc_theme::bundled_font("notoserif-italic-subset.ttf").unwrap(),
+            0x0002,
+        ),
+    )
+    .unwrap();
+    fs::write(
+        root.join("themes/brand-theme.yml"),
+        "extends: default\nfont:\n  catalog:\n    Brand Serif:\n      normal: fonts/brand-regular.ttf\n\
+         \x20     bold: GEM_FONTS_DIR/notoserif-bold-subset.ttf\n      italic: fonts/brand-italic.ttf\n\
+         \x20     bold_italic: fonts/missing.ttf\n    M+ 1mn:\n\
+         \x20     normal: GEM_FONTS_DIR/mplus1mn-regular-subset.ttf\nbase:\n  font_family: Brand Serif\n",
+    )
+    .unwrap();
+    fs::write(root.join("page.adoc"), "= Page\n\nText and `code`.\n").unwrap();
+    fs::write(
+        root.join(".adocfoundry.toml"),
+        format!("[pdf]\ntheme = \"brand\"\nthemes_dir = \"themes\"\n{settings}"),
+    )
+    .unwrap();
+    let mut settings = Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    (directory, root, engine)
+}
+
+/// The font table's families and, for each, the faces embedded in it.
+fn font_table(entries: &std::collections::BTreeMap<String, Vec<u8>>) -> Vec<(String, Vec<String>)> {
+    let Some(_) = entries.get("word/fontTable.xml") else {
+        return Vec::new();
+    };
+    let table = adoc_docx::testing::text(entries, "word/fontTable.xml");
+    let xml = roxmltree::Document::parse(table).unwrap();
+    xml.descendants()
+        .filter(|node| node.has_tag_name((W, "font")))
+        .map(|font| {
+            (
+                font.attribute((W, "name")).unwrap().to_owned(),
+                font.children()
+                    .filter(|node| node.is_element())
+                    .map(|node| node.tag_name().name().to_owned())
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+/// The Word looks PRD, §9 test 7: the fonts the look's styles name are embedded, obfuscated
+/// and read back through the font table, under the names the fonts give themselves; a face
+/// whose licence forbids it is named and not embedded, with a warning, as is a missing one;
+/// `embed_fonts = false` names the fonts only; no theme names none; the same export gives the
+/// same bytes.
+#[test]
+fn docx_fonts_are_embedded() {
+    let (_directory, root, mut engine) = fonts_workspace("");
+    let (summary, _) = export(&mut engine, &root, None).unwrap();
+    assert_eq!(look(&summary), (LookKind::PdfTheme, "brand".to_owned()));
+    let bytes = fs::read(root.join("page.docx")).unwrap();
+    let entries = adoc_docx::testing::assert_valid_package(&bytes);
+    let table = font_table(&entries);
+    // The theme's family is written under the font's own name, which the styles use too.
+    let names: Vec<&str> = table.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["Noto Serif", "M+ 1mn"]);
+    let styles = adoc_docx::testing::text(&entries, "word/styles.xml");
+    assert_eq!(
+        style_value(styles, "", "rFonts", "ascii").as_deref(),
+        Some("Noto Serif")
+    );
+    assert!(!styles.contains("Brand Serif"));
+    // Regular and bold embedded; the italic face's licence forbids it; bold italic is missing.
+    let faces = &table
+        .iter()
+        .find(|(name, _)| name == "Noto Serif")
+        .unwrap()
+        .1;
+    assert_eq!(faces, &["embedRegular", "embedBold"]);
+    let fonts = entries
+        .keys()
+        .filter(|name| name.starts_with("word/fonts/"))
+        .count();
+    assert_eq!(fonts, 3);
+    let warnings: Vec<&str> = summary
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("italic face") && warning.contains("licence")),
+        "{warnings:?}"
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("bold italic face") && warning.contains("missing.ttf")),
+        "{warnings:?}"
+    );
+    assert!(
+        adoc_docx::testing::text(&entries, "word/settings.xml").contains("w:embedTrueTypeFonts")
+    );
+    // The same export gives the same bytes.
+    export(&mut engine, &root, None).unwrap();
+    assert_eq!(fs::read(root.join("page.docx")).unwrap(), bytes);
+
+    // Not embedding names the fonts only.
+    let (_directory, root, mut engine) = fonts_workspace("[docx]\nembed_fonts = false\n");
+    export(&mut engine, &root, None).unwrap();
+    let entries =
+        adoc_docx::testing::assert_valid_package(&fs::read(root.join("page.docx")).unwrap());
+    let table = font_table(&entries);
+    assert_eq!(table.len(), 2, "{table:?}");
+    assert!(table.iter().all(|(_, faces)| faces.is_empty()), "{table:?}");
+    assert!(!entries.keys().any(|name| name.starts_with("word/fonts/")));
+
+    // No theme, no fonts.
+    export(&mut engine, &root, Some(LookChoice::None)).unwrap();
+    let entries =
+        adoc_docx::testing::assert_valid_package(&fs::read(root.join("page.docx")).unwrap());
+    assert!(!entries.contains_key("word/fontTable.xml"));
+}
+
+#[test]
+fn theme_fonts_outside_the_roots_are_not_embedded() {
+    let directory = tempfile::tempdir().unwrap();
+    let outside = adoc_engine::normalize_path(directory.path());
+    let root = outside.join("docs");
+    fs::create_dir_all(root.join("themes")).unwrap();
+    fs::write(
+        outside.join("secret.ttf"),
+        adoc_theme::bundled_font("notoserif-regular-subset.ttf").unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        root.join("themes/leak-theme.yml"),
+        "extends: default\nfont:\n  catalog:\n    Leak:\n      normal: ../../secret.ttf\n\
+         base:\n  font_family: Leak\n",
+    )
+    .unwrap();
+    fs::write(root.join("page.adoc"), "= Page\n\nText.\n").unwrap();
+    fs::write(
+        root.join(".adocfoundry.toml"),
+        "[pdf]\ntheme = \"leak\"\nthemes_dir = \"themes\"\n",
+    )
+    .unwrap();
+    let mut settings = Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine.set_file_access(adoc_engine::FileAccess::within([root.clone()]));
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    let (summary, _) = export(&mut engine, &root, None).unwrap();
+    let entries =
+        adoc_docx::testing::assert_valid_package(&fs::read(root.join("page.docx")).unwrap());
+    // Named, as the theme names it, and not embedded.
+    assert_eq!(font_table(&entries), [("Leak".to_owned(), Vec::new())]);
+    assert!(!entries.keys().any(|name| name.starts_with("word/fonts/")));
+    assert!(
+        summary
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("secret.ttf")),
+        "{:?}",
+        summary.diagnostics
+    );
+}

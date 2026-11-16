@@ -157,6 +157,28 @@ fn relationships_of(part: &str) -> String {
     }
 }
 
+/// Whether `head`, a font's first 32 bytes, is the start of an OpenType font `length` bytes
+/// long: its version, a table directory consistent with its count of tables, and a first table
+/// named in letters and lying within the font.
+fn opens_as_a_font(head: &[u8], length: usize) -> bool {
+    let u16_at = |at: usize| usize::from(u16::from_be_bytes([head[at], head[at + 1]]));
+    let u32_at = |at: usize| u32::from_be_bytes(head[at..at + 4].try_into().unwrap()) as usize;
+    if head.len() < 32 || !matches!(&head[..4], [0, 1, 0, 0] | b"true" | b"OTTO") {
+        return false;
+    }
+    let tables = u16_at(4);
+    let power = (usize::BITS - 1 - tables.max(1).leading_zeros()) as usize;
+    let search_range = (1 << power) * 16;
+    tables > 0
+        && u16_at(6) == search_range
+        && u16_at(8) == power
+        && u16_at(10) == tables * 16 - search_range
+        && head[12..16]
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b' ' | b'/'))
+        && u32_at(20) + u32_at(24) <= length
+}
+
 /// Every check a reader makes of the package, against its bytes.
 pub fn assert_valid_package(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
     let entries = entries(bytes);
@@ -172,8 +194,11 @@ pub fn assert_valid_package(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
         assert!(names.contains(required), "{required} is missing: {names:?}");
     }
 
-    // Every part but the pictures is well-formed XML.
-    for name in names.iter().filter(|name| !name.starts_with("word/media/")) {
+    // Every part but the pictures and fonts is well-formed XML.
+    for name in names
+        .iter()
+        .filter(|name| !name.starts_with("word/media/") && !name.starts_with("word/fonts/"))
+    {
         roxmltree::Document::parse(text(&entries, name))
             .unwrap_or_else(|error| panic!("{name} is not well formed: {error}"));
     }
@@ -332,6 +357,112 @@ pub fn assert_valid_package(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
             }
         }
     }
+
+    // Embedded fonts: each face in the font table is a font part of its own content type, which
+    // its key opens into a font; every font part is one of them; and the settings say fonts
+    // are embedded exactly when one is.
+    let mut embedded = BTreeSet::new();
+    if names.contains("word/fontTable.xml") {
+        assert_eq!(
+            overrides["/word/fontTable.xml"],
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml"
+        );
+        let rels =
+            roxmltree::Document::parse(text(&entries, "word/_rels/document.xml.rels")).unwrap();
+        assert!(
+            rels.descendants().any(|node| {
+                node.attribute("Type")
+                    .is_some_and(|kind| kind.ends_with("/fontTable"))
+                    && node.attribute("Target") == Some("fontTable.xml")
+            }),
+            "the font table has no relationship from the document"
+        );
+        let table = roxmltree::Document::parse(text(&entries, "word/fontTable.xml")).unwrap();
+        let font_rels = entries
+            .get("word/_rels/fontTable.xml.rels")
+            .map(|_| text(&entries, "word/_rels/fontTable.xml.rels"))
+            .unwrap_or("<Relationships/>");
+        let font_rels = roxmltree::Document::parse(font_rels).unwrap();
+        let mut families = BTreeSet::new();
+        for font in table
+            .descendants()
+            .filter(|node| node.has_tag_name((W, "font")))
+        {
+            let name = font.attribute((W, "name")).expect("a font has a name");
+            assert!(families.insert(name), "font {name} twice in the font table");
+            for embed in font
+                .children()
+                .filter(|node| node.is_element() && node.tag_name().name().starts_with("embed"))
+            {
+                let id = embed.attribute((R, "id")).expect("an embedded face's r:id");
+                let relationship = font_rels
+                    .descendants()
+                    .find(|node| node.attribute("Id") == Some(id))
+                    .unwrap_or_else(|| panic!("font {name}: no relationship {id}"));
+                assert!(
+                    relationship
+                        .attribute("Type")
+                        .is_some_and(|kind| kind.ends_with("/relationships/font")),
+                    "font {name}: {id} is not a font relationship"
+                );
+                let part = target_of(
+                    "word/fontTable.xml",
+                    relationship.attribute("Target").unwrap(),
+                );
+                assert_eq!(
+                    overrides.get(format!("/{part}").as_str()).copied(),
+                    Some("application/vnd.openxmlformats-officedocument.obfuscatedFont"),
+                    "{part}'s content type"
+                );
+                let key = embed.attribute((W, "fontKey")).unwrap_or_default();
+                let groups: Vec<usize> = key
+                    .trim_start_matches('{')
+                    .trim_end_matches('}')
+                    .split('-')
+                    .map(str::len)
+                    .collect();
+                assert!(
+                    key.starts_with('{')
+                        && key.ends_with('}')
+                        && groups == [8, 4, 4, 4, 12]
+                        && key[1..key.len() - 1]
+                            .chars()
+                            .all(|c| c == '-' || c.is_ascii_hexdigit()),
+                    "font {name}: the font key {key} is not a GUID"
+                );
+                let data = entries
+                    .get(&part)
+                    .unwrap_or_else(|| panic!("font {name}: {part} is not in the package"));
+                let key = crate::fonts::key_bytes(key);
+                let opened: Vec<u8> = data
+                    .iter()
+                    .take(32)
+                    .enumerate()
+                    .map(|(index, byte)| byte ^ key[index % 16])
+                    .collect();
+                assert!(
+                    opens_as_a_font(&opened, data.len()),
+                    "font {name}: {part} does not open into a font with its key"
+                );
+                embedded.insert(part);
+            }
+        }
+    }
+    for name in names.iter().filter(|name| name.starts_with("word/fonts/")) {
+        assert!(
+            embedded.contains(*name),
+            "{name} is no face in the font table"
+        );
+    }
+    let settings = entries
+        .get("word/settings.xml")
+        .map(|_| text(&entries, "word/settings.xml"))
+        .unwrap_or_default();
+    assert_eq!(
+        settings.contains("<w:embedTrueTypeFonts/>"),
+        !embedded.is_empty(),
+        "the settings say fonts are embedded only when one is"
+    );
 
     // Every style used is defined, as the kind of style it is used as.
     let styles = roxmltree::Document::parse(text(&entries, "word/styles.xml")).unwrap();

@@ -155,6 +155,8 @@ pub struct WordLook {
     /// The covers when the document names none.
     pub front_cover: Option<PathBuf>,
     pub back_cover: Option<PathBuf>,
+    /// The fonts the look's families are, embedded where its styles name them.
+    pub fonts: Vec<crate::FontFamily>,
 }
 
 /// The theme keys a Word export reads, with the `<n>` of `heading_h<n>` written as `<n>`;

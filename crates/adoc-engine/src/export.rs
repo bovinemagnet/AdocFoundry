@@ -1307,7 +1307,10 @@ impl Engine {
             access: self.file_access.clone(),
         }
     }
+}
 
+#[cfg(feature = "export")]
+impl Engine {
     /// The directories the theme's fonts are looked for in: the export's own, else the page's
     /// `pdf-fontsdir`, else `[pdf] fonts_dir`, and the bundled fonts last.
     pub(crate) fn fonts_dirs(
@@ -1343,10 +1346,7 @@ impl Engine {
         fonts_dirs.push(PathBuf::from("GEM_FONTS_DIR"));
         fonts_dirs
     }
-}
 
-#[cfg(feature = "export")]
-impl Engine {
     /// Where named themes, and Word templates beside them, are looked for: the page's
     /// `pdf-themesdir`, relative to it, else `[pdf] themes_dir`, relative to the first root.
     pub(crate) fn themes_dir(
@@ -1570,7 +1570,11 @@ impl Engine {
                 self.docx_options(
                     &args,
                     resolved.page(&attributes).as_ref(),
-                    resolved.word_look(&attributes),
+                    resolved.word_look(
+                        &attributes,
+                        &self.fonts_dirs(None, &attributes, sources.first().map(PathBuf::as_path)),
+                        &self.file_access,
+                    ),
                 ),
                 resolved.report(),
             ),
@@ -1731,8 +1735,9 @@ impl Engine {
                 .site_url()
                 .map(|site| self.page_urls(&site))
                 .unwrap_or_default(),
-            // Images, diagrams and formulas are read as the PDF's are.
+            // Images, diagrams, formulas and fonts are read as the PDF's are.
             access: self.file_access.clone(),
+            fonts_named_only: !settings.embed_fonts,
         }
     }
 }
