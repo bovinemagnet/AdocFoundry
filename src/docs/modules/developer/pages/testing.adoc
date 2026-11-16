@@ -59,10 +59,66 @@ In the application crate, `ui_tests::typing_diffs_once_and_never_reconciles` typ
 == Benchmarks
 
 `cargo bench -p adoc-engine` runs `crates/adoc-engine/benches/budgets.rs`, a benchmark harness with no dependencies (`harness = false`).
-It times engine paths on the engine thread, the median and worst of each, and fails when a median is over its budget.
-`BENCH_RECORD=1` records every bench without failing.
-The table is printed, and appended to `$GITHUB_STEP_SUMMARY` when CI sets it.
-CI's `bench` job runs it on Ubuntu.
+It times engine paths on the engine thread, the median and worst of each, and prints a table of them with each budget, marking a median over its budget as `**over**`.
+It only measures and never fails a run.
+`BENCH_RESULTS=<file>` also writes every row to that file, tab-separated, for `xtask/src/bench.rs` to read, and `BENCH_ONLY=<text>` runs only the benches whose names contain the text.
+`cargo xtask bench <tier>` runs the bench and judges what it measured.
+
+=== Three tiers
+
+A shared CI runner varies about 1.5 times from one run to the next, so a budget written for one machine cannot be held to on another.
+The benchmarks are therefore judged in three tiers, each asking a question its machine can answer.
+
+[cols="1,3,2,3,2"]
+|===
+| Tier | Command | Compares against | Fails on | When
+
+| CI
+| `cargo xtask bench ci`
+| The budgets, loosely, and the bench's own growth with size
+| A bench past three times its budget, or growth with size beyond its limit
+| Every pull request (the `bench` job)
+
+| Development
+| `cargo xtask bench dev [--against <ref>] [--only <text>] [--margin <percent>]`
+| `<ref>` (`main` by default), run on the same machine
+| A bench more than the margin (10% by default) slower
+| While changing a measured path
+
+| Release
+| `cargo xtask bench release [--skip-typing] [--corpus <folder>]`
+| Every budget as written, and the typing budget
+| A bench over its budget, growth beyond its limit, or typing over its budget
+| Before a release is tagged, on a quiet machine
+|===
+
+Each tier prints its judged table, with the columns Bench, Size, Measured, Worst and Limit, and appends it to `$GITHUB_STEP_SUMMARY` when that is set.
+
+`cargo xtask bench ci` is what CI's `bench` job runs.
+A timed bench fails only when it passes three times its budget (`CI_CEILING`).
+The benches timed at several sizes must also not grow faster with size than `GROWTH` allows, between the smallest size and the largest.
+`parse_whole` is held to at most n^1.25, and it measures n^1.00, which is linear.
+`keystroke_insert` and `keystroke_backspace` are held to at most n^0.6, and they measure about n^0.13.
+A slower runner slows every size alike, so the growth barely moves, while a path that has turned quadratic shows on any runner.
+Index memory is held to its own budget of 2.5 times the input, since a runner's speed does not change memory.
+
+`cargo xtask bench dev` compares this checkout with `<ref>` on the same machine, minutes apart, which takes the machine out of the comparison.
+It checks `<ref>` out in a worktree kept at `target/bench/baseline`, whose build is reused between runs, runs the benches there and then here, and fails a bench that is more than the margin slower.
+A change under 1 µs is ignored (`COMPARE_FLOOR_NS`), since a keystroke's median is under a microsecond.
+`--only` runs only the benches whose names contain the text, for quick runs while working.
+A baseline from before `cargo xtask bench` existed writes no results, so `<ref>` must be a ref that has it.
+A pull request that changes a measured path, such as the parser, the index, the settle steps, the preview, quick open or the visual model, puts the comparison table in its description.
+
+`cargo xtask bench release` is run on a quiet machine, on mains power with nothing else building, before a release is tagged.
+It runs these in order:
+
+. Every budget as written in the table below, and the growth limits.
+. `cargo bench -p adoc-graph`, which holds its own budgets.
+. The timing and memory probes, `cargo test --release -p adoc-engine --test perf -- --ignored --nocapture --test-threads=1`, whose figures are printed and not judged.
+. The release app typing into a generated 1 MB page for twenty seconds, held to the typing budget itself (16.7 ms for the 99th percentile of work and 33 ms for the longest piece).
+This needs a display with the window kept in view, and `--skip-typing` leaves it out.
+. With `--corpus <folder>`, `adocfoundry-cli check` over a folder of real documentation, timed and recorded.
+Only a run that cannot finish fails.
 
 [cols="2,3,2"]
 |===
@@ -109,10 +165,10 @@ CI's `bench` job runs it on Ubuntu.
 | 2.5 times the text
 |===
 
-The budgets are for a CI runner, a few times slower than a developer's machine.
-A median far under its budget locally may still be close to it on CI.
+The budgets are a release's, held on a quiet machine by `cargo xtask bench release`.
+CI holds three times them.
 The ignored timing and memory probes in `crates/adoc-engine/tests/perf.rs` and `crates/adoc-index/tests/memory.rs` print figures and assert nothing.
-They are for investigating a path, not for guarding it.
+They are for investigating a path, not for guarding it, though the release tier runs the `perf.rs` probes and prints their figures.
 
 `cargo bench -p adoc-graph` times one layout step for 2,000 nodes and 6,000 edges against a budget of 8 ms.
 The same budget of 8 ms holds syncing the layout with an unchanged snapshot, collapsing half the modules, and a shortest path that cannot be found through a navigation file of 2,000 entries; an export of 2,000 nodes, laid out until it settles, has a budget of 6 s.
@@ -154,7 +210,9 @@ A `typing benchmark budget:` line then says `within:` or `over:` and gives the r
 Each frame over 25 ms is listed with its parts by the clock, longest first, the frame's layout and paint appearing among them as `draw`, how much of the interval was not timed, and the thread's CPU time in that interval.
 
 For each run, the job adds both lines and the long frames to the run's summary.
-It fails when the 1 MB page's run is not within the budget.
+It fails when the 1 MB page's run is not within three times the budget, which the job selects with `ADOCFOUNDRY_TYPING_TIER=ci`.
+The `typing benchmark budget:` line then reads, for example, `p99 work 20.0 ms ≤ 50.1 ms (3 × 16.7 ms)`, and no piece may be over 99 ms (3 × 33 ms).
+Without that variable the budget is the release one, held by `cargo xtask bench release` on a quiet machine.
 It also fails when that run draws no frames, since it cannot be judged: macOS draws none for a window that is covered, minimised or on a locked screen.
 The control page's lines are recorded only.
 In CI a three-line page costs more CPU per frame than the 1 MB page does (a median of 9.8 ms against 3.9 ms, and a 99th percentile of 17.1 ms against 8.5 ms), so the cost is the app's own and not the runner's, and #418 tracks it.

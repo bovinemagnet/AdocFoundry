@@ -173,12 +173,13 @@ Logic that a front end could need belongs here, never in a view.
 ----
 cargo test -p adoc-engine
 cargo test --release -p adoc-engine --test perf -- --ignored --nocapture
-cargo bench -p adoc-engine
+cargo xtask bench dev --only settle
+cargo xtask bench ci
 ----
 
 Integration tests in `crates/adoc-engine/tests/` drive the engine headlessly through commands, one file per service (`documents.rs`, `keystroke.rs`, `preview.rs`, `visual.rs`, `export.rs`, `git.rs`, `audit.rs`, `impact.rs`, `graph.rs`, `wake.rs` and others).
 `keystroke.rs` counts parses per keystroke with a `ManualClock`, and `wake.rs` checks that the pump and `next_due` agree.
-`perf.rs` is a timing probe, ignored by default, and `benches/budgets.rs` holds engine paths to budgets (`BENCH_RECORD=1` only records).
+`perf.rs` is a timing probe, ignored by default, and `benches/budgets.rs` times engine paths against budgets, which `cargo xtask bench` judges for CI, for development against a baseline, or for a release (see xref:developer:testing.adoc#_benchmarks[Benchmarks]).
 Snapshots use `insta` and live in `tests/snapshots/`; review a changed snapshot rather than overwriting it.
 Tests that open a fixture in place turn Git off with `Settings::with_git_opt_in()`.
 Fixtures are under `tests/fixtures/`.

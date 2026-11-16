@@ -125,8 +125,11 @@ jobs:
         run: df -h /
 
   bench:
-    # The engine's benchmarks, on the engine thread, each held to its budget; the table goes in
-    # the run's summary. Index memory is measured here only, from /proc.
+    # The engine's benchmarks, on the engine thread, for the CI tier (#612): a bench fails only
+    # past three times its budget, and those timed at several sizes must not grow faster with size
+    # than they should, since a shared runner's speed varies by about 1.5x from run to run. The
+    # budgets themselves are a release's (`cargo xtask bench release`). The table goes in the
+    # run's summary. Index memory is measured here only, from /proc, and held to its budget.
     timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
@@ -137,17 +140,20 @@ jobs:
           persist-credentials: false
           submodules: recursive
       - run: rustup toolchain install
-      - run: cargo bench -p adoc-engine --bench budgets
+      - run: cargo xtask bench ci
 
   typing:
     # The real app types into a 1 MB page for twenty seconds, through the editor widget and the
     # engine. The frame intervals and the app's own work in them, the CPU time its thread used, go
-    # in the run's summary, and the job fails when the 1 MB page's work misses the benchmark's
-    # budget (#241): the intervals, and the clock, are mostly the runner's, so they are recorded
-    # only. A run that draws no frames cannot be judged and fails. The three-line control page is
-    # recorded only until its own cost per frame is understood (#418).
+    # in the run's summary, and the job fails when the 1 MB page's work misses three times the
+    # benchmark's budget (#241, #612): the budget itself is a release's, as the runner's CPU time
+    # varies with the runner. The intervals, and the clock, are mostly the runner's, so they are
+    # recorded only. A run that draws no frames cannot be judged and fails. The three-line
+    # control page is recorded only until its own cost per frame is understood (#418).
     timeout-minutes: 45
     runs-on: macos-15
+    env:
+      ADOCFOUNDRY_TYPING_TIER: ci
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

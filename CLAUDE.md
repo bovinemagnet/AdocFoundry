@@ -42,7 +42,9 @@ cargo test -p adocfoundry-cli --test cli           # one integration test file
 cargo test -p adoc-model --test roundtrip          # the visual editor's round-trip properties
 cargo test -p adocfoundry-cli --test fidelity      # render vs Asciidoctor (allowed differences in its ALLOWED table); skips itself without asciidoctor
 cargo test --release -p adoc-engine --test perf -- --ignored --nocapture   # timing probe (ignored by default)
-cargo bench -p adoc-engine                         # benchmarks held to budgets (BENCH_RECORD=1 to only record)
+cargo xtask bench ci                               # the engine's benchmarks as CI judges them: 3x budgets, growth with size
+cargo xtask bench dev --only parse                 # the benches named, against main on this machine (fails past 10%)
+cargo xtask bench release                          # every budget, the graph bench, the perf probes, typing; before a release
 cargo test -p adoc-pdf --test themes               # theme loader against asciidoctor-pdf's key maps
 cargo test -p adocfoundry-cli --test pdf_regression   # PDFs vs asciidoctor-pdf, rasterised; skips without it
 ADOC_PDF_OUT=/tmp cargo test -p adoc-pdf --test reference -- --ignored   # write the reference PDFs and Typst

@@ -18,6 +18,9 @@ cargo run -p adoc-ls -- --version                        # smoke-test the langua
 cargo deny check                                         # licences and advisories
 cargo xtask layers                                       # the crate dependency ladder
 cargo xtask package                                      # release build and archive in dist/
+cargo xtask bench ci                                     # the benchmarks as CI judges them
+cargo xtask bench dev --only parse                       # compared with main on this machine
+cargo xtask bench release                                # every budget, before a release
 cargo xtask bump 0.11.0                                  # set the version for a release
 cargo xtask notices target/THIRD-PARTY-NOTICES.txt       # the third-party licence notices
 ----
@@ -482,12 +485,14 @@ Its section for the version becomes the body of the GitHub release.
 
 A release goes in this order:
 
+. Run `cargo xtask bench release` on a quiet machine, and put its table in the release pull request.
 . Run `cargo xtask bump <version>`, which sets the version in `Cargo.toml`, `src/docs/antora.yml` and `CHANGELOG.md`, and brings `Cargo.lock` up to date.
 . Commit the result.
 . Tag the commit `v<version>` and push the tag.
 
 [source,sh]
 ----
+cargo xtask bench release
 cargo xtask bump 0.11.0
 git commit -am "Release 0.11.0"
 git tag v0.11.0

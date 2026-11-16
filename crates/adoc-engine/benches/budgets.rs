@@ -1,10 +1,10 @@
 //! Benchmarks with budgets: `cargo bench -p adoc-engine`. Each bench times an engine path on
-//! the engine thread and fails the run when its median is over budget; a bench without a
-//! budget is recorded only. `BENCH_RECORD=1` records every bench without failing. The table is
-//! printed, and appended to `$GITHUB_STEP_SUMMARY` when CI sets it.
+//! the engine thread, its median and worst, and prints them with its budget; a bench without a
+//! budget is recorded only. Nothing here fails a run: `cargo xtask bench` judges what the bench
+//! measured, for CI, for development against a baseline, or for a release (#612).
 //!
-//! The budgets are for a CI runner, a few times slower than a developer's machine, so a bench
-//! well under its budget locally can still be near it there.
+//! `BENCH_RESULTS=<file>` writes every row there as well, in the form `xtask/src/bench.rs`
+//! reads, and `BENCH_ONLY=<text>` runs only the benches whose names hold `text`.
 
 use std::{
     fmt::Write as _,
@@ -34,20 +34,31 @@ enum Budget {
 }
 
 struct Row {
-    bench: &'static str,
     size: String,
     median: String,
     worst: String,
     budget: String,
     over: bool,
+    /// The row for `BENCH_RESULTS`.
+    result: String,
 }
 
 #[derive(Default)]
 struct Report {
-    rows: Vec<Row>,
+    rows: Vec<(&'static str, Row)>,
+    /// `BENCH_ONLY`: the text a bench's name must hold to run.
+    only: Option<String>,
 }
 
 impl Report {
+    /// Whether any of `benches` is to run, so a group can skip building what none of its benches
+    /// would use.
+    fn wants(&self, benches: &[&str]) -> bool {
+        self.only
+            .as_deref()
+            .is_none_or(|only| benches.iter().any(|bench| bench.contains(only)))
+    }
+
     /// Times `run` `runs` times after one warm-up, and checks the median against `budget`.
     /// `bytes` is the size of the input, for a per-megabyte budget.
     fn time(
@@ -59,28 +70,45 @@ impl Report {
         budget: Budget,
         mut run: impl FnMut() -> Duration,
     ) {
+        if !self.wants(&[bench]) {
+            return;
+        }
         run();
         let mut samples: Vec<Duration> = (0..runs).map(|_| run()).collect();
         samples.sort();
         let median = samples[samples.len() / 2];
         let worst = *samples.last().unwrap();
         let megabytes = bytes as f64 / 1e6;
-        let (shown, over) = match budget {
-            Budget::None | Budget::Bytes(_) => ("record".to_owned(), false),
-            Budget::Median(limit) => (format!("≤ {}", duration(limit)), median > limit),
+        let (shown, over, written) = match budget {
+            Budget::None | Budget::Bytes(_) => ("record".to_owned(), false, "none".to_owned()),
+            Budget::Median(limit) => (
+                format!("≤ {}", duration(limit)),
+                median > limit,
+                format!("median:{}", limit.as_nanos()),
+            ),
             Budget::PerMegabyte(limit) => (
                 format!("≤ {}/MB", duration(limit)),
                 median.as_secs_f64() / megabytes > limit.as_secs_f64(),
+                format!("per_mb:{}", limit.as_nanos()),
             ),
         };
-        self.rows.push(Row {
+        let size = size.into();
+        let result = format!(
+            "time\t{bench}\t{size}\t{}\t{}\t{bytes}\t{written}",
+            median.as_nanos(),
+            worst.as_nanos()
+        );
+        self.rows.push((
             bench,
-            size: size.into(),
-            median: duration(median),
-            worst: duration(worst),
-            budget: shown,
-            over,
-        });
+            Row {
+                size,
+                median: duration(median),
+                worst: duration(worst),
+                budget: shown,
+                over,
+                result,
+            },
+        ));
     }
 
     /// Records the resident memory `added` while building something from `bytes` of input.
@@ -92,29 +120,40 @@ impl Report {
         bytes: usize,
         budget: Budget,
     ) {
+        if !self.wants(&[bench]) {
+            return;
+        }
         let ratio = added as f64 / bytes as f64;
-        let (shown, over) = match budget {
-            Budget::Bytes(limit) => (format!("≤ {limit:.1} × input"), ratio > limit),
-            _ => ("record".to_owned(), false),
+        let (shown, over, written) = match budget {
+            Budget::Bytes(limit) => (
+                format!("≤ {limit:.1} × input"),
+                ratio > limit,
+                format!("ratio:{limit}"),
+            ),
+            _ => ("record".to_owned(), false, "none".to_owned()),
         };
-        self.rows.push(Row {
+        let result = format!("memory\t{bench}\t{size}\t{added}\t{bytes}\t{written}");
+        self.rows.push((
             bench,
-            size,
-            median: format!("{:.1} MB ({ratio:.2} × input)", added as f64 / 1e6),
-            worst: String::new(),
-            budget: shown,
-            over,
-        });
+            Row {
+                size,
+                median: format!("{:.1} MB ({ratio:.2} × input)", added as f64 / 1e6),
+                worst: String::new(),
+                budget: shown,
+                over,
+                result,
+            },
+        ));
     }
 
     fn table(&self) -> String {
         let mut table =
             String::from("| Bench | Size | Median | Worst | Budget |\n|---|---|---|---|---|\n");
-        for row in &self.rows {
+        for (bench, row) in &self.rows {
             let _ = writeln!(
                 table,
                 "| `{}` | {} | {} | {} | {}{} |",
-                row.bench,
+                bench,
                 row.size,
                 row.median,
                 row.worst,
@@ -216,6 +255,9 @@ fn backspace(engine: &mut Engine, id: DocumentId, at: usize) -> Duration {
 const SIZES: [usize; 4] = [1_000, 5_000, 20_000, 100_000];
 
 fn keystrokes(report: &mut Report) {
+    if !report.wants(&["parse_whole", "keystroke_insert", "keystroke_backspace"]) {
+        return;
+    }
     for lines in SIZES {
         let text = synthetic_document(lines);
         let runs = if lines >= 100_000 { 50 } else { 200 };
@@ -233,6 +275,9 @@ fn keystrokes(report: &mut Report) {
             },
         );
 
+        if !report.wants(&["keystroke_insert", "keystroke_backspace"]) {
+            continue;
+        }
         let dir = tempfile::tempdir().unwrap();
         let (mut engine, _clock, id) = page_engine(dir.path(), &text, settings());
         // In a paragraph near the middle, as typing usually is.
@@ -266,6 +311,15 @@ fn keystrokes(report: &mut Report) {
 }
 
 fn settles(report: &mut Report) {
+    if !report.wants(&[
+        "settle_index",
+        "settle_preview",
+        "settle_git",
+        "settle_recovery",
+        "build_visual",
+    ]) {
+        return;
+    }
     let text = synthetic_document(20_000);
     let size = "20000 lines".to_owned();
     let budget = Budget::Median(Duration::from_millis(1));
@@ -415,6 +469,9 @@ fn settles(report: &mut Report) {
 }
 
 fn workspace(report: &mut Report) {
+    if !report.wants(&["quick_open", "workspace_open"]) {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     fs::write(
         dir.path().join("antora.yml"),
@@ -488,6 +545,9 @@ fn workspace(report: &mut Report) {
 
 /// A full build of the link graph over 5,000 pages, as after a catalog change.
 fn graph_build(report: &mut Report) {
+    if !report.wants(&["graph_build", "graph_snapshot"]) {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let mut nav_files = Vec::new();
     for module in 0..50 {
@@ -563,6 +623,9 @@ fn resident() -> Option<u64> {
 }
 
 fn index_memory(report: &mut Report) {
+    if !report.wants(&["index_memory"]) {
+        return;
+    }
     let Some(before) = resident() else {
         return;
     };
@@ -604,35 +667,28 @@ fn main() {
     if std::env::args().any(|argument| argument == "--test" || argument == "--list") {
         return;
     }
-    let mut report = Report::default();
+    let mut report = Report {
+        only: std::env::var("BENCH_ONLY")
+            .ok()
+            .filter(|only| !only.is_empty()),
+        ..Report::default()
+    };
     index_memory(&mut report);
     keystrokes(&mut report);
     settles(&mut report);
     workspace(&mut report);
     graph_build(&mut report);
 
-    let table = report.table();
-    println!("{table}");
-    if let Ok(summary) = std::env::var("GITHUB_STEP_SUMMARY") {
-        let _ = fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(summary)
-            .and_then(|mut file| {
-                std::io::Write::write_all(
-                    &mut file,
-                    format!("### Engine benchmarks\n\n{table}\n").as_bytes(),
-                )
-            });
-    }
-    let over: Vec<&str> = report
-        .rows
-        .iter()
-        .filter(|row| row.over)
-        .map(|row| row.bench)
-        .collect();
-    if !over.is_empty() && std::env::var_os("BENCH_RECORD").is_none() {
-        eprintln!("over budget: {}", over.join(", "));
-        std::process::exit(1);
+    println!("{}", report.table());
+    if let Some(path) = std::env::var_os("BENCH_RESULTS") {
+        let results: String = report
+            .rows
+            .iter()
+            .map(|(_, row)| format!("{}\n", row.result))
+            .collect();
+        if let Err(error) = fs::write(&path, results) {
+            eprintln!("BENCH_RESULTS: {}: {error}", Path::new(&path).display());
+            std::process::exit(1);
+        }
     }
 }
