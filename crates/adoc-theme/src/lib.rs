@@ -4,6 +4,7 @@
 //! bundled themes name. Free of Typst, so PDF export and Word export both read themes through
 //! it, and a build with Word export alone loads themes without compiling Typst.
 
+pub mod page;
 mod value;
 mod yaml;
 
@@ -26,6 +27,7 @@ use value::{evaluate_math, to_color};
 pub fn value_number(text: &str) -> f64 {
     value::ruby_to_f(text)
 }
+pub use page::{page_geometry, sides, PageGeometry};
 pub use value::{to_pt, Color, ThemeValue};
 use yaml::Yaml;
 

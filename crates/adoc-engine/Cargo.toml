@@ -22,6 +22,8 @@ adoc-parser.workspace = true
 adoc-math = { workspace = true, optional = true }
 adoc-pdf = { workspace = true, optional = true }
 adoc-docx = { workspace = true, optional = true }
+# Themes for PDF export and for a Word export's PDF-theme look; no Typst.
+adoc-theme = { workspace = true, optional = true }
 adoc-render.workspace = true
 adoc-spell.workspace = true
 dirs.workspace = true
@@ -44,7 +46,7 @@ typst = ["export", "dep:adoc-pdf", "dep:adoc-math"]
 docx = ["export", "dep:adoc-docx"]
 # The export pipeline the two formats share; `typst` and `docx` turn it on, and front ends
 # name those, never this.
-export = []
+export = ["dep:adoc-theme"]
 # Git state, changes and commits, through gix.
 git = ["dep:adoc-git"]
 

@@ -88,6 +88,7 @@ fn docx_large_book_is_bounded() {
                 attributes: Vec::new(),
                 paper: None,
                 landscape: None,
+                look: None,
             }),
         )
         .unwrap();

@@ -30,9 +30,11 @@ use std::{
 #[cfg(feature = "export")]
 use adoc_dom::{BlockKind, Dom};
 #[cfg(feature = "typst")]
-use adoc_pdf::{LoadedTheme, PdfOptions, PdfSeverity, ThemeSource};
+use adoc_pdf::{LoadedTheme, PdfOptions, PdfSeverity};
 #[cfg(feature = "export")]
 use adoc_render::{DiagramView, ViewInline, ViewKind, ViewTree};
+#[cfg(feature = "export")]
+use adoc_theme::ThemeSource;
 
 #[cfg(feature = "export")]
 use crate::{
@@ -94,6 +96,8 @@ pub struct DocxExportArgs {
     /// The paper and orientation, in place of `[docx]`'s: a profile's.
     pub paper: Option<crate::DocxPaper>,
     pub landscape: Option<bool>,
+    /// The look, in place of `[docx] look`'s: the export's own or its profile's.
+    pub look: Option<crate::LookChoice>,
 }
 
 /// A finished export.
@@ -106,6 +110,8 @@ pub struct ExportSummary {
     /// The AsciiDoc pages exported, in order (empty for an HTML export).
     pub sources: Vec<PathBuf>,
     pub diagnostics: Vec<ExportDiagnostic>,
+    /// The look a Word export used; `None` for PDF and HTML.
+    pub look: Option<crate::ExportLook>,
 }
 
 /// A problem found while exporting, at a line of a page when known.
@@ -1275,32 +1281,6 @@ impl Engine {
         adoc_pdf::load_theme_within(&source, &self.file_access).map_err(|error| error.to_string())
     }
 
-    /// Where the theme [`Engine::export_theme`] loads comes from.
-    pub(crate) fn theme_source(
-        &self,
-        theme: Option<&str>,
-        attributes: &BTreeMap<String, String>,
-        page: Option<&Path>,
-    ) -> ThemeSource {
-        let page_dir = page.and_then(Path::parent);
-        let root = self.roots.first().map(PathBuf::as_path);
-        let themes_dir = attributes
-            .get("pdf-themesdir")
-            .map(|dir| resolve(dir, page_dir))
-            .or_else(|| {
-                self.settings
-                    .pdf
-                    .themes_dir
-                    .as_deref()
-                    .map(|dir| resolve(dir, root))
-            });
-        let name = theme
-            .map(str::to_owned)
-            .or_else(|| attributes.get("pdf-theme").cloned())
-            .unwrap_or_else(|| self.settings.pdf.theme.clone());
-        ThemeSource::named(&name, themes_dir.as_deref())
-    }
-
     pub(crate) fn export_options(
         &self,
         args: &ExportArgs,
@@ -1364,7 +1344,47 @@ impl Engine {
     }
 }
 
-#[cfg(feature = "typst")]
+#[cfg(feature = "export")]
+impl Engine {
+    /// Where named themes, and Word templates beside them, are looked for: the page's
+    /// `pdf-themesdir`, relative to it, else `[pdf] themes_dir`, relative to the first root.
+    pub(crate) fn themes_dir(
+        &self,
+        attributes: &BTreeMap<String, String>,
+        page: Option<&Path>,
+    ) -> Option<PathBuf> {
+        let page_dir = page.and_then(Path::parent);
+        let root = self.roots.first().map(PathBuf::as_path);
+        attributes
+            .get("pdf-themesdir")
+            .map(|dir| resolve(dir, page_dir))
+            .or_else(|| {
+                self.settings
+                    .pdf
+                    .themes_dir
+                    .as_deref()
+                    .map(|dir| resolve(dir, root))
+            })
+    }
+
+    /// Where a theme comes from: `theme`, else the page's `pdf-theme`, else `[pdf] theme`,
+    /// looked for in [`Engine::themes_dir`]. PDF export and a Word export's PDF-theme look
+    /// both ask this, so they never disagree about which theme applies.
+    pub(crate) fn theme_source(
+        &self,
+        theme: Option<&str>,
+        attributes: &BTreeMap<String, String>,
+        page: Option<&Path>,
+    ) -> ThemeSource {
+        let name = theme
+            .map(str::to_owned)
+            .or_else(|| attributes.get("pdf-theme").cloned())
+            .unwrap_or_else(|| self.settings.pdf.theme.clone());
+        ThemeSource::named(&name, self.themes_dir(attributes, page).as_deref())
+    }
+}
+
+#[cfg(feature = "export")]
 fn resolve(dir: &str, base: Option<&Path>) -> PathBuf {
     let path = Path::new(dir);
     match base {
@@ -1537,7 +1557,24 @@ impl Engine {
         } = written;
         let failed = failed_diagrams(&arranged);
         let document = to_docx(arranged);
-        let options = self.docx_options(&args);
+        // The look, from the first page's attributes (a book's own) as PDF export reads them;
+        // one that cannot be had fails the export.
+        let attributes = match &document {
+            adoc_docx::DocxDocument::Article(page) => page.view.attributes.clone(),
+            adoc_docx::DocxDocument::Book(book) => book.attributes.clone(),
+        };
+        let resolved = self.docx_look(&args, &attributes, sources.first().map(PathBuf::as_path));
+        let (options, look) = match &resolved {
+            Ok(resolved) => (
+                self.docx_options(&args, resolved.page(&attributes).as_ref()),
+                resolved.report(),
+            ),
+            Err(_) => (
+                self.docx_options(&args, None),
+                crate::docx_look::ResolvedLook::None.report(),
+            ),
+        };
+        let resolved = resolved.map(drop);
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
         let crashed = move |error| WorkerMessage::ExportFinished {
@@ -1545,8 +1582,9 @@ impl Engine {
             result: Err(format!("writing the document crashed: {error}")),
         };
         crate::worker::spawn(sender, crashed, move |sender| {
-            let result =
-                write_docx_file(&document, &options, &args.output, &commit).map(|report| {
+            let result = resolved
+                .and_then(|()| write_docx_file(&document, &options, &args.output, &commit))
+                .map(|report| {
                     let mut diagnostics: Vec<ExportDiagnostic> = report
                         .diagnostics
                         .into_iter()
@@ -1566,6 +1604,7 @@ impl Engine {
                         pages: sources.len(),
                         sources,
                         diagnostics,
+                        look: Some(look),
                     }
                 });
             let _ = sender.send(WorkerMessage::ExportFinished { job, result });
@@ -1575,9 +1614,17 @@ impl Engine {
 
 #[cfg(feature = "docx")]
 impl Engine {
-    /// How a document is written: `[docx]`, with the export's own paper and orientation.
-    fn docx_options(&self, args: &DocxExportArgs) -> adoc_docx::DocxOptions {
+    /// How a document is written: `[docx]`, with the export's own paper and orientation, over
+    /// the look's `page` where `[docx]` wrote nothing (the Word looks PRD, §5.1).
+    fn docx_options(
+        &self,
+        args: &DocxExportArgs,
+        page: Option<&adoc_theme::PageGeometry>,
+    ) -> adoc_docx::DocxOptions {
         let settings = &self.settings.docx;
+        let written = |key: &str| settings.written.contains(key);
+        // Twentieths of a point.
+        let twips = |points: f64| (points * 20.0).round().clamp(0.0, f64::from(u32::MAX)) as u32;
         let line = |line: &crate::DocxLine| adoc_docx::Line {
             left: line.left.clone(),
             centre: line.centre.clone(),
@@ -1588,19 +1635,46 @@ impl Engine {
             even: slots.even.as_ref().map(line),
             first: slots.first.as_ref().map(line),
         };
+        let named = |paper: crate::DocxPaper| match paper {
+            crate::DocxPaper::A4 => adoc_docx::Paper::A4,
+            crate::DocxPaper::Letter => adoc_docx::Paper::Letter,
+        };
+        // The paper: the export's, else what `[docx]` wrote, else the look's (in portrait), else
+        // `[docx]`'s default.
+        let paper = match (args.paper, page) {
+            (Some(paper), _) => named(paper),
+            (None, Some(page)) if !written("paper") => {
+                let (width, height) = if page.landscape {
+                    (page.height, page.width)
+                } else {
+                    (page.width, page.height)
+                };
+                adoc_docx::Paper::Custom {
+                    width: twips(width),
+                    height: twips(height),
+                }
+            }
+            (None, _) => named(settings.paper),
+        };
+        let landscape = match (args.landscape, page) {
+            (Some(landscape), _) => landscape,
+            (None, Some(page)) if !written("orientation") => page.landscape,
+            (None, _) => settings.landscape,
+        };
         let margins = settings.margins;
+        let side = |key: &str, written_value: u32, index: usize| match page {
+            Some(page) if !written(key) => twips(page.margin[index]),
+            _ => written_value,
+        };
         let root = self.roots.first();
         adoc_docx::DocxOptions {
-            paper: match args.paper.unwrap_or(settings.paper) {
-                crate::DocxPaper::A4 => adoc_docx::Paper::A4,
-                crate::DocxPaper::Letter => adoc_docx::Paper::Letter,
-            },
-            landscape: args.landscape.unwrap_or(settings.landscape),
+            paper,
+            landscape,
             margins: adoc_docx::Margins {
-                top: margins.top,
-                right: margins.right,
-                bottom: margins.bottom,
-                left: margins.left,
+                top: side("margins.top", margins.top, 0),
+                right: side("margins.right", margins.right, 1),
+                bottom: side("margins.bottom", margins.bottom, 2),
+                left: side("margins.left", margins.left, 3),
                 header: margins.header,
                 footer: margins.footer,
             },
@@ -1739,6 +1813,7 @@ fn typeset(
         pages: output.pages,
         sources: Vec::new(),
         diagnostics,
+        look: None,
     })
 }
 

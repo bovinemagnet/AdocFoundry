@@ -174,6 +174,7 @@ impl Engine {
             pages: 1,
             sources: Vec::new(),
             diagnostics: Vec::new(),
+            look: None,
         });
         self.emit(EngineEvent::ExportFinished { output, result });
     }

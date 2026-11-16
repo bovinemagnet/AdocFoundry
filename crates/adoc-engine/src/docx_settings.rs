@@ -1,10 +1,14 @@
-//! `[docx]`: how Word documents are laid out and styled, and `[docx.profiles.<name>]`, Word
-//! publications saved under a name. Nothing here is in `[pdf]`, and nothing of `[pdf]` (its
-//! theme, fonts or standards) is read for Word: the two formats are set apart, though a profile
-//! names its content as a PDF profile does (`page`, `component` or `nav`), resolved the same way.
+//! `[docx]`: how Word documents look, are laid out and are styled, and
+//! `[docx.profiles.<name>]`, Word publications saved under a name. A Word export's look is a
+//! PDF theme, a Word template or none (`look`, `crate::docx_look`); whatever `[docx]` writes
+//! applies over the look, and `written` records what it wrote. Of `[pdf]`, only the theme and
+//! its folder are read for Word, and only for the PDF-theme look; a profile names its content
+//! as a PDF profile does (`page`, `component` or `nav`), resolved the same way.
 //!
 //! ```toml
 //! [docx]
+//! look = "pdf-theme"        # the default: a named PDF theme; or "template", or "none"
+//! template = "corporate"    # `corporate.dotx` beside the PDF themes, for `look = "template"`
 //! paper = "a4"              # or "letter"
 //! orientation = "portrait"  # or "landscape"
 //! logo = "images/logo.png"  # what `{logo}` shows, relative to the first workspace root
@@ -32,6 +36,7 @@
 //! output = "build/manual.docx"
 //! orientation = "landscape" # and `paper`
 //! attributes = { author = "Paul Snow" }
+//! theme = "corporate"       # or `template = "…"`, or `look = "none"`: at most one
 //! ```
 //!
 //! The settings files' layers apply in turn: a key the workspace file sets replaces the user's,
@@ -114,11 +119,21 @@ pub struct DocxProfile {
     /// The profile's own paper and orientation, in place of `[docx]`'s.
     pub paper: Option<DocxPaper>,
     pub landscape: Option<bool>,
+    /// The profile's own look: `theme`, `template` or `look = "none"`.
+    pub look: Option<crate::LookChoice>,
 }
 
 /// The `[docx]` table.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocxSettings {
+    /// The look an export takes unless it or its profile chooses one.
+    pub look: crate::DocxLook,
+    /// The template `look = "template"` uses, by name or path.
+    pub template: Option<String>,
+    /// The keys a settings file wrote (`paper`, `orientation`, `margins.<side>`, `header`,
+    /// `footer`, `logo`, `odd_even`), which apply over the look; any other key takes the
+    /// look's value. `styles` keys are written when set.
+    pub written: std::collections::BTreeSet<String>,
     pub paper: DocxPaper,
     pub landscape: bool,
     pub margins: DocxMargins,
@@ -136,6 +151,9 @@ impl Default for DocxSettings {
     /// the page number in the footer, at the right of odd pages and the left of even ones.
     fn default() -> Self {
         Self {
+            look: crate::DocxLook::default(),
+            template: None,
+            written: std::collections::BTreeSet::new(),
             paper: DocxPaper::A4,
             landscape: false,
             margins: DocxMargins::default(),
@@ -307,6 +325,9 @@ const PROFILE_KEYS: &[&str] = &[
     "attributes",
     "paper",
     "orientation",
+    "theme",
+    "template",
+    "look",
 ];
 
 /// A profile from its `[docx.profiles.<name>]` table.
@@ -341,7 +362,50 @@ pub(crate) fn parse_profile(name: &str, table: &toml::Table) -> Result<DocxProfi
             .map(landscape)
             .transpose()
             .map_err(|problem| format!("`orientation`: {problem}"))?,
+        look: profile_look(table)?,
     })
+}
+
+/// A profile's look: `theme`, `template` or `look = "none"`, at most one.
+fn profile_look(table: &toml::Table) -> Result<Option<crate::LookChoice>, String> {
+    let given: Vec<&str> = ["theme", "template", "look"]
+        .into_iter()
+        .filter(|key| table.contains_key(*key))
+        .collect();
+    if given.len() > 1 {
+        return Err(format!(
+            "give at most one of `theme`, `template` and `look`, not {}",
+            given.join(" and ")
+        ));
+    }
+    Ok(match given.first() {
+        Some(&"theme") => Some(crate::LookChoice::PdfTheme(
+            profile_text(table, "theme")?.unwrap_or_default(),
+        )),
+        Some(&"template") => Some(crate::LookChoice::Template(
+            profile_text(table, "template")?.unwrap_or_default(),
+        )),
+        Some(_) => {
+            match table.get("look").and_then(toml::Value::as_str) {
+                Some("none") => Some(crate::LookChoice::None),
+                _ => return Err(
+                    "`look`: a profile's look is \"none\"; name a `theme` or `template` instead"
+                        .to_owned(),
+                ),
+            }
+        }
+        None => None,
+    })
+}
+
+/// `[docx] look`: `pdf-theme`, `template` or `none`.
+fn look(value: &toml::Value) -> Result<crate::DocxLook, String> {
+    match value.as_str() {
+        Some("pdf-theme") => Ok(crate::DocxLook::PdfTheme),
+        Some("template") => Ok(crate::DocxLook::Template),
+        Some("none") => Ok(crate::DocxLook::None),
+        _ => Err("expected \"pdf-theme\", \"template\" or \"none\"".to_owned()),
+    }
 }
 
 /// Applies the `[docx]` key `key`; each problem's setting name and what is wrong with it.
@@ -358,12 +422,26 @@ pub(crate) fn apply(
         }
     };
     match key {
-        "paper" => set(paper(value).map(|paper| settings.paper = paper)),
-        "orientation" => set(landscape(value).map(|landscape| settings.landscape = landscape)),
-        "logo" => set(text(value).map(|logo| settings.logo = Some(logo))),
+        "look" => set(look(value).map(|look| settings.look = look)),
+        "template" => set(text(value).map(|template| settings.template = Some(template))),
+        "paper" => set(paper(value).map(|paper| {
+            settings.paper = paper;
+            settings.written.insert("paper".to_owned());
+        })),
+        "orientation" => set(landscape(value).map(|landscape| {
+            settings.landscape = landscape;
+            settings.written.insert("orientation".to_owned());
+        })),
+        "logo" => set(text(value).map(|logo| {
+            settings.logo = Some(logo);
+            settings.written.insert("logo".to_owned());
+        })),
         "odd_even" => set(value
             .as_bool()
-            .map(|odd_even| settings.odd_even = odd_even)
+            .map(|odd_even| {
+                settings.odd_even = odd_even;
+                settings.written.insert("odd_even".to_owned());
+            })
             .ok_or_else(|| "expected true or false".to_owned())),
         "margins" => match value.as_table() {
             None => set(Err("expected a table".to_owned())),
@@ -386,7 +464,10 @@ pub(crate) fn apply(
                         }
                     };
                     match length(value) {
-                        Ok(length) => *target = length,
+                        Ok(length) => {
+                            *target = length;
+                            settings.written.insert(format!("margins.{side}"));
+                        }
                         Err(problem) => problems.push((format!("docx.margins.{side}"), problem)),
                     }
                 }
@@ -395,11 +476,13 @@ pub(crate) fn apply(
         "header" => {
             if let Some(slots) = slots(value, &name, &mut problems) {
                 settings.header = slots;
+                settings.written.insert("header".to_owned());
             }
         }
         "footer" => {
             if let Some(slots) = slots(value, &name, &mut problems) {
                 settings.footer = slots;
+                settings.written.insert("footer".to_owned());
             }
         }
         "styles" => match value.as_table() {
@@ -586,6 +669,36 @@ mod tests {
         assert_eq!(settings.docx.margins, DocxMargins::default());
     }
 
+    /// The Word looks PRD, §5.1: `look` and `template`, and the keys either settings file
+    /// wrote, which apply over the look while the rest take its values.
+    #[test]
+    fn the_look_and_what_was_written_are_read() {
+        let settings = load(
+            Some("[docx]\npaper = \"letter\"\n[docx.margins]\ntop = \"1in\"\n"),
+            "[docx]\nlook = \"template\"\ntemplate = \"corporate\"\nodd_even = false\n\
+             [docx.footer]\nright = \"x\"\n",
+        );
+        assert_eq!(settings.docx.look, crate::DocxLook::Template);
+        assert_eq!(settings.docx.template.as_deref(), Some("corporate"));
+        let written: Vec<&str> = settings.docx.written.iter().map(String::as_str).collect();
+        assert_eq!(written, ["footer", "margins.top", "odd_even", "paper"]);
+        assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
+
+        let defaults = load(None, "");
+        assert_eq!(defaults.docx.look, crate::DocxLook::PdfTheme);
+        assert!(defaults.docx.written.is_empty());
+        assert!(!defaults.pdf_theme_named());
+        assert!(load(None, "[pdf]\ntheme = \"default\"\n").pdf_theme_named());
+
+        let bad = load(None, "[docx]\nlook = \"pdf\"\n");
+        assert_eq!(bad.docx.look, crate::DocxLook::PdfTheme);
+        assert!(
+            bad.warnings[0].contains("`docx.look`"),
+            "{:?}",
+            bad.warnings
+        );
+    }
+
     #[test]
     fn profiles_are_read_and_checked() {
         let settings = load(
@@ -597,6 +710,7 @@ mod tests {
              [docx.profiles.two]\npage = \"a.adoc\"\ncomponent = \"guide\"\n\
              [docx.profiles.pdf]\npage = \"a.adoc\"\noutput = \"manual.pdf\"\n\
              [docx.profiles.themed]\npage = \"a.adoc\"\ntheme = \"acme\"\n\
+             [docx.profiles.standard]\npage = \"a.adoc\"\nstandards = [\"pdf-ua-1\"]\n\
              [docx.profiles.paper]\npage = \"a.adoc\"\npaper = \"a5\"\n",
         );
         let names: Vec<&str> = settings
@@ -605,7 +719,13 @@ mod tests {
             .iter()
             .map(|profile| profile.name.as_str())
             .collect();
-        assert_eq!(names, ["book", "page", "selected"]);
+        // A profile may name its look (the Word looks PRD, §5.5); a PDF-only key is still refused.
+        assert_eq!(names, ["book", "page", "selected", "themed"]);
+        assert_eq!(
+            settings.docx.profiles[3].look,
+            Some(crate::LookChoice::PdfTheme("acme".to_owned()))
+        );
+        assert_eq!(settings.docx.profiles[0].look, None);
         let book = &settings.docx.profiles[0];
         assert_eq!(
             book.content,
@@ -628,7 +748,7 @@ mod tests {
             [
                 "docx.profiles.paper` : `paper`: expected \"a4\" or \"letter\"",
                 "docx.profiles.pdf` : `output`: manual.pdf is not a .docx file",
-                "docx.profiles.themed` : unknown key `theme`",
+                "docx.profiles.standard` : unknown key `standards`",
                 "docx.profiles.two` : expected one of `page`, `component` or `nav`",
             ]
             .map(|tail| {

@@ -222,3 +222,28 @@ As a GitHub stack, one PR each:
    The attribute parsing moves into `adoc-theme` in T3 with the rest of what both formats read.
 5. **`[docx]` over a template (builder's call).** A written `[docx]` key applies over a template as over a theme, from either settings file. For `[docx.styles]`, that means changing the template's own style's font, size or colour, as asked. "The export never redefines a style the template has" means the export never replaces the template's definition wholesale.
 6. **Lists under a template (builder's call).** Lists keep the export's own numbering definitions, added after the template's (§5.3), and use the template's list paragraph style where it has one. Mapping AsciiDoc lists onto a template's `List Bullet`/`List Number` numbering is deferred, and documented as a known difference.
+
+## 13. Implementation notes
+
+### T2 (#670): choosing the look
+
+- **Page setup arrives in T2.** `docx_settings_apply_over_the_look` needs the look to give something, so T2 brings the PDF theme's page, a part of T3's scope.
+  - **Shared parsing.** PDF export's page parsing (`page_geometry`, the paper table, `sides`) moved into `adoc_theme::page`, so both formats read `page_size`, `page_layout`, `page_margin` and the page's `pdf-page-*` attributes with one function.
+  - **Paper.** `adoc_docx::Paper::Custom` carries a theme's size.
+  - **T3 keeps the rest:** the styles, title page and covers.
+- **Settings:**
+  - `[docx] look` (`DocxLook`) and `template`.
+  - `DocxSettings::written`, the keys either file wrote: `paper`, `orientation`, `margins.<side>`, `header`, `footer`, `logo` and `odd_even`. `styles` keys are written when they are `Some`.
+  - `Settings::pdf_theme_named`, set when a file writes `[pdf] theme`, because its value defaults to `default` either way.
+- **Profiles.** A profile's `theme`, `template` or `look = "none"` (at most one, `profile_look`) becomes `DocxProfile::look`, and then `DocxExportArgs::look`. The D6 rule refusing `theme` is lifted; PDF-only keys such as `standards` are still refused.
+- **Resolution** (`Engine::docx_look`):
+  - It runs on the engine thread as the writer starts, from the first page's (or the book's) attributes.
+  - A failure fails the export through the writer's result, as a PDF theme's does.
+  - `theme_source` and the new `themes_dir` moved from the PDF-only code to the shared export code, so Word reads them without Typst. The engine's `export` feature brings in `adoc-theme`.
+- **Reporting.** `ExportSummary::look` (`ExportLook`: kind, name, path) reports a Word export's look. PDF and HTML exports report none.
+- **Templates.** A template is found and checked to exist; T6 reads it.
+- **Tests.**
+  - `docx_look_follows_precedence` and `docx_settings_apply_over_the_look` (`tests/docx_looks.rs`).
+  - `the_look_and_what_was_written_are_read` (`docx_settings.rs`).
+  - `profiles_are_read_and_checked`, updated for the lifted rule.
+
