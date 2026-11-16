@@ -183,6 +183,7 @@ dependencies = [
  "adoc-docx",
  "adoc-dom",
  "adoc-render",
+ "adoc-theme",
  "crc32fast",
  "flate2",
  "resvg 0.46.0",

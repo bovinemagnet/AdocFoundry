@@ -247,3 +247,24 @@ As a GitHub stack, one PR each:
   - `the_look_and_what_was_written_are_read` (`docx_settings.rs`).
   - `profiles_are_read_and_checked`, updated for the lifted rule.
 
+### T3 (#671): theme styles, title page and covers
+
+- **`WordLook`** (`adoc-docx/src/look.rs`) is format-neutral. It holds:
+  - `StyleLook` per style id: font, size, colour, bold, italic, capitals, underline, spacing, line height, alignment, shading, border;
+  - `BoxLook` per table style: borders, background, header row, stripes;
+  - the title page: alignment, logo and its alignment;
+  - the covers.
+- **Mapping.** `WordLook::from_theme` maps the keys in `MAPPED_KEYS`, read as the PDF template reads them:
+  - `title_page_text_align`, else `base_text_align`;
+  - `caption_text_align`, else `caption_align`.
+
+  The spec's first table named `title_page_align`, the pre-2.0 spelling.
+- **Laying it over the styles.** `parts::styles` gives each built-in style its look through `write_style`: the theme's, then the written `[docx.styles]` keys (`written_look`), so a written key wins.
+  - **Order.** Properties are emitted in the schema's order (`PARAGRAPH_ORDER`, `RUN_ORDER`), since Word refuses properties out of order. A theme can add elements a style did not have, such as `w:jc`, `w:pBdr` and `w:caps`.
+  - **Table styles** take the box's border colour and width and a cell background. The header row and stripes are `tblStylePr` `firstRow` and `band2Horz`; asciidoctor-pdf stripes even rows by default, which Word counts as the second band after the header.
+- **Title page.** It takes the look's alignment and the theme's logo (the page's own logo wins), the logo aligned on its own.
+- **Covers.** They come from `cover_front_image`/`cover_back_image`, relative to the theme's folder, when the page names none.
+- **Not in Word.** `title_page_background_color` is not mapped: Word has one background for the whole document, not one per section. It joins the ignored keys T7 lists.
+- **Tests.** `docx_pdf_theme_styles` and `docx_pdf_theme_page_and_title_page` (`tests/docx_looks.rs`) export a book in `tests/fixtures/docx/themes/brand-theme.yml`, which gives every mapped family a distinct value, and check each family arrived. The first also checks that a written `[docx.styles]` key wins and the rest stays the theme's.
+- **On a real theme.** A real corpus theme (one with its own fonts) exported through LibreOffice keeps its heading sizes and colours, its table header shading and its link colours. Its fonts show as substitutes until T5 embeds them.
+

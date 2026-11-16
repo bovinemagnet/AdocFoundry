@@ -1,0 +1,78 @@
+# A theme giving every key family a Word export maps a value of its own, so the Word looks
+# tests can tell each one arrived (docs/prd/PRD-AdocFoundry_DOCX_Themes.md, §5.2).
+extends: default
+page:
+  size: A5
+  layout: landscape
+  margin: [0.75in, 1in]
+base:
+  font_family: Noto Sans
+  font_size: 10
+  font_color: '333333'
+  line_height: 1.5
+  text_align: justify
+heading:
+  font_family: M+ 1mn
+  font_color: '1F4E79'
+  font_style: bold_italic
+  text_transform: uppercase
+  margin_top: 12
+  margin_bottom: 6
+  h2_font_size: 20
+  h3_font_size: 16
+  h3_font_color: '7030A0'
+link:
+  font_color: 'C00000'
+  text_decoration: none
+code:
+  font_family: M+ 1mn
+  font_size: 9
+  font_color: '006400'
+  background_color: 'FFFFE0'
+  border_color: '999999'
+  border_width: 0.75
+codespan:
+  font_color: '8B0000'
+  background_color: 'EEEEEE'
+caption:
+  font_color: '555555'
+  font_style: bold
+  align: center
+quote:
+  font_color: '444444'
+  border_color: '0070C0'
+  border_left_width: 4
+admonition:
+  background_color: 'F0F8FF'
+  column_rule_color: 'FF8C00'
+  column_rule_width: 2
+sidebar:
+  background_color: 'FFF0F5'
+  border_color: 'DB7093'
+  border_width: 1
+example:
+  background_color: 'F5FFFA'
+  border_color: '2E8B57'
+  border_width: 1
+table:
+  border_color: '00008B'
+  border_width: 1
+  head:
+    background_color: 'ADD8E6'
+    font_color: '000080'
+    font_style: bold
+  body:
+    stripe_background_color: 'F0F0F0'
+title_page:
+  text_align: left
+  title:
+    font_size: 30
+    font_color: '8B008B'
+  authors:
+    font_color: '2F4F4F'
+  logo:
+    image: image:brand-logo.png[]
+    align: right
+cover:
+  front:
+    image: brand-cover.png
