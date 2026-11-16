@@ -1160,3 +1160,112 @@ fn theme_fonts_outside_the_roots_are_not_embedded() {
         summary.diagnostics
     );
 }
+
+/// What `Engine::docx_looks` lists is what each choice exports: a workspace theme by its file
+/// even where a page names a themes folder of its own, `acme.dotx` and `acme.docx` as two
+/// looks, and the themed commands run with a look and refuse to run without one.
+#[test]
+fn docx_looks_list_what_each_choice_exports() {
+    use adoc_engine::{commands::ids, CommandArgs, EngineEvent, ExportTarget};
+
+    let (directory, root, mut engine) = brand_book("");
+    fs::write(
+        root.join("themes/acme.dotx"),
+        adoc_docx::testing::template(|_| {}),
+    )
+    .unwrap();
+    fs::write(
+        root.join("themes/acme.docx"),
+        adoc_docx::testing::template(|entries| {
+            let header = String::from_utf8(entries["word/header1.xml"].clone())
+                .unwrap()
+                .replace("CORPORATE HEADER", "ACME DOCX HEADER");
+            entries.insert("word/header1.xml".to_owned(), header.into_bytes());
+        }),
+    )
+    .unwrap();
+    // The page names a themes folder that is not there.
+    fs::write(
+        root.join("guide/modules/ROOT/pages/index.adoc"),
+        "= Start\n:pdf-themesdir: elsewhere\n\nThe start.\n",
+    )
+    .unwrap();
+    let looks = engine.docx_looks();
+    let names: Vec<&str> = looks.iter().map(|look| look.name.as_str()).collect();
+    assert!(names.starts_with(&["default", "default-sans", "default-for-print", "base"]));
+    for name in ["brand", "acme.docx", "acme.dotx"] {
+        assert!(names.contains(&name), "{name}: {names:?}");
+    }
+    assert_eq!(names.last(), Some(&"No theme"));
+
+    let id = engine
+        .open(&root.join("guide/modules/ROOT/pages/index.adoc"))
+        .unwrap();
+    let mut export = |name: &str| {
+        let look = looks.iter().find(|look| look.name == name).unwrap();
+        let output = directory.path().join(format!("{name}.out.docx"));
+        let summary = engine
+            .export_docx_blocking(
+                DocxExportArgs {
+                    target: ExportTarget::Page(id),
+                    output: output.clone(),
+                    attributes: Vec::new(),
+                    paper: None,
+                    landscape: None,
+                    look: Some(look.choice.clone()),
+                },
+                WAIT,
+            )
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(summary.look.as_ref().unwrap().kind, look.kind, "{name}");
+        assert_eq!(summary.look.as_ref().unwrap().path, look.path, "{name}");
+        adoc_docx::testing::assert_valid_package(&fs::read(output).unwrap())
+    };
+    // The workspace theme, by its file, though the page looks for themes elsewhere.
+    let branded = export("brand");
+    assert!(adoc_docx::testing::text(&branded, "word/styles.xml").contains("Noto"));
+    // Each template is its own file.
+    let header = |entries: &std::collections::BTreeMap<String, Vec<u8>>| {
+        adoc_docx::testing::text(entries, "word/header1.xml").to_owned()
+    };
+    assert!(header(&export("acme.dotx")).contains("CORPORATE HEADER"));
+    assert!(header(&export("acme.docx")).contains("ACME DOCX HEADER"));
+
+    // The component command, with a look, writes the book in it.
+    let events = engine.subscribe();
+    let output = directory.path().join("book.docx");
+    let args = |look: Option<LookChoice>| {
+        CommandArgs::ExportDocx(DocxExportArgs {
+            target: ExportTarget::Component {
+                name: "guide".to_owned(),
+                version: Some("1.0".to_owned()),
+            },
+            output: output.clone(),
+            attributes: Vec::new(),
+            paper: None,
+            landscape: None,
+            look,
+        })
+    };
+    engine
+        .invoke(
+            ids::EXPORT_DOCX_COMPONENT_THEMED,
+            args(Some(LookChoice::None)),
+        )
+        .unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    let finished = events.try_iter().find_map(|event| match event {
+        EngineEvent::ExportFinished { result, .. } => Some(result),
+        _ => None,
+    });
+    let summary = finished.expect("the export finished").unwrap();
+    assert_eq!(summary.look.unwrap().kind, LookKind::None);
+    assert_eq!(summary.sources.len(), 2);
+    // Without a look, both themed commands refuse.
+    for command in [
+        ids::EXPORT_DOCX_PAGE_THEMED,
+        ids::EXPORT_DOCX_COMPONENT_THEMED,
+    ] {
+        assert!(engine.invoke(command, args(None)).is_err(), "{command:?}");
+    }
+}

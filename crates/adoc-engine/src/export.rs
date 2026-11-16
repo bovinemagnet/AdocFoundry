@@ -400,6 +400,48 @@ pub(crate) fn register_export(registry: &mut CommandRegistry) {
             ),
             docx_profile_command,
         );
+        // The same exports with a look chosen from `Engine::docx_looks`, which front ends offer
+        // first.
+        register(
+            registry,
+            spec(
+                ids::EXPORT_DOCX_PAGE_THEMED,
+                "Export Page to Word with Theme…",
+                CommandCategory::Document,
+                None,
+                CommandContext::ActiveDocument,
+            ),
+            docx_themed_command,
+        );
+        register(
+            registry,
+            spec(
+                ids::EXPORT_DOCX_COMPONENT_THEMED,
+                "Export Component to Word with Theme…",
+                CommandCategory::Workspace,
+                None,
+                CommandContext::Antora,
+            ),
+            docx_themed_command,
+        );
+    }
+}
+
+/// A Word export with the look it names: its arguments must choose one.
+#[cfg(feature = "docx")]
+fn docx_themed_command(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    match args {
+        CommandArgs::ExportDocx(args) if args.look.is_some() => {
+            engine.start_export(Request::Docx(args), false)?;
+            Ok(CommandOutcome::Done)
+        }
+        _ => Err(EngineError::InvalidArguments {
+            command: ids::EXPORT_DOCX_PAGE_THEMED,
+            expected: "an export target, a .docx output path and a look",
+        }),
     }
 }
 

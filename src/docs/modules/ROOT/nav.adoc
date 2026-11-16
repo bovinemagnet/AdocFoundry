@@ -9,6 +9,7 @@
 *** xref:pdf-generation.adoc[How PDF generation works]
 *** xref:pdf-theme-keys.adoc[PDF theme keys]
 ** xref:word-export.adoc[Exporting to Word]
+*** xref:word-theme-keys.adoc[Word theme keys]
 ** xref:keyboard-shortcuts.adoc[Keyboard shortcuts]
 ** xref:settings.adoc[Settings]
 * xref:antora-support.adoc[Antora support]

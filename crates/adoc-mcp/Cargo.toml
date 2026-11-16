@@ -23,6 +23,8 @@ tokio.workspace = true
 tokio-util.workspace = true
 
 [dev-dependencies]
+# A Word template to export with, in `docx_look_choice_everywhere`.
+adoc-docx = { workspace = true, features = ["test-support"] }
 adoc-git = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 

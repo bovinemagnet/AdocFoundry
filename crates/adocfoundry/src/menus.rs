@@ -87,6 +87,8 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::EXPORT_PDF_PROFILE),
             Command(ids::EXPORT_DOCX_PAGE),
             Command(ids::EXPORT_DOCX_COMPONENT),
+            Command(ids::EXPORT_DOCX_PAGE_THEMED),
+            Command(ids::EXPORT_DOCX_COMPONENT_THEMED),
             Command(ids::EXPORT_DOCX_PROFILE),
             Command(ids::EXPORT_HTML_PAGE),
             Command(ids::GRAPH_EXPORT),

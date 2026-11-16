@@ -167,13 +167,18 @@ pub const MAPPED_KEYS: &[&str] = &[
     "page_size",
     "page_layout",
     "page_margin",
+    "extends",
+    "font_catalog",
     "base_font_family",
     "base_font_size",
     "base_font_color",
+    "base_font_style",
+    "base_border_color",
     "base_line_height",
     "base_text_align",
     "heading_font_family",
     "heading_font_color",
+    "heading_font_size",
     "heading_font_style",
     "heading_text_transform",
     "heading_margin_top",
@@ -190,18 +195,23 @@ pub const MAPPED_KEYS: &[&str] = &[
     "code_font_family",
     "code_font_size",
     "code_font_color",
+    "code_font_style",
     "code_background_color",
     "code_border_color",
     "code_border_width",
     "codespan_font_family",
     "codespan_font_color",
+    "codespan_font_size",
+    "codespan_font_style",
     "codespan_background_color",
     "caption_font_color",
+    "caption_font_family",
     "caption_font_size",
     "caption_font_style",
     "caption_text_align",
     "caption_align",
     "quote_font_color",
+    "quote_font_family",
     "quote_font_size",
     "quote_font_style",
     "quote_border_color",
@@ -231,7 +241,9 @@ pub const MAPPED_KEYS: &[&str] = &[
     "title_page_subtitle_font_size",
     "title_page_subtitle_font_color",
     "title_page_subtitle_font_style",
+    "title_page_authors_font_family",
     "title_page_authors_font_size",
+    "title_page_authors_font_style",
     "title_page_authors_font_color",
     "title_page_logo_image",
     "title_page_logo_align",
@@ -276,6 +288,8 @@ struct Keys<'a> {
 
 impl Keys<'_> {
     fn get(&self, key: &str) -> Option<&ThemeValue> {
+        #[cfg(test)]
+        tests::READ.with(|read| read.borrow_mut().insert(key.to_owned()));
         self.theme.keys.get(key)
     }
 
@@ -846,9 +860,93 @@ fn without_marks(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, path::Path};
+    use std::{
+        cell::RefCell,
+        collections::{BTreeMap, BTreeSet},
+        path::Path,
+    };
 
-    use super::{image_macro, line_text, without_marks};
+    use super::{image_macro, line_text, without_marks, WordLook, MAPPED_KEYS};
+
+    thread_local! {
+        /// The keys `Keys::get` was asked for on this thread.
+        pub(super) static READ: RefCell<BTreeSet<String>> = const { RefCell::new(BTreeSet::new()) };
+    }
+
+    /// Keys a Word look takes that other code reads: `extends` (the theme loader), the page's
+    /// (`adoc_theme::page_geometry`) and the font catalogue's (the engine's `theme_fonts`).
+    const READ_ELSEWHERE: &[&str] = &[
+        "extends",
+        "page_size",
+        "page_layout",
+        "page_margin",
+        "font_catalog",
+    ];
+
+    /// A value of the kind `key` holds.
+    fn value(key: &str) -> &'static str {
+        match key {
+            _ if key.ends_with("_color") => "'C00000'",
+            _ if key.ends_with("_font_family") => "Noto Serif",
+            _ if key.ends_with("_font_style") => "bold",
+            _ if key.ends_with("_text_transform") => "uppercase",
+            _ if key.ends_with("_text_decoration") => "underline",
+            _ if key.ends_with("_align") => "center",
+            _ if key.ends_with("_content") => "'{page-number}'",
+            _ if key.ends_with("_image") => "image:logo.png[width=20]",
+            _ if key.ends_with("_padding") => "[2, 4]",
+            _ => "6",
+        }
+    }
+
+    #[test]
+    fn every_key_read_is_mapped_and_every_mapped_key_is_read() {
+        let mapped: Vec<String> = MAPPED_KEYS
+            .iter()
+            .filter(|key| !READ_ELSEWHERE.contains(key))
+            .flat_map(|key| {
+                if key.contains("<n>") {
+                    (1..=6)
+                        .map(|level| key.replace("<n>", &level.to_string()))
+                        .collect()
+                } else {
+                    vec![(*key).to_owned()]
+                }
+            })
+            .collect();
+        let yaml: String = mapped
+            .iter()
+            .map(|key| format!("{key}: {}\n", value(key)))
+            .collect();
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("every-theme.yml");
+        std::fs::write(&file, yaml).unwrap();
+        let theme = adoc_theme::load_theme(&adoc_theme::ThemeSource::File(file)).unwrap();
+        READ.with(|read| read.borrow_mut().clear());
+        let _ = WordLook::from_theme(&theme, &BTreeMap::new());
+        let is_mapped = |key: &str| {
+            MAPPED_KEYS.iter().any(|mapped| {
+                *mapped == key
+                    || (1..=6).any(|level| mapped.replace("<n>", &level.to_string()) == key)
+            })
+        };
+        // `base_border_color` is read only for a header or footer rule with no colour of its own.
+        let file = directory.path().join("rule-theme.yml");
+        std::fs::write(&file, "header_height: 20\nheader_border_width: 1\n").unwrap();
+        let theme = adoc_theme::load_theme(&adoc_theme::ThemeSource::File(file)).unwrap();
+        let _ = WordLook::from_theme(&theme, &BTreeMap::new());
+        let read = READ.with(|read| read.borrow().clone());
+        let unlisted: Vec<&String> = read.iter().filter(|key| !is_mapped(key)).collect();
+        assert!(
+            unlisted.is_empty(),
+            "read but not in MAPPED_KEYS: {unlisted:?}"
+        );
+        let unread: Vec<&String> = mapped.iter().filter(|key| !read.contains(*key)).collect();
+        assert!(
+            unread.is_empty(),
+            "in MAPPED_KEYS but never read: {unread:?}"
+        );
+    }
 
     #[test]
     fn running_content_is_read_as_the_pdf_reads_it() {

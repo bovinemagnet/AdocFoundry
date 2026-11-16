@@ -23,9 +23,11 @@ adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@
 adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
     [--fail-on none|warning|error]
 adocfoundry-cli docx <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
+    [--theme <name|file.yml> | --template <name|file.dotx> | --no-theme]
     [--output <file.docx>] [--fail-on none|warning|error]
-adocfoundry-cli docx --profile <name> [<root>] [--output <file.docx>]
-    [--fail-on none|warning|error]
+adocfoundry-cli docx --profile <name> [<root>]
+    [--theme <name|file.yml> | --template <name|file.dotx> | --no-theme]
+    [--output <file.docx>] [--fail-on none|warning|error]
 adocfoundry-cli git-status <root> [--format text|json]
 adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--format json|dot|svg]
     [--no-partials] [--no-nav] [--unresolved] [--ages] [--dark]
@@ -402,6 +404,9 @@ adocfoundry-cli docx docs/modules/ROOT/pages/index.adoc
 adocfoundry-cli docx docs --output docs.docx
 adocfoundry-cli docx docs --root . --component 2.0@guide --fail-on warning
 adocfoundry-cli docx --profile admin-guide .
+adocfoundry-cli docx docs --theme acme
+adocfoundry-cli docx docs --template corporate.dotx
+adocfoundry-cli docx docs --no-theme
 ----
 
 Targets are chosen as `pdf` chooses them.
@@ -424,6 +429,15 @@ Without a version, `--component` uses the latest version of the component.
 |`--profile <name>`
 |Export the Word profile `[docx.profiles.<name>]` from the settings. The workspace root is the argument, `--root <dir>`, or else the current directory. `--output` wins over the profile's output. An unknown profile fails with "no DOCX profile `<name>`".
 
+|`--theme <name\|file.yml>`
+|Export with this PDF theme as the Word look.
+
+|`--template <name\|file.dotx>`
+|Export with this Word template as the Word look.
+
+|`--no-theme`
+|Export with no theme.
+
 |`--output <file.docx>`
 |Where to write the document. It must be a `.docx` file name; any other output is refused.
 
@@ -432,11 +446,19 @@ Without a version, `--component` uses the latest version of the component.
 |===
 
 The paper, orientation, margins, headers and footers and styles come from the `[docx]` settings, or from the profile, and never from `[pdf]`.
-The PDF options `--theme`, `--fonts-dir`, `--standard` and `--typst` are not accepted.
+The PDF options `--fonts-dir`, `--standard` and `--typst` are not accepted.
+
+At most one of `--theme`, `--template` and `--no-theme` may be given; giving two is an error.
+With `--profile`, the option wins over the profile's look.
+Without one, the look is the profile's, else `[docx] look`; see xref:word-export.adoc#look[Choosing the look].
+A name is found in the themes folder, as an export from the application finds it: a theme as `<name>-theme.yml`, and a template as `<name>.dotx`, else `<name>.docx`.
+A value ending `.yml`, `.dotx` or `.docx` is a path, relative to the themes folder.
+`pdf` still takes only `--theme`; `--template` and `--no-theme` are unknown options there.
 STEM formulas are typeset as pictures, with their source as the picture's alternative text.
 
 The command prints `<output> (<n> AsciiDoc pages)` on standard output, with "page" in the singular for one.
 It counts AsciiDoc pages because Word lays out its own pages.
+After that line it prints the look used, as `look: pdf-theme <name>`, `look: template <name> (<path>)` or `look: none`.
 Warnings, such as a missing image or a diagram that could not be rendered, print on standard error as `path:line: warning: message`.
 An export that fails, or reports a diagnostic that meets `--fail-on`, exits with 1, and a usage error exits with 2.
 

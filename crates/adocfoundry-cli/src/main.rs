@@ -14,8 +14,10 @@
 //! adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
 //!     [--fail-on none|warning|error]
 //! adocfoundry-cli docx <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
+//!     [--theme <name|file.yml> | --template <name|file.dotx> | --no-theme]
 //!     [--output <file.docx>] [--fail-on none|warning|error]
-//! adocfoundry-cli docx --profile <name> [<root>] [--output <file.docx>] [--fail-on none|warning|error]
+//! adocfoundry-cli docx --profile <name> [<root>] [--theme … | --template … | --no-theme]
+//!     [--output <file.docx>] [--fail-on none|warning|error]
 //! adocfoundry-cli git-status <root> [--format text|json]
 //! adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--ages]
 //!     [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
@@ -37,7 +39,7 @@ use adoc_engine::{
     pdf_standard,
     report::{display_path, severity_name, ChangedFile},
     CommandArgs, CommandOutcome, DocxExportArgs, Engine, EngineError, ExportArgs, ExportSummary,
-    ExportTarget, GraphFilter, GraphScope, Settings, SvgStyle,
+    ExportTarget, GraphFilter, GraphScope, LookChoice, Settings, SvgStyle,
 };
 
 const USAGE: &str = "usage:
@@ -54,8 +56,10 @@ const USAGE: &str = "usage:
   adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
       [--fail-on none|warning|error]
   adocfoundry-cli docx <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
+      [--theme <name|file.yml> | --template <name|file.dotx> | --no-theme]
       [--output <file.docx>] [--fail-on none|warning|error]
-  adocfoundry-cli docx --profile <name> [<root>] [--output <file.docx>] [--fail-on none|warning|error]
+  adocfoundry-cli docx --profile <name> [<root>] [--theme … | --template … | --no-theme]
+      [--output <file.docx>] [--fail-on none|warning|error]
   adocfoundry-cli git-status <root> [--format text|json]
   adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--ages]
       [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
@@ -1152,11 +1156,38 @@ fn open_target(
 
 /// Exports a page, or a component version as a book, to an editable Word document.
 fn docx(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+    let no_theme = arguments.iter().any(|argument| argument == "--no-theme");
+    let arguments: Vec<String> = arguments
+        .iter()
+        .filter(|argument| *argument != "--no-theme")
+        .cloned()
+        .collect();
     let (positional, options) = parse_options(
-        arguments,
-        &["root", "component", "output", "profile", "fail-on"],
+        &arguments,
+        &[
+            "root",
+            "component",
+            "output",
+            "profile",
+            "fail-on",
+            "theme",
+            "template",
+        ],
     )?;
     let fail_on = fail_on(&options)?;
+    // The look, at most one of the three; a PDF theme or template is found as an export of
+    // the page in the app finds it: by name in the themes folder, or by path.
+    let look = match (
+        option(&options, "theme"),
+        option(&options, "template"),
+        no_theme,
+    ) {
+        (None, None, false) => None,
+        (Some(theme), None, false) => Some(LookChoice::PdfTheme(theme.to_owned())),
+        (None, Some(template), false) => Some(LookChoice::Template(template.to_owned())),
+        (None, None, true) => Some(LookChoice::None),
+        _ => return Err("give at most one of --theme, --template and --no-theme".to_owned()),
+    };
     if let Some(profile) = option(&options, "profile") {
         let root = profile_root(&positional, &options)?;
         let mut engine = open_engine(&root, false)?;
@@ -1165,6 +1196,9 @@ fn docx(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
             .map_err(|error| error.to_string())?;
         if let Some(output) = option(&options, "output") {
             args.output = PathBuf::from(output);
+        }
+        if look.is_some() {
+            args.look = look;
         }
         let output = args.output.clone();
         let result = engine.export_docx_blocking(args, INDEX_TIMEOUT);
@@ -1181,7 +1215,7 @@ fn docx(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         attributes: Vec::new(),
         paper: None,
         landscape: None,
-        look: None,
+        look,
     };
     let result = engine.export_docx_blocking(args, INDEX_TIMEOUT);
     report(result, &output, &root, fail_on, out, true)
@@ -1261,6 +1295,18 @@ fn report(
                     output.display(),
                     summary.pages
                 );
+                if let Some(look) = &summary.look {
+                    match &look.path {
+                        Some(path) => outln!(
+                            out,
+                            "look: {} {} ({})",
+                            look.kind.as_str(),
+                            look.name,
+                            display_path(path, root)
+                        ),
+                        None => outln!(out, "look: {} {}", look.kind.as_str(), look.name),
+                    }
+                }
             } else {
                 outln!(out, "{} ({} pages)", output.display(), summary.pages);
             }

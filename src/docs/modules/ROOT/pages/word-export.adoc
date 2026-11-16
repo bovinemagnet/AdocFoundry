@@ -41,7 +41,8 @@ Each is also in the command palette.
 * Export DOCX Profile… (`export.docx_profile`) exports a named Word publication; see <<settings>>.
 
 Each asks where to save the file.
-When the export finishes, a notification reports, for example, "Exported guide.docx (12 AsciiDoc pages)" and has an Open button.
+When the export finishes, a notification names the look, for example "Exported guide.docx (8 AsciiDoc pages) with the PDF theme acme-theme.yml", "... with the Word template corporate.dotx" or "... with no theme", and has an Open button.
+Choose the look with the commands in <<look>>.
 No preview is shown, and the application stays responsive while the export runs.
 
 === From the command line and MCP
@@ -62,6 +63,31 @@ A component version exports as a book, in this order.
 
 Unsaved edits are exported, because the export reads open buffers.
 The export selects the same pages as the PDF export.
+
+[#look]
+== Choosing the look
+
+A Word export has a look: a PDF theme, a Word template or no theme.
+A PDF theme is an asciidoctor-pdf theme mapped onto Word styles, the page, the title page, headers and footers and embedded fonts; see xref:word-theme-keys.adoc[Word theme keys] for what is applied.
+A Word template (`.dotx` or `.docx`) supplies its own styles, numbering, theme, fonts, page, headers and footers.
+With no theme the document uses the built-in styles and the `[docx]` settings.
+
+By default the look is the one `[docx] look` names, and a profile may name its own.
+See xref:settings.adoc#docx-settings[Word export settings] for `look`, `template` and `embed_fonts`, and xref:settings.adoc#docx-profiles[Word profiles] for a profile's `theme`, `template` and `look = "none"`.
+
+In the application, two further commands in the File menu and the command palette choose the look for one export.
+They have no default key binding.
+
+* Export Page to Word with Theme… (`export.docx_page_themed`)
+* Export Component to Word with Theme… (`export.docx_component_themed`)
+
+Each shows a picker, then asks where to save.
+The picker lists the bundled PDF themes, each shown as "name (bundled PDF theme)", the workspace's PDF themes (`<name>-theme.yml` in `[pdf] themes_dir`), the Word templates found there (every `.dotx` and `.docx` file) and No theme.
+A workspace theme or template is chosen by its file, so it is the one used even when a page sets its own `pdf-themesdir`.
+The plain Export Page to Word… and Export Component to Word… use the default look.
+
+`adocfoundry-cli docx` takes `--theme`, `--template` or `--no-theme`, and with `--profile` the option wins over the profile's look; see xref:command-line.adoc#docx[the docx command].
+The `export_docx` tool takes `theme`, `template` or `no_theme`, and answers with the look it used; see xref:mcp-server.adoc[MCP server].
 
 [#settings]
 == Settings
@@ -115,7 +141,6 @@ A program that never updates fields shows the contents without page numbers.
 These are deferred from the first release.
 
 * Formulas as editable Word equations. They are pictures.
-* `.dotx` templates. Use the style settings instead.
 * Fetching remote images.
 * DOCX import or preview.
 * Tracked changes and comments.

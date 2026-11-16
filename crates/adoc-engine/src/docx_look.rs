@@ -63,6 +63,78 @@ pub struct ExportLook {
     pub path: Option<PathBuf>,
 }
 
+/// A look a picker offers (Export Page to Word with Theme…): its kind, the name to show, the
+/// file it is, and the choice that exports with it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocxLookItem {
+    pub kind: LookKind,
+    pub name: String,
+    pub path: Option<PathBuf>,
+    pub choice: LookChoice,
+}
+
+impl crate::Engine {
+    /// The looks a Word export can be given: the bundled and the workspace's PDF themes, each
+    /// `.dotx` and `.docx` in `[pdf] themes_dir`, and no theme. Files are listed by name and
+    /// never opened; a workspace theme or a template is chosen by its path, so it is the one
+    /// exported whatever a page's `pdf-themesdir` says.
+    #[must_use]
+    pub fn docx_looks(&self) -> Vec<DocxLookItem> {
+        let mut looks: Vec<DocxLookItem> = self
+            .pdf_themes()
+            .into_iter()
+            .map(|theme| DocxLookItem {
+                kind: LookKind::PdfTheme,
+                choice: LookChoice::PdfTheme(
+                    theme
+                        .file
+                        .as_ref()
+                        .map_or_else(|| theme.name.clone(), |file| file.display().to_string()),
+                ),
+                name: theme.name,
+                path: theme.file,
+            })
+            .collect();
+        let dir = self
+            .settings
+            .pdf
+            .themes_dir
+            .as_deref()
+            .zip(self.roots.first())
+            .map(|(dir, root)| crate::normalize_path(&root.join(dir)));
+        let mut templates: Vec<DocxLookItem> = dir
+            .as_deref()
+            .and_then(|dir| std::fs::read_dir(dir).ok())
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+            .filter_map(|entry| {
+                let path = crate::normalize_path(&entry.path());
+                let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+                if extension != "dotx" && extension != "docx" {
+                    return None;
+                }
+                Some(DocxLookItem {
+                    kind: LookKind::Template,
+                    name: path.file_name()?.to_string_lossy().into_owned(),
+                    choice: LookChoice::Template(path.display().to_string()),
+                    path: Some(path),
+                })
+            })
+            .collect();
+        templates.sort_by(|left, right| left.name.cmp(&right.name));
+        looks.extend(templates);
+        looks.push(DocxLookItem {
+            kind: LookKind::None,
+            name: "No theme".to_owned(),
+            path: None,
+            choice: LookChoice::None,
+        });
+        looks
+    }
+}
+
 #[cfg(feature = "docx")]
 mod resolve {
     use std::{

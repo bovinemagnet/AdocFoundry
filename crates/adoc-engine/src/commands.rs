@@ -149,6 +149,9 @@ pub mod ids {
     pub const EXPORT_DOCX_PAGE: CommandId = CommandId::new("export.docx_page");
     pub const EXPORT_DOCX_COMPONENT: CommandId = CommandId::new("export.docx_component");
     pub const EXPORT_DOCX_PROFILE: CommandId = CommandId::new("export.docx_profile");
+    pub const EXPORT_DOCX_PAGE_THEMED: CommandId = CommandId::new("export.docx_page_themed");
+    pub const EXPORT_DOCX_COMPONENT_THEMED: CommandId =
+        CommandId::new("export.docx_component_themed");
     pub const EXPORT_HTML_PAGE: CommandId = CommandId::new("export.html_page");
     pub const SPELLING_ADD_TO_WORKSPACE: CommandId = CommandId::new("spelling.add_to_workspace");
     pub const SPELLING_ADD_TO_USER: CommandId = CommandId::new("spelling.add_to_user");

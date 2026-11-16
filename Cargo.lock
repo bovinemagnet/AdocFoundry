@@ -321,6 +321,7 @@ name = "adoc-mcp"
 version = "0.11.0"
 dependencies = [
  "adoc-core",
+ "adoc-docx",
  "adoc-engine",
  "adoc-git",
  "bytes",
@@ -461,6 +462,7 @@ name = "adocfoundry-cli"
 version = "0.11.0"
 dependencies = [
  "adoc-core",
+ "adoc-docx",
  "adoc-dom",
  "adoc-engine",
  "adoc-git",
