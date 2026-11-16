@@ -1,0 +1,21 @@
+= Security
+
+[#keys]
+== Keys
+
+NOTE: Keep the keys safe.
+
+.Where keys live
+****
+A sidebar about where keys live.
+****
+
+.An example
+====
+An example of a key.
+====
+
+[quote, A security engineer]
+____
+Rotate keys often.
+____

@@ -1,0 +1,24 @@
+= Media
+:stem:
+
+.The logo
+image::logo.png[The product logo]
+
+.A photograph
+image::photo.jpg[A photograph,120]
+
+.The pipeline
+image::pipeline.svg[The pipeline drawn as SVG]
+
+[mermaid]
+....
+graph LR
+  write --> export
+....
+
+The area of a circle is stem:[A = pi r^2].
+
+[stem]
+++++
+sum_(i=1)^n i = (n(n+1))/2
+++++

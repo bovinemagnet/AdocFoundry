@@ -394,6 +394,7 @@ An export that fails, or reports a diagnostic that meets `--fail-on`, exits with
 
 `docx` exports a page, or a whole component version, as an editable Word document.
 See xref:settings.adoc#docx-settings[Word export settings] for the paper, margins, headers and footers, and styles it reads.
+For what the document contains, see xref:word-export.adoc[Exporting to Word].
 
 [source,sh]
 ----

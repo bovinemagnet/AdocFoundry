@@ -27,6 +27,8 @@ mod package;
 mod pages;
 mod parts;
 mod table;
+#[cfg(feature = "test-support")]
+pub mod testing;
 mod xml;
 mod zip;
 

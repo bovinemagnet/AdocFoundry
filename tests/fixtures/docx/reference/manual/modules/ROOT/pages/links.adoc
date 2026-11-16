@@ -1,0 +1,8 @@
+= Links
+
+See xref:install.adoc#requirements[the requirements] and xref:admin:security.adoc[security].
+The API is described in xref:api::index.adoc[the API reference], outside this book.
+The project lives at https://example.com/product[its site].
+
+A statement with a note.footnote:disclaimer[The note, written once.]
+Another statement with the same note.footnote:disclaimer[]

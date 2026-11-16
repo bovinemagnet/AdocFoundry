@@ -1,0 +1,127 @@
+= Exporting to Word
+Paul Snow
+:revnumber: 0.0.0
+:description: Exporting a page or a whole Antora component to an editable Word (DOCX) document: what it contains, how to export, settings, warnings, safety and what Word lays out for itself.
+
+AdocFoundry exports a page, or a whole component version, as an editable Word document (`.docx`).
+AdocFoundry writes the document itself.
+It needs no Word, LibreOffice, Pandoc or network access, and the document is written directly, never converted from a PDF.
+Typst is used only, in process, to typeset formulas as pictures.
+For the PDF counterpart, see xref:pdf-export.adoc[Exporting to PDF].
+
+== What it makes
+
+The document uses real Word structures, so it can be edited, restyled and navigated as any other Word document.
+
+* Headings use Word's heading styles.
+A book's title is the Title style, and its parts, chapters and sections are Heading 1 to Heading 3 and so on.
+* Lists are real numbered and bulleted lists.
+* Tables keep their merged cells.
+* Footnotes are Word footnotes.
+* Code is in a Source Code style.
+* Admonitions, sidebars and examples are one-row tables.
+* A cross reference between pages of the book is an internal link to a bookmark, and a link to the web is a hyperlink.
+
+Images are embedded.
+PNG, JPEG and GIF files are kept as they are, and an SVG is drawn as a PNG.
+Diagrams are rendered first and then embedded as pictures.
+STEM formulas are typeset as pictures, with their source as the picture's alternative text.
+A remote image is linked and never fetched.
+Every picture carries alternative text.
+
+== Exporting
+
+=== In the application
+
+Choose one of these from the File menu.
+Each is also in the command palette.
+
+* Export Page to Word… (`export.docx_page`) exports the active page.
+* Export Component to Word… (`export.docx_component`) exports the component version that holds the active page.
+* Export DOCX Profile… (`export.docx_profile`) exports a named Word publication; see <<settings>>.
+
+Each asks where to save the file.
+When the export finishes, a notification reports, for example, "Exported guide.docx (12 AsciiDoc pages)" and has an Open button.
+No preview is shown, and the application stays responsive while the export runs.
+
+=== From the command line and MCP
+
+`adocfoundry-cli docx` exports from a shell or a build script; see xref:command-line.adoc#docx[Command line].
+The `export_docx` tool of the MCP server does the same for an agent; see xref:mcp-server.adoc[MCP server].
+
+=== What is exported
+
+A page exports as an article.
+A component version exports as a book, in this order.
+
+. A front cover.
+. A title page.
+. The table of contents.
+. The pages in navigation order, with a part for each navigation file when there are several.
+. A back cover.
+
+Unsaved edits are exported, because the export reads open buffers.
+The export selects the same pages as the PDF export.
+
+[#settings]
+== Settings
+
+The `[docx]` table sets the paper, orientation, margins, headers and footers, odd and even pages, the logo, and fonts and colours.
+Header and footer lines may use `\{page-number}`, `\{page-count}`, `\{document-title}`, `\{chapter-title}` and `\{logo}`.
+See xref:settings.adoc#docx-settings[Word export settings] for the keys.
+
+The covers and the title page logo come from the `front-cover-image`, `back-cover-image` and `title-logo-image` attributes on the first page, as they do for PDF.
+
+Word publication profiles are `[docx.profiles.<name>]`.
+They are separate from PDF profiles; see xref:settings.adoc#docx-profiles[Word profiles].
+
+`[pdf]` and PDF themes are never read for Word.
+
+== Warnings
+
+A problem is reported as a warning that names the file and line, in the page or the partial it comes from.
+Warnings cover these cases.
+
+* A missing image.
+* A diagram that nothing can render.
+* A video or audio block, which is exported as its address.
+* An unsupported block, which is exported as its source.
+* A reference that leads out of the book, which is a link to the site when the site's address is known, and otherwise text.
+
+The document is still written.
+On the command line, `--fail-on` makes the command fail when a warning is reported.
+
+== Safety
+
+* The document is written to a temporary file beside the output and renamed over it only when it is complete.
+A failed or timed-out export leaves any existing file untouched.
+* An output that is a link, a folder or not a `.docx` file is refused.
+* Profiles and the MCP tool write only inside the workspace.
+
+== Word lays out the pages
+
+AdocFoundry writes the content and Word decides where the pages break, so a Word document differs from the PDF in some ways.
+
+* Word reflows the text, so page breaks and page counts differ from the PDF's, and between Word and LibreOffice.
+* The table of contents, the page count and the chapter titles in headers are Word fields.
+Word offers to update them when the document opens, because the document asks it to.
+Answer Yes to fill in the page numbers of the contents.
+In LibreOffice, choose Tools › Update › Update All.
+A program that never updates fields shows the contents without page numbers.
+* "Page n of m" counts the covers and the title page in m, while the body's numbering starts at 1.
+
+== Not in this version
+
+These are deferred from the first release.
+
+* Formulas as editable Word equations. They are pictures.
+* `.dotx` templates. Use the style settings instead.
+* Fetching remote images.
+* DOCX import or preview.
+* Tracked changes and comments.
+
+== Checking a document
+
+Open the document in Word or LibreOffice.
+The Navigation pane lists the headings.
+For accessibility, run Check Accessibility in Word, which should report no missing alternative text.

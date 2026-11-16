@@ -445,6 +445,67 @@ Each front end builds the engine's `docx` feature and calls only the engine; non
   - `docx_mcp_export_is_write_gated` (`crates/adoc-mcp/tests/docx.rs`): unlisted and `permission_denied` without `--allow-write`; page, component and profile exports (the profile's bytes equal to the engine's); every refusal with its code and nothing written; links refused.
   - `docx_app_exports_through_engine` and `export_docx_profile_offers_the_word_profiles` (`crates/adocfoundry/src/ui_tests.rs`): through the save dialog, the book the engine writes, byte for byte, in navigation order, with no tab opened.
 
+### D8 (#625): interoperability, performance, accessibility and QA
+
+- **The validator is shared.**
+  - The package reader and `assert_valid_package` moved from `adoc-docx`'s test helpers into `adoc_docx::testing`, behind a `test-support` feature (as `adoc-git`'s `testing` is), so the engine's tests run every structural check on what the engine writes.
+  - The checks gained:
+    - styles by kind in headers and footers, not only the body and footnotes;
+    - fields that are whole (begin, at most one separate, end, in order, none left open);
+    - bookmarks that end once each;
+    - sections' header and footer references that lead to header and footer parts.
+  - `the_package_checks_catch_damage` (`tests/validator.rs`) breaks a valid package nine ways (a missing picture part, malformed XML, an id with no relationship, an undefined style, a field left open, an unended bookmark, a link to no bookmark, a footnote not written, a part with no content type), plus a changed byte and a cut package. It requires each to be caught, so a check that passed everything would fail.
+- **The reference book** (`tests/fixtures/docx/reference`).
+  - Contents:
+    - the `manual` component at 2.0 (two navigation files) and 1.0, and an `api` component;
+    - a partial including another;
+    - every construct D3–D5 write;
+    - PNG, JPEG and SVG images, a Mermaid diagram, and inline and block formulas;
+    - covers and a title logo;
+    - `[docx]` settings with odd, even and first-page headers and footers.
+  - `docx_reference_book_is_complete` checks:
+    - the package whole;
+    - the pages and their order, and nothing from 1.0 or `api`;
+    - each construct's Word structure;
+    - one warning, at its line;
+    - seven distinct pictures, each once whatever uses it, nothing referring outside the package;
+    - the four sections, A4 and the settings' margins;
+    - the running content and its fields, and the core properties;
+    - the same bytes from a second export and from a copy of the workspace elsewhere.
+  - A book's author comes from the component's, playbook's or profile's attributes, as the PDF's does, not from the start page's header; the fixture sets it in `antora.yml`.
+- **Failures.**
+  - `docx_problems_are_located`: a missing image in a page and in a partial (placed in the partial), a diagram nothing renders, a video and source cut short are each a warning at their file and line, with a stand-in in the document.
+  - **Found and fixed: a timed-out export replaced the output afterwards.** `export_blocking`/`export_docx_blocking` dropped a job that ran out of time, but a writer already packaging went on to rename its file over the output, after the caller had been told the export failed. Each job now has a `Commit`, one lock the writers take to replace the output and the timeout takes to abandon the job. A timed-out job never replaces the output, and one whose file is already in place is waited for and reported as finished. PDF exports share the guard.
+  - `a_timed_out_export_leaves_the_output` sweeps timeouts upward from 2 ms until one succeeds, checking the old file and that no temporary file is left after each failure. It failed on every run before the fix.
+- **Size and time** (`docx_large_book_is_bounded`, `tests/docx_large.rs`, a test binary of its own so the process's peak is the export's).
+  - The book is 600 pages of ten sections each (lists, notes, code, tables, footnotes, links between pages), exported through `export.docx_component` as the app does, each `pump` timed.
+  - On a 2024 Mac:
+
+    | Build | Whole export | Command | Longest pump | Peak memory |
+    | --- | --- | --- | --- | --- |
+    | Debug | 4.4 s | 0.32 s | 0.15 s | 0.38 GB (process, index included) |
+    | Release | 0.41 s | 0.04 s | 0.05 s | 0.36 GB |
+
+  - Time and memory grow linearly: 1,200 pages took 8.8 s and 0.75 GB in debug.
+  - The budgets, for CI's debug builds: 3 s for the command, 3 s for any pump, 90 s in all, and 2 GB peak where Linux reports it (`VmHWM`). Elsewhere memory is not measured, since the engine forbids the `unsafe` a counting allocator would need and `rustix` offers no `getrusage`.
+  - The command reads the pages' text and the views are built in one pump. Both belong to the pipeline PDF uses too and are left as they are; at these sizes in release they stay under a frame or three.
+- **Build impact** (`cargo build -p adoc-engine --no-default-features`, debug, an empty target folder each):
+
+  | Features | Cold build | Units built | Typst crates |
+  | --- | --- | --- | --- |
+  | `docx` | 32 s | 264 | none |
+  | `typst` | 44 s | 478 | 25 |
+  | `typst docx` | 40 s | 485 | 25 |
+
+  Word export adds 7 crates to a build with PDF, within the noise of a cold build. Without PDF, Word export compiles no Typst at all. Rebuilding the engine after touching `adoc-docx` takes 1 s.
+- **Interoperability** (`docs/qa/docx.md`, which also lists the manual checks for Word and LibreOffice on each platform). LibreOffice 26.8 on macOS:
+  - converts the reference book without error, and every construct shows as intended;
+  - shows the contents without page numbers until fields are updated, as expected without Word;
+  - when it saves the book back to DOCX, keeps the text unchanged, all 11 drawings with valid links and all 11 fields, merging the two pictures whose pixels are identical.
+
+  Word itself has not been run here; its checks are in the record's results table.
+- **Docs.** The user guide gains *Exporting to Word*. It covers what it makes, the three entry points, settings and profiles, warnings, safety, what Word does differently (reflow, fields, page counts) and what is deferred from this version. The developer pages cover the tests and the commit lock.
+
 ## 15. References
 
 - Microsoft, [Structure of a WordprocessingML document](https://learn.microsoft.com/en-us/office/open-xml/word/structure-of-a-wordprocessingml-document)

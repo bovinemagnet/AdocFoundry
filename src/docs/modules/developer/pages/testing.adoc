@@ -461,6 +461,15 @@ As with the other application tests, `ime_composition_commits_once` is not evide
 `crates/adocfoundry-cli/tests/cli.rs` adds `pdf_exports_a_page`, `pdf_exports_a_component` and `pdf_reports_theme_errors`.
 The Word export's entry points have `docx_cli_exports_and_gates` in the same file, `docx_mcp_export_is_write_gated` in `crates/adoc-mcp/tests/docx.rs` and `docx_app_exports_through_engine` in the application's tests.
 
+The Word export has its own checks.
+`adoc-docx` has a `test-support` feature whose `adoc_docx::testing` module holds the package reader and `assert_valid_package`, which runs every structural check.
+It is used by the crate's tests and by `crates/adoc-engine/tests/docx_export.rs`.
+`the_package_checks_catch_damage` (`crates/adoc-docx/tests/validator.rs`) shows each check failing on a damaged package.
+`docx_reference_book_is_complete` exports `tests/fixtures/docx/reference`, a book of two components and two versions, and checks it whole and deterministic.
+`docx_large_book_is_bounded` (`crates/adoc-engine/tests/docx_large.rs`, a file of its own so that its peak memory, read from `/proc/self/status` on Linux, is its own) exports 600 pages within time, longest-pump and memory budgets.
+`docx_problems_are_located` and `a_timed_out_export_leaves_the_output` cover failures.
+The manual checks are in `docs/qa/docx.md`.
+
 The fixtures are in `tests/fixtures/pdf/`: `reference/`, `book/` and `themes/`.
 The reference article includes an unsized 400×100 PNG (`images/wide.png`).
 `TypesetPage::images` (`PlacedImage`) gives where each image was laid out, for tests such as `unsized_raster_image_is_75_percent` (`tests/emit.rs`) and `front_cover_is_the_first_page` (`tests/running.rs`).

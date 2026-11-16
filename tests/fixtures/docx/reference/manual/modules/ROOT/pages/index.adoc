@@ -1,0 +1,7 @@
+= The Manual
+:front-cover-image: image:cover.png[]
+:back-cover-image: image:cover.png[]
+:title-logo-image: image:logo.png[]
+:toc:
+
+The start page, exported as the book's preface.

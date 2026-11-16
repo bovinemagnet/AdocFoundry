@@ -1,0 +1,29 @@
+= Installing
+:stem:
+
+[#requirements]
+== Requirements
+
+. Download the archive.
+. Unpack it:
+.. on Linux, with `tar`;
+.. on Windows, with Explorer.
+. Run the installer.
+
+* [x] Read the licence
+* [ ] Register
+
+Term:: A description of the term.
+
+== Steps
+
+include::partial$steps.adoc[]
+
+.Starting the service
+[source,sh]
+----
+systemctl start product # <1>
+----
+<1> Starts it now.
+
+Special characters stay text: Ünïcødé, "quotes", 'apostrophes', & <angle brackets>, and 3 > 2.

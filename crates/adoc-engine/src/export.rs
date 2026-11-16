@@ -270,11 +270,61 @@ enum Stage {
     Writing,
 }
 
+/// Whether a job's document may still replace its output. A front end that waited for the job
+/// may give up on it ([`Engine::export_blocking`]'s timeout); from then on the writer must leave
+/// the output alone, and a job that already replaced it has finished, not failed. One lock, so
+/// that giving up and replacing never pass each other.
+#[cfg(feature = "export")]
+#[derive(Clone, Default)]
+struct Commit(std::sync::Arc<std::sync::Mutex<CommitState>>);
+
+#[cfg(feature = "export")]
+#[derive(Default)]
+enum CommitState {
+    #[default]
+    Open,
+    Abandoned,
+    Replaced,
+}
+
+#[cfg(feature = "export")]
+impl Commit {
+    fn state(&self) -> std::sync::MutexGuard<'_, CommitState> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Runs `replace`, which puts the finished document at the output, unless the job was
+    /// abandoned.
+    #[cfg_attr(not(any(feature = "typst", feature = "docx")), allow(dead_code))]
+    fn replace(&self, replace: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+        let mut state = self.state();
+        if matches!(*state, CommitState::Abandoned) {
+            return Err("the export was abandoned before it was written".to_owned());
+        }
+        replace()?;
+        *state = CommitState::Replaced;
+        Ok(())
+    }
+
+    /// Gives up on the job unless the output was already replaced, and says whether it did.
+    fn abandon(&self) -> bool {
+        let mut state = self.state();
+        if matches!(*state, CommitState::Replaced) {
+            return false;
+        }
+        *state = CommitState::Abandoned;
+        true
+    }
+}
+
 #[cfg(feature = "export")]
 struct Job {
     request: Request,
     plan: Plan,
     stage: Stage,
+    commit: Commit,
     doms: Vec<(PathBuf, Dom)>,
     /// Kept for `export_blocking`, which takes it; otherwise only published.
     keep_result: bool,
@@ -609,10 +659,21 @@ impl Engine {
                 return Err(EngineError::Refused("the export stopped".to_owned()));
             }
             if !waited {
-                self.export.jobs.remove(&job);
-                return Err(EngineError::Refused(
-                    "the export did not finish in time".to_owned(),
-                ));
+                let abandoned = self
+                    .export
+                    .jobs
+                    .get(&job)
+                    .is_none_or(|state| state.commit.abandon());
+                if abandoned {
+                    self.export.jobs.remove(&job);
+                    return Err(EngineError::Refused(
+                        "the export did not finish in time".to_owned(),
+                    ));
+                }
+                // The document is in place: the writer's answer is on its way.
+                let soon = Instant::now() + Duration::from_secs(60);
+                self.wait_until(soon, |engine| engine.export.finished.contains_key(&job));
+                continue;
             }
             // Nothing left to wait for: every diagram has reported, so typeset now.
             self.export_ready(job);
@@ -790,6 +851,7 @@ impl Engine {
                 request,
                 plan,
                 stage: Stage::Parsing,
+                commit: Commit::default(),
                 doms: Vec::new(),
                 keep_result,
                 in_batch,
@@ -1101,6 +1163,7 @@ impl Engine {
         state.stage = Stage::Writing;
         let unread = unread_pages(&state.doms);
         let request = state.request.clone();
+        let commit = state.commit.clone();
         #[cfg(feature = "typst")]
         let replace = state.in_batch;
         let plan = state.plan.clone();
@@ -1111,9 +1174,9 @@ impl Engine {
         };
         match request {
             #[cfg(feature = "typst")]
-            Request::Pdf(args) => self.write_pdf(job, args, written, replace),
+            Request::Pdf(args) => self.write_pdf(job, args, written, replace, commit),
             #[cfg(feature = "docx")]
-            Request::Docx(args) => self.write_docx(job, args, written),
+            Request::Docx(args) => self.write_docx(job, args, written, commit),
         }
     }
 
@@ -1159,7 +1222,14 @@ struct Written {
 #[cfg(feature = "typst")]
 impl Engine {
     /// Loads the theme and typesets the PDF on a worker.
-    fn write_pdf(&mut self, job: u64, args: ExportArgs, written: Written, replace: bool) {
+    fn write_pdf(
+        &mut self,
+        job: u64,
+        args: ExportArgs,
+        written: Written,
+        replace: bool,
+        commit: Commit,
+    ) {
         let Written {
             sources,
             arranged,
@@ -1182,7 +1252,7 @@ impl Engine {
         };
         crate::worker::spawn(sender, crashed, move |sender| {
             let result = theme
-                .and_then(|theme| typeset(&document, &theme, &options, &args, replace))
+                .and_then(|theme| typeset(&document, &theme, &options, &args, replace, &commit))
                 .map(|mut summary| {
                     summary.sources = sources;
                     summary.diagnostics.extend(failed);
@@ -1459,7 +1529,7 @@ fn to_docx(arranged: Arranged) -> adoc_docx::DocxDocument {
 #[cfg(feature = "docx")]
 impl Engine {
     /// Writes the DOCX document on a worker.
-    fn write_docx(&mut self, job: u64, args: DocxExportArgs, written: Written) {
+    fn write_docx(&mut self, job: u64, args: DocxExportArgs, written: Written, commit: Commit) {
         let Written {
             sources,
             arranged,
@@ -1475,28 +1545,29 @@ impl Engine {
             result: Err(format!("writing the document crashed: {error}")),
         };
         crate::worker::spawn(sender, crashed, move |sender| {
-            let result = write_docx_file(&document, &options, &args.output).map(|report| {
-                let mut diagnostics: Vec<ExportDiagnostic> = report
-                    .diagnostics
-                    .into_iter()
-                    .map(|diagnostic| ExportDiagnostic {
-                        severity: match diagnostic.severity {
-                            adoc_docx::DocxSeverity::Error => DiagnosticSeverity::Error,
-                            adoc_docx::DocxSeverity::Warning => DiagnosticSeverity::Warning,
-                        },
-                        message: diagnostic.message,
-                        location: diagnostic.source.map(|source| (source.path, source.line)),
-                    })
-                    .collect();
-                diagnostics.extend(failed);
-                diagnostics.extend(unread);
-                ExportSummary {
-                    output: args.output.clone(),
-                    pages: sources.len(),
-                    sources,
-                    diagnostics,
-                }
-            });
+            let result =
+                write_docx_file(&document, &options, &args.output, &commit).map(|report| {
+                    let mut diagnostics: Vec<ExportDiagnostic> = report
+                        .diagnostics
+                        .into_iter()
+                        .map(|diagnostic| ExportDiagnostic {
+                            severity: match diagnostic.severity {
+                                adoc_docx::DocxSeverity::Error => DiagnosticSeverity::Error,
+                                adoc_docx::DocxSeverity::Warning => DiagnosticSeverity::Warning,
+                            },
+                            message: diagnostic.message,
+                            location: diagnostic.source.map(|source| (source.path, source.line)),
+                        })
+                        .collect();
+                    diagnostics.extend(failed);
+                    diagnostics.extend(unread);
+                    ExportSummary {
+                        output: args.output.clone(),
+                        pages: sources.len(),
+                        sources,
+                        diagnostics,
+                    }
+                });
             let _ = sender.send(WorkerMessage::ExportFinished { job, result });
         });
     }
@@ -1571,6 +1642,7 @@ fn write_docx_file(
     document: &adoc_docx::DocxDocument,
     options: &adoc_docx::DocxOptions,
     output: &Path,
+    commit: &Commit,
 ) -> Result<adoc_docx::DocxReport, String> {
     let failed = |error: &dyn std::fmt::Display| format!("{}: {error}", output.display());
     check_docx_output(output).map_err(|error| error.to_string())?;
@@ -1593,7 +1665,11 @@ fn write_docx_file(
     let file = sink
         .into_inner()
         .map_err(|error| failed(&error.into_error()))?;
-    file.persist(output).map_err(|error| failed(&error.error))?;
+    commit.replace(|| {
+        file.persist(output)
+            .map(drop)
+            .map_err(|error| failed(&error.error))
+    })?;
     Ok(report)
 }
 
@@ -1608,6 +1684,7 @@ fn typeset(
     options: &PdfOptions,
     args: &ExportArgs,
     replace: bool,
+    commit: &Commit,
 ) -> Result<ExportSummary, String> {
     let typst = adoc_pdf::to_typst(document, theme, options);
     // A profile may name a folder, such as `build/`, that does not exist yet.
@@ -1634,10 +1711,13 @@ fn typeset(
             .unwrap_or(Path::new("."));
         let mut file = tempfile::NamedTempFile::new_in(folder).map_err(failed)?;
         std::io::Write::write_all(&mut file, &output.bytes).map_err(failed)?;
-        file.persist(&args.output)
-            .map_err(|error| failed(error.error))?;
+        commit.replace(|| {
+            file.persist(&args.output)
+                .map(drop)
+                .map_err(|error| failed(error.error))
+        })?;
     } else {
-        std::fs::write(&args.output, &output.bytes).map_err(failed)?;
+        commit.replace(|| std::fs::write(&args.output, &output.bytes).map_err(failed))?;
     }
     let diagnostics: Vec<ExportDiagnostic> = output
         .diagnostics
