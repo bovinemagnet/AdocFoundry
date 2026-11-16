@@ -462,6 +462,7 @@ L1  adoc-parser     the line-oriented parser
     adoc-math       STEM notation to Typst maths
     adoc-spell      spell checking
     adoc-graph      the link graph and its layout
+    adoc-theme      asciidoctor-pdf themes and their fonts
 L0  adoc-core       domain types
 ```
 

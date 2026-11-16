@@ -359,6 +359,7 @@ dependencies = [
  "adoc-dom",
  "adoc-math",
  "adoc-render",
+ "adoc-theme",
  "hayro-syntax",
  "regex",
  "roxmltree 0.21.2",
@@ -407,6 +408,16 @@ dependencies = [
  "spellbook",
  "tempfile",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "adoc-theme"
+version = "0.11.0"
+dependencies = [
+ "adoc-core",
+ "regex",
+ "serde",
+ "serde-saphyr 1.3.0",
 ]
 
 [[package]]

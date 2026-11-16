@@ -8,7 +8,8 @@ mod fonts;
 pub mod highlight;
 mod icons;
 mod running;
-pub mod theme;
+/// asciidoctor-pdf themes, loaded by `adoc-theme`, which Word export reads too.
+pub use adoc_theme as theme;
 mod typst;
 mod world;
 

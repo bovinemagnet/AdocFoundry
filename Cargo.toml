@@ -51,6 +51,7 @@ adoc-model = { path = "crates/adoc-model" }
 adoc-parser = { path = "crates/adoc-parser" }
 adoc-pdf = { path = "crates/adoc-pdf" }
 adoc-spell = { path = "crates/adoc-spell" }
+adoc-theme = { path = "crates/adoc-theme" }
 adoc-render = { path = "crates/adoc-render" }
 
 # External crates: every entry pinned exactly; crates reference these, never their own versions

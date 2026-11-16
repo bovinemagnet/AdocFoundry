@@ -1,6 +1,8 @@
 //! asciidoctor-pdf themes: YAML files with inheritance, variables, arithmetic and units,
 //! loaded as asciidoctor-pdf 2.3's `ThemeLoader` loads them, so a theme written for
-//! asciidoctor-pdf loads here without edits.
+//! asciidoctor-pdf loads here without edits; and the fonts asciidoctor-pdf bundles, which its
+//! bundled themes name. Free of Typst, so PDF export and Word export both read themes through
+//! it, and a build with Word export alone loads themes without compiling Typst.
 
 mod value;
 mod yaml;
@@ -20,23 +22,86 @@ use regex::Regex;
 use value::{evaluate_math, to_color};
 
 /// The leading number in `text`, as Ruby's `String#to_f` reads it.
-pub(crate) fn value_number(text: &str) -> f64 {
+#[must_use]
+pub fn value_number(text: &str) -> f64 {
     value::ruby_to_f(text)
 }
 pub use value::{to_pt, Color, ThemeValue};
 use yaml::Yaml;
 
+/// The fonts asciidoctor-pdf bundles, which its themes name as `GEM_FONTS_DIR/<file>`, by file
+/// name (subsets of Noto Serif, Noto Sans and M+ 1mn; notices in `fonts/`).
+pub const BUNDLED_FONTS: &[(&str, &[u8])] = &[
+    (
+        "notoserif-regular-subset.ttf",
+        include_bytes!("../fonts/notoserif-regular-subset.ttf"),
+    ),
+    (
+        "notoserif-bold-subset.ttf",
+        include_bytes!("../fonts/notoserif-bold-subset.ttf"),
+    ),
+    (
+        "notoserif-italic-subset.ttf",
+        include_bytes!("../fonts/notoserif-italic-subset.ttf"),
+    ),
+    (
+        "notoserif-bold_italic-subset.ttf",
+        include_bytes!("../fonts/notoserif-bold_italic-subset.ttf"),
+    ),
+    (
+        "notosans-regular-subset.ttf",
+        include_bytes!("../fonts/notosans-regular-subset.ttf"),
+    ),
+    (
+        "notosans-bold-subset.ttf",
+        include_bytes!("../fonts/notosans-bold-subset.ttf"),
+    ),
+    (
+        "notosans-italic-subset.ttf",
+        include_bytes!("../fonts/notosans-italic-subset.ttf"),
+    ),
+    (
+        "notosans-bold_italic-subset.ttf",
+        include_bytes!("../fonts/notosans-bold_italic-subset.ttf"),
+    ),
+    (
+        "mplus1mn-regular-subset.ttf",
+        include_bytes!("../fonts/mplus1mn-regular-subset.ttf"),
+    ),
+    (
+        "mplus1mn-bold-subset.ttf",
+        include_bytes!("../fonts/mplus1mn-bold-subset.ttf"),
+    ),
+    (
+        "mplus1mn-italic-subset.ttf",
+        include_bytes!("../fonts/mplus1mn-italic-subset.ttf"),
+    ),
+    (
+        "mplus1mn-bold_italic-subset.ttf",
+        include_bytes!("../fonts/mplus1mn-bold_italic-subset.ttf"),
+    ),
+];
+
+/// A bundled font's bytes by file name, as [`FontFile::Bundled`] names it.
+#[must_use]
+pub fn bundled_font(name: &str) -> Option<&'static [u8]> {
+    BUNDLED_FONTS
+        .iter()
+        .find(|(bundled, _)| *bundled == name)
+        .map(|(_, bytes)| *bytes)
+}
+
 /// The themes bundled with asciidoctor-pdf that are bundled here, by name.
 const BUNDLED_THEMES: &[(&str, &str)] = &[
-    ("base", include_str!("../../themes/base-theme.yml")),
-    ("default", include_str!("../../themes/default-theme.yml")),
+    ("base", include_str!("../themes/base-theme.yml")),
+    ("default", include_str!("../themes/default-theme.yml")),
     (
         "default-sans",
-        include_str!("../../themes/default-sans-theme.yml"),
+        include_str!("../themes/default-sans-theme.yml"),
     ),
     (
         "default-for-print",
-        include_str!("../../themes/default-for-print-theme.yml"),
+        include_str!("../themes/default-for-print-theme.yml"),
     ),
 ];
 

@@ -24,6 +24,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("adoc-math", 1),
     ("adoc-spell", 1),
     ("adoc-graph", 1),
+    ("adoc-theme", 1),
     ("adoc-render", 2),
     ("adoc-diagrams", 2),
     ("adoc-model", 2),
@@ -809,6 +810,18 @@ libc = "=0.2.0"
                 "DOCX export builds typst; it needs neither PDF nor Typst",
             ]
         );
+    }
+
+    /// The Word looks PRD, §9 test 1: themes load without Typst, so Word export can read them
+    /// in a build without PDF export; PDF export reads them through the same crate.
+    #[test]
+    fn theme_crate_builds_without_typst() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let packages = default_build_packages(&root, "adoc-theme").unwrap();
+        assert!(packages.contains("adoc-theme"), "{packages:?}");
+        assert_eq!(docx_violations(&packages), Vec::<String>::new());
+        let pdf = default_build_packages(&root, "adoc-pdf").unwrap();
+        assert!(pdf.contains("adoc-theme"), "{pdf:?}");
     }
 
     #[test]
