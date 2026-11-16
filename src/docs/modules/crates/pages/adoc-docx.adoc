@@ -7,7 +7,7 @@ Paul Snow
 It is at layer L2, beside `adoc-render`, which it reads.
 It is the first work package (DOCX 1/8, issue https://github.com/bovinemagnet/AdocFoundry/issues/618[#618]) of the DOCX export epic https://github.com/bovinemagnet/AdocFoundry/issues/613[#613].
 The specification is `docs/prd/PRD-AdocFoundry_DOCX_Export.md` in the repository, which is not part of this site.
-The engine does not call the crate yet, and there is no CLI, app or MCP entry point for it.
+The engine calls the crate behind its `docx` feature (`export.docx_page`, `export.docx_component` and `Engine::export_docx_blocking`, DOCX 2/8), and there is still no CLI, app or MCP entry point for it (DOCX 7/8).
 
 == What it does
 

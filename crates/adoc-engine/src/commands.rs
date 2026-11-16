@@ -146,6 +146,8 @@ pub mod ids {
     pub const EXPORT_PDF_COMPONENT: CommandId = CommandId::new("export.pdf_component");
     pub const EXPORT_PDF_PROFILE: CommandId = CommandId::new("export.pdf_profile");
     pub const EXPORT_PDF_PAGES: CommandId = CommandId::new("export.pdf_pages");
+    pub const EXPORT_DOCX_PAGE: CommandId = CommandId::new("export.docx_page");
+    pub const EXPORT_DOCX_COMPONENT: CommandId = CommandId::new("export.docx_component");
     pub const EXPORT_HTML_PAGE: CommandId = CommandId::new("export.html_page");
     pub const SPELLING_ADD_TO_WORKSPACE: CommandId = CommandId::new("spelling.add_to_workspace");
     pub const SPELLING_ADD_TO_USER: CommandId = CommandId::new("spelling.add_to_user");
@@ -615,7 +617,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
         crate::versions::register_versions(registry);
         crate::commit::register_commit(registry);
     }
-    #[cfg(feature = "typst")]
+    #[cfg(feature = "export")]
     crate::export::register_export(registry);
 }
 

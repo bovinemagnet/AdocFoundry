@@ -1,7 +1,12 @@
-//! PDF export: one page as an article, or a component version in navigation order as a book.
-//! Every page is parsed on a worker from its open buffer or its file, its view is built and
-//! its diagrams rendered, and once none is pending the document is typeset and written on
-//! another worker. The result arrives as [`EngineEvent::ExportFinished`].
+//! Export, as PDF or DOCX: one page as an article, or a component version (or navigation
+//! files) in navigation order as a book. Both formats share one pipeline: the plan of pages,
+//! each page parsed on a worker from its open buffer or its file, its view built and its
+//! diagrams rendered, and the views arranged as the plan says ([`arrange`]). Only then does the
+//! format matter: the document is typeset as PDF (the `typst` feature) or written as DOCX (the
+//! `docx` feature) on another worker. The result arrives as [`EngineEvent::ExportFinished`].
+//!
+//! The pipeline is the `export` feature, which `typst` and `docx` each turn on; a front end
+//! names those, never `export` itself.
 
 use std::path::PathBuf;
 
@@ -9,24 +14,27 @@ use adoc_core::DiagnosticSeverity;
 
 use crate::{DocumentId, PdfStandard};
 
-// The export itself needs Typst; without it only the request and result types remain.
+#[cfg(all(feature = "export", not(any(feature = "typst", feature = "docx"))))]
+compile_error!("the `export` feature is turned on by `typst` or `docx`, not on its own");
+
+// Without either format only the request and result types remain.
 #[cfg(feature = "typst")]
+use std::collections::VecDeque;
+#[cfg(feature = "export")]
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     path::Path,
     time::{Duration, Instant},
 };
 
-#[cfg(feature = "typst")]
+#[cfg(feature = "export")]
 use adoc_dom::{BlockKind, Dom};
 #[cfg(feature = "typst")]
-use adoc_pdf::{
-    Book, BookItem, Document, LoadedTheme, PageView, PdfOptions, PdfSeverity, ThemeSource,
-};
-#[cfg(feature = "typst")]
+use adoc_pdf::{LoadedTheme, PdfOptions, PdfSeverity, ThemeSource};
+#[cfg(feature = "export")]
 use adoc_render::{DiagramView, ViewInline, ViewKind, ViewTree};
 
-#[cfg(feature = "typst")]
+#[cfg(feature = "export")]
 use crate::{
     commands::{ids, register, spec},
     workspace::WorkerMessage,
@@ -51,7 +59,7 @@ pub enum ExportTarget {
     Navigation(Vec<PathBuf>),
 }
 
-/// An export request: `CommandArgs::Export`.
+/// A PDF export request: `CommandArgs::Export`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExportArgs {
     pub target: ExportTarget,
@@ -71,11 +79,29 @@ pub struct ExportArgs {
     pub attributes: Vec<(String, String)>,
 }
 
+/// A DOCX export request: `CommandArgs::ExportDocx`. It holds nothing of PDF's: no theme,
+/// standard, fonts folder or Typst.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocxExportArgs {
+    pub target: ExportTarget,
+    /// The `.docx` file to write. It is written to a new file beside it and renamed over it
+    /// only once the whole document is written, so a failed export leaves what was there; a
+    /// link there is refused, never written through.
+    pub output: PathBuf,
+    /// Attributes every page is read with before its own header, after Antora's, and that a
+    /// book's own attributes take.
+    pub attributes: Vec<(String, String)>,
+}
+
 /// A finished export.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExportSummary {
     pub output: PathBuf,
+    /// The pages of the output: a PDF's own pages; for DOCX, which Word lays out when it opens
+    /// the document, the AsciiDoc pages it holds.
     pub pages: usize,
+    /// The AsciiDoc pages exported, in order (empty for an HTML export).
+    pub sources: Vec<PathBuf>,
     pub diagnostics: Vec<ExportDiagnostic>,
 }
 
@@ -99,7 +125,7 @@ impl std::fmt::Display for ExportDiagnostic {
 
 #[cfg(not(feature = "typst"))]
 impl crate::Engine {
-    /// Without Typst there is no export: every request fails as an unknown command.
+    /// Without Typst there is no PDF export: every request fails as an unknown command.
     pub fn export_blocking(
         &mut self,
         _: ExportArgs,
@@ -111,8 +137,23 @@ impl crate::Engine {
     }
 }
 
+#[cfg(not(feature = "docx"))]
+impl crate::Engine {
+    /// Without the `docx` feature there is no DOCX export: every request fails as an unknown
+    /// command.
+    pub fn export_docx_blocking(
+        &mut self,
+        _: DocxExportArgs,
+        _: std::time::Duration,
+    ) -> Result<ExportSummary, crate::EngineError> {
+        Err(crate::EngineError::UnknownCommand(
+            crate::commands::ids::EXPORT_DOCX_PAGE,
+        ))
+    }
+}
+
 /// The pages of an export and how they are arranged.
-#[cfg(feature = "typst")]
+#[cfg(feature = "export")]
 #[derive(Clone, Debug)]
 enum Plan {
     Article(PathBuf),
@@ -123,7 +164,7 @@ enum Plan {
     },
 }
 
-#[cfg(feature = "typst")]
+#[cfg(feature = "export")]
 #[derive(Clone, Debug)]
 enum PlanItem {
     Part(String),
@@ -139,7 +180,7 @@ enum PlanItem {
     },
 }
 
-#[cfg(feature = "typst")]
+#[cfg(feature = "export")]
 impl Plan {
     fn paths(&self) -> Vec<PathBuf> {
         match self {
@@ -155,23 +196,75 @@ impl Plan {
     }
 }
 
-#[cfg(feature = "typst")]
+/// What a job is to write, and how.
+#[cfg(feature = "export")]
+#[derive(Clone, Debug)]
+enum Request {
+    #[cfg(feature = "typst")]
+    Pdf(ExportArgs),
+    #[cfg(feature = "docx")]
+    Docx(DocxExportArgs),
+}
+
+#[cfg(feature = "export")]
+impl Request {
+    fn target(&self) -> &ExportTarget {
+        match self {
+            #[cfg(feature = "typst")]
+            Self::Pdf(args) => &args.target,
+            #[cfg(feature = "docx")]
+            Self::Docx(args) => &args.target,
+        }
+    }
+
+    fn output(&self) -> &Path {
+        match self {
+            #[cfg(feature = "typst")]
+            Self::Pdf(args) => &args.output,
+            #[cfg(feature = "docx")]
+            Self::Docx(args) => &args.output,
+        }
+    }
+
+    /// Refuses an output this format never writes.
+    fn check_output(&self) -> Result<(), EngineError> {
+        match self {
+            #[cfg(feature = "typst")]
+            Self::Pdf(_) => Ok(()),
+            #[cfg(feature = "docx")]
+            Self::Docx(args) => check_docx_output(&args.output),
+        }
+    }
+
+    fn attributes(&self) -> &[(String, String)] {
+        match self {
+            #[cfg(feature = "typst")]
+            Self::Pdf(args) => &args.attributes,
+            #[cfg(feature = "docx")]
+            Self::Docx(args) => &args.attributes,
+        }
+    }
+}
+
+#[cfg(feature = "export")]
 enum Stage {
     Parsing,
     /// Diagrams still rendering, by checksum.
     Diagrams(BTreeSet<String>),
-    Typesetting,
+    /// Typesetting or writing the document.
+    Writing,
 }
 
-#[cfg(feature = "typst")]
+#[cfg(feature = "export")]
 struct Job {
-    args: ExportArgs,
+    request: Request,
     plan: Plan,
     stage: Stage,
     doms: Vec<(PathBuf, Dom)>,
     /// Kept for `export_blocking`, which takes it; otherwise only published.
     keep_result: bool,
     /// One of `export.pdf_pages`'s pages, reported in its summary rather than on its own.
+    #[cfg_attr(not(feature = "typst"), allow(dead_code))]
     in_batch: bool,
 }
 
@@ -186,17 +279,61 @@ struct Batch {
     failed: Vec<(PathBuf, String)>,
 }
 
-#[cfg(feature = "typst")]
+#[cfg(feature = "export")]
 #[derive(Default)]
 pub(crate) struct ExportState {
     jobs: BTreeMap<u64, Job>,
     finished: BTreeMap<u64, Result<ExportSummary, String>>,
     next: u64,
+    #[cfg(feature = "typst")]
     batch: Option<Batch>,
 }
 
-#[cfg(feature = "typst")]
+#[cfg(feature = "export")]
 pub(crate) fn register_export(registry: &mut CommandRegistry) {
+    #[cfg(feature = "typst")]
+    register_pdf(registry);
+    #[cfg(feature = "docx")]
+    {
+        register(
+            registry,
+            spec(
+                ids::EXPORT_DOCX_PAGE,
+                "Export Page to Word…",
+                CommandCategory::Document,
+                None,
+                CommandContext::ActiveDocument,
+            ),
+            docx_command,
+        );
+        register(
+            registry,
+            spec(
+                ids::EXPORT_DOCX_COMPONENT,
+                "Export Component to Word…",
+                CommandCategory::Workspace,
+                None,
+                CommandContext::Antora,
+            ),
+            docx_command,
+        );
+    }
+}
+
+#[cfg(feature = "docx")]
+fn docx_command(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::ExportDocx(args) = args else {
+        return Err(EngineError::InvalidArguments {
+            command: ids::EXPORT_DOCX_PAGE,
+            expected: "an export target and a .docx output path",
+        });
+    };
+    engine.start_export(Request::Docx(args), false)?;
+    Ok(CommandOutcome::Done)
+}
+
+#[cfg(feature = "typst")]
+fn register_pdf(registry: &mut CommandRegistry) {
     register(
         registry,
         spec(
@@ -312,7 +449,7 @@ fn profile_command(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutc
         });
     };
     let args = engine.profile_export_args(&name)?;
-    engine.start_export(args, false)?;
+    engine.start_export(Request::Pdf(args), false)?;
     Ok(CommandOutcome::Done)
 }
 
@@ -340,11 +477,67 @@ fn export_command(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutco
             expected: "an export target and output path",
         });
     };
-    engine.start_export(args, false)?;
+    engine.start_export(Request::Pdf(args), false)?;
     Ok(CommandOutcome::Done)
 }
 
 #[cfg(feature = "typst")]
+impl Engine {
+    /// Exports a PDF and waits for the result, for front ends without an event loop such as
+    /// the CLI.
+    pub fn export_blocking(
+        &mut self,
+        args: ExportArgs,
+        timeout: Duration,
+    ) -> Result<ExportSummary, EngineError> {
+        let deadline = Instant::now() + timeout;
+        let job = self.start_export(Request::Pdf(args), true)?;
+        self.wait_for_export(job, deadline)
+    }
+}
+
+#[cfg(feature = "docx")]
+impl Engine {
+    /// Exports a DOCX document and waits for the result, for front ends without an event loop
+    /// such as the CLI.
+    pub fn export_docx_blocking(
+        &mut self,
+        args: DocxExportArgs,
+        timeout: Duration,
+    ) -> Result<ExportSummary, EngineError> {
+        let deadline = Instant::now() + timeout;
+        let job = self.start_export(Request::Docx(args), true)?;
+        self.wait_for_export(job, deadline)
+    }
+}
+
+/// Refuses a DOCX output that is not a `.docx` file name, is a folder, or is a link, which
+/// would be written through.
+#[cfg(feature = "docx")]
+fn check_docx_output(output: &Path) -> Result<(), EngineError> {
+    let docx = output
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("docx"));
+    if !docx {
+        return Err(EngineError::InvalidRequest(format!(
+            "{} is not a .docx file",
+            output.display()
+        )));
+    }
+    match std::fs::symlink_metadata(output) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(EngineError::InvalidRequest(format!(
+            "{} is a link, which is not written through",
+            output.display()
+        ))),
+        Ok(meta) if meta.is_dir() => Err(EngineError::InvalidRequest(format!(
+            "{} is a folder",
+            output.display()
+        ))),
+        _ => Ok(()),
+    }
+}
+
+#[cfg(feature = "export")]
 impl Engine {
     /// Whether an export is under way.
     #[must_use]
@@ -352,14 +545,13 @@ impl Engine {
         !self.export.jobs.is_empty()
     }
 
-    /// Exports and waits for the result, for front ends without an event loop such as the CLI.
-    pub fn export_blocking(
+    /// Waits for `job` until `deadline`, typesetting once nothing it waits for is still
+    /// rendering.
+    fn wait_for_export(
         &mut self,
-        args: ExportArgs,
-        timeout: Duration,
+        job: u64,
+        deadline: Instant,
     ) -> Result<ExportSummary, EngineError> {
-        let deadline = Instant::now() + timeout;
-        let job = self.start_export(args, true)?;
         loop {
             // Waits for this job only, never for other workers.
             let waited = self.wait_until(deadline, |engine| {
@@ -396,7 +588,10 @@ impl Engine {
                 _ => false,
             })
     }
+}
 
+#[cfg(feature = "typst")]
+impl Engine {
     /// Exports each of `pages` to `<folder>/<name>.pdf`, one after another; pages named alike
     /// are told apart as `<name>-2.pdf` and so on. Reports once, with
     /// [`EngineEvent::PagesExported`], when the last has finished. Refuses no pages, a folder
@@ -489,7 +684,7 @@ impl Engine {
                 typst: None,
                 attributes: Vec::new(),
             };
-            match self.start_export_job(args, false, true) {
+            match self.start_export_job(Request::Pdf(args), false, true) {
                 Ok(_) => return,
                 Err(error) => {
                     if let Some(batch) = self.export.batch.as_mut() {
@@ -499,26 +694,35 @@ impl Engine {
             }
         }
     }
+}
 
-    fn start_export(&mut self, args: ExportArgs, keep_result: bool) -> Result<u64, EngineError> {
-        self.start_export_job(args, keep_result, false)
+#[cfg(feature = "export")]
+impl Engine {
+    fn start_export(&mut self, request: Request, keep_result: bool) -> Result<u64, EngineError> {
+        self.start_export_job(request, keep_result, false)
     }
 
     fn start_export_job(
         &mut self,
-        args: ExportArgs,
+        request: Request,
         keep_result: bool,
         in_batch: bool,
     ) -> Result<u64, EngineError> {
-        let mut plan = self.export_plan(&args.target)?;
+        request.check_output()?;
+        let mut plan = self.export_plan(request.target())?;
         if let Plan::Book {
-            attributes, title, ..
+            attributes,
+            #[cfg(feature = "typst")]
+            title,
+            ..
         } = &mut plan
         {
-            for (name, value) in &args.attributes {
+            for (name, value) in request.attributes() {
                 attributes.insert(name.clone(), value.clone());
             }
-            if let Some(pdf_title) = attributes.get("pdf-title") {
+            // A PDF's own title; DOCX reads no `pdf-` attribute.
+            #[cfg(feature = "typst")]
+            if let (Request::Pdf(_), Some(pdf_title)) = (&request, attributes.get("pdf-title")) {
                 title.clone_from(pdf_title);
             }
         }
@@ -529,7 +733,9 @@ impl Engine {
                 let mut input = self.parse_input_for_path(path).ok_or_else(|| {
                     EngineError::NotFound(format!("{} cannot be read", path.display()))
                 })?;
-                input.attributes.extend(args.attributes.iter().cloned());
+                input
+                    .attributes
+                    .extend(request.attributes().iter().cloned());
                 Ok(input)
             })
             .collect::<Result<_, EngineError>>()?;
@@ -538,7 +744,7 @@ impl Engine {
         self.export.jobs.insert(
             job,
             Job {
-                args,
+                request,
                 plan,
                 stage: Stage::Parsing,
                 doms: Vec::new(),
@@ -699,10 +905,10 @@ impl Engine {
         {
             attributes.entry("revnumber".to_owned()).or_insert(version);
         }
-        let title = attributes
-            .get("pdf-title")
-            .cloned()
-            .or_else(|| component.title.clone())
+        // A PDF takes `pdf-title` in its place (`start_export_job`).
+        let title = component
+            .title
+            .clone()
             .unwrap_or_else(|| component.name.clone());
         Ok(Plan::Book {
             title,
@@ -830,7 +1036,7 @@ impl Engine {
         (views, waiting)
     }
 
-    /// Every diagram is in: typeset and write the document on a worker.
+    /// Every diagram is in: arrange the views, then typeset or write the document on a worker.
     fn export_ready(&mut self, job: u64) {
         if !matches!(
             self.export.jobs.get(&job).map(|state| &state.stage),
@@ -842,16 +1048,79 @@ impl Engine {
         let Some(state) = self.export.jobs.get_mut(&job) else {
             return;
         };
-        state.stage = Stage::Typesetting;
+        state.stage = Stage::Writing;
         let unread = unread_pages(&state.doms);
-        let args = state.args.clone();
+        let request = state.request.clone();
+        #[cfg(feature = "typst")]
         let replace = state.in_batch;
         let plan = state.plan.clone();
-        let document = assemble(&plan, views);
-        let first_page = plan.paths().into_iter().next();
+        let written = Written {
+            sources: plan.paths(),
+            arranged: arrange(&plan, views),
+            unread,
+        };
+        match request {
+            #[cfg(feature = "typst")]
+            Request::Pdf(args) => self.write_pdf(job, args, written, replace),
+            #[cfg(feature = "docx")]
+            Request::Docx(args) => self.write_docx(job, args, written),
+        }
+    }
+
+    pub(crate) fn export_finished(&mut self, job: u64, result: Result<ExportSummary, String>) {
+        let Some(state) = self.export.jobs.remove(&job) else {
+            return;
+        };
+        if state.keep_result {
+            self.export.finished.insert(job, result.clone());
+        }
+        let output = state.request.output().to_path_buf();
+        #[cfg(feature = "typst")]
+        if state.in_batch {
+            if let Some(batch) = self.export.batch.as_mut() {
+                match result {
+                    Ok(_) => batch.written.push(output),
+                    Err(error) => {
+                        let page = match state.request.target() {
+                            ExportTarget::File(page) => page.clone(),
+                            _ => output,
+                        };
+                        batch.failed.push((page, error));
+                    }
+                }
+            }
+            self.export_next_page();
+            return;
+        }
+        self.emit(EngineEvent::ExportFinished { output, result });
+    }
+}
+
+/// A job's document, arranged and ready to write in either format.
+#[cfg(feature = "export")]
+struct Written {
+    /// The pages, in order.
+    sources: Vec<PathBuf>,
+    arranged: Arranged,
+    /// Pages the parser could not read.
+    unread: Vec<ExportDiagnostic>,
+}
+
+#[cfg(feature = "typst")]
+impl Engine {
+    /// Loads the theme and typesets the PDF on a worker.
+    fn write_pdf(&mut self, job: u64, args: ExportArgs, written: Written, replace: bool) {
+        let Written {
+            sources,
+            arranged,
+            unread,
+        } = written;
+        let failed = failed_diagrams(&arranged);
+        let document = to_pdf(arranged);
+        let first_page = sources.first().cloned();
         let attributes = match &document {
-            Document::Article(page) => page.view.attributes.clone(),
-            Document::Book(book) => book.attributes.clone(),
+            adoc_pdf::Document::Article(page) => page.view.attributes.clone(),
+            adoc_pdf::Document::Book(book) => book.attributes.clone(),
         };
         let theme = self.export_theme(&args, &attributes, first_page.as_deref());
         let options = self.export_options(&args, &attributes, first_page.as_deref());
@@ -865,39 +1134,12 @@ impl Engine {
             let result = theme
                 .and_then(|theme| typeset(&document, &theme, &options, &args, replace))
                 .map(|mut summary| {
+                    summary.sources = sources;
+                    summary.diagnostics.extend(failed);
                     summary.diagnostics.extend(unread);
                     summary
                 });
             let _ = sender.send(WorkerMessage::ExportFinished { job, result });
-        });
-    }
-
-    pub(crate) fn export_finished(&mut self, job: u64, result: Result<ExportSummary, String>) {
-        let Some(state) = self.export.jobs.remove(&job) else {
-            return;
-        };
-        if state.keep_result {
-            self.export.finished.insert(job, result.clone());
-        }
-        if state.in_batch {
-            if let Some(batch) = self.export.batch.as_mut() {
-                match result {
-                    Ok(_) => batch.written.push(state.args.output),
-                    Err(error) => {
-                        let page = match state.args.target {
-                            ExportTarget::File(page) => page,
-                            _ => state.args.output,
-                        };
-                        batch.failed.push((page, error));
-                    }
-                }
-            }
-            self.export_next_page();
-            return;
-        }
-        self.emit(EngineEvent::ExportFinished {
-            output: state.args.output,
-            result,
         });
     }
 
@@ -1011,16 +1253,38 @@ fn resolve(dir: &str, base: Option<&Path>) -> PathBuf {
     }
 }
 
-/// The views arranged as the plan says.
-#[cfg(feature = "typst")]
-fn assemble(plan: &Plan, views: Vec<(PathBuf, ViewTree)>) -> Document {
+/// The views arranged as the plan says, for either format: an article, or a book of parts,
+/// headings and pages, a page without a title taking its navigation entry's.
+#[cfg(feature = "export")]
+enum Arranged {
+    Article(ViewTree),
+    Book {
+        title: String,
+        attributes: BTreeMap<String, String>,
+        items: Vec<ArrangedItem>,
+    },
+}
+
+#[cfg(feature = "export")]
+enum ArrangedItem {
+    Part(String),
+    Heading {
+        title: String,
+        depth: u8,
+    },
+    Page {
+        /// A short key unique in the book, for the page's labels.
+        key: String,
+        view: ViewTree,
+        depth: u8,
+    },
+}
+
+#[cfg(feature = "export")]
+fn arrange(plan: &Plan, views: Vec<(PathBuf, ViewTree)>) -> Arranged {
     let mut views: HashMap<PathBuf, ViewTree> = views.into_iter().collect();
     match plan {
-        Plan::Article(path) => Document::Article(PageView {
-            key: "p0".to_owned(),
-            view: views.remove(path).unwrap_or_default(),
-            depth: 0,
-        }),
+        Plan::Article(path) => Arranged::Article(views.remove(path).unwrap_or_default()),
         Plan::Book {
             title,
             attributes,
@@ -1030,8 +1294,8 @@ fn assemble(plan: &Plan, views: Vec<(PathBuf, ViewTree)>) -> Document {
             let items = items
                 .iter()
                 .filter_map(|item| match item {
-                    PlanItem::Part(title) => Some(BookItem::Part(title.clone())),
-                    PlanItem::Heading { title, depth } => Some(BookItem::Heading {
+                    PlanItem::Part(title) => Some(ArrangedItem::Part(title.clone())),
+                    PlanItem::Heading { title, depth } => Some(ArrangedItem::Heading {
                         title: title.clone(),
                         depth: *depth,
                     }),
@@ -1047,22 +1311,178 @@ fn assemble(plan: &Plan, views: Vec<(PathBuf, ViewTree)>) -> Document {
                                 .map(|title| vec![ViewInline::Text(title.clone())]);
                         }
                         index += 1;
-                        Some(BookItem::Page(PageView {
+                        Some(ArrangedItem::Page {
                             key: format!("p{index}"),
                             view,
                             depth: *depth,
-                        }))
+                        })
                     }
                 })
                 .collect();
-            Document::Book(Book {
+            Arranged::Book {
                 title: title.clone(),
-                subtitle: None,
                 attributes: attributes.clone(),
                 items,
-            })
+            }
         }
     }
+}
+
+#[cfg(feature = "export")]
+impl Arranged {
+    fn views(&self) -> Vec<&ViewTree> {
+        match self {
+            Self::Article(view) => vec![view],
+            Self::Book { items, .. } => items
+                .iter()
+                .filter_map(|item| match item {
+                    ArrangedItem::Page { view, .. } => Some(view),
+                    _ => None,
+                })
+                .collect(),
+        }
+    }
+}
+
+#[cfg(feature = "typst")]
+fn to_pdf(arranged: Arranged) -> adoc_pdf::Document {
+    use adoc_pdf::{Book, BookItem, Document, PageView};
+    match arranged {
+        Arranged::Article(view) => Document::Article(PageView {
+            key: "p0".to_owned(),
+            view,
+            depth: 0,
+        }),
+        Arranged::Book {
+            title,
+            attributes,
+            items,
+        } => Document::Book(Book {
+            title,
+            subtitle: None,
+            attributes,
+            items: items
+                .into_iter()
+                .map(|item| match item {
+                    ArrangedItem::Part(title) => BookItem::Part(title),
+                    ArrangedItem::Heading { title, depth } => BookItem::Heading { title, depth },
+                    ArrangedItem::Page { key, view, depth } => {
+                        BookItem::Page(PageView { key, view, depth })
+                    }
+                })
+                .collect(),
+        }),
+    }
+}
+
+#[cfg(feature = "docx")]
+fn to_docx(arranged: Arranged) -> adoc_docx::DocxDocument {
+    use adoc_docx::{BookItem, DocxBook, DocxDocument, DocxPage};
+    match arranged {
+        Arranged::Article(view) => DocxDocument::Article(DocxPage {
+            key: "p0".to_owned(),
+            view,
+            depth: 0,
+        }),
+        Arranged::Book {
+            title,
+            attributes,
+            items,
+        } => DocxDocument::Book(DocxBook {
+            title,
+            subtitle: None,
+            attributes,
+            items: items
+                .into_iter()
+                .map(|item| match item {
+                    ArrangedItem::Part(title) => BookItem::Part(title),
+                    ArrangedItem::Heading { title, depth } => BookItem::Heading { title, depth },
+                    ArrangedItem::Page { key, view, depth } => {
+                        BookItem::Page(DocxPage { key, view, depth })
+                    }
+                })
+                .collect(),
+        }),
+    }
+}
+
+#[cfg(feature = "docx")]
+impl Engine {
+    /// Writes the DOCX document on a worker.
+    fn write_docx(&mut self, job: u64, args: DocxExportArgs, written: Written) {
+        let Written {
+            sources,
+            arranged,
+            unread,
+        } = written;
+        let failed = failed_diagrams(&arranged);
+        let document = to_docx(arranged);
+        let sender = self.worker_sender.clone();
+        self.workers_running += 1;
+        let crashed = move |error| WorkerMessage::ExportFinished {
+            job,
+            result: Err(format!("writing the document crashed: {error}")),
+        };
+        crate::worker::spawn(sender, crashed, move |sender| {
+            let result = write_docx_file(&document, &args.output).map(|report| {
+                let mut diagnostics: Vec<ExportDiagnostic> = report
+                    .diagnostics
+                    .into_iter()
+                    .map(|diagnostic| ExportDiagnostic {
+                        severity: match diagnostic.severity {
+                            adoc_docx::DocxSeverity::Error => DiagnosticSeverity::Error,
+                            adoc_docx::DocxSeverity::Warning => DiagnosticSeverity::Warning,
+                        },
+                        message: diagnostic.message,
+                        location: diagnostic.source.map(|source| (source.path, source.line)),
+                    })
+                    .collect();
+                diagnostics.extend(failed);
+                diagnostics.extend(unread);
+                ExportSummary {
+                    output: args.output.clone(),
+                    pages: sources.len(),
+                    sources,
+                    diagnostics,
+                }
+            });
+            let _ = sender.send(WorkerMessage::ExportFinished { job, result });
+        });
+    }
+}
+
+/// Writes `document` to a new file beside `output` and renames it over `output` once the whole
+/// package is written: a failure leaves whatever was at `output`, and the rename replaces the
+/// name, never writing into what a link leads to. A link at `output` is refused again here, in
+/// case one appeared since the export was asked for.
+#[cfg(feature = "docx")]
+fn write_docx_file(
+    document: &adoc_docx::DocxDocument,
+    output: &Path,
+) -> Result<adoc_docx::DocxReport, String> {
+    let failed = |error: &dyn std::fmt::Display| format!("{}: {error}", output.display());
+    check_docx_output(output).map_err(|error| error.to_string())?;
+    // A profile may name a folder, such as `build/`, that does not exist yet.
+    let folder = match output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        Some(parent) => {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("{}: {error}", parent.display()))?;
+            parent
+        }
+        None => Path::new("."),
+    };
+    let file = tempfile::NamedTempFile::new_in(folder).map_err(|error| failed(&error))?;
+    let mut sink = std::io::BufWriter::new(file);
+    let report = adoc_docx::write_docx(document, &adoc_docx::DocxOptions::default(), &mut sink)
+        .map_err(|error| failed(&error))?;
+    let file = sink
+        .into_inner()
+        .map_err(|error| failed(&error.into_error()))?;
+    file.persist(output).map_err(|error| failed(&error.error))?;
+    Ok(report)
 }
 
 /// Typesets `document` and writes the PDF (and the Typst, when asked). With `replace`, as for
@@ -1071,7 +1491,7 @@ fn assemble(plan: &Plan, views: Vec<(PathBuf, ViewTree)>) -> Document {
 /// included, and never writes into what a symbolic or hard link leads to.
 #[cfg(feature = "typst")]
 fn typeset(
-    document: &Document,
+    document: &adoc_pdf::Document,
     theme: &LoadedTheme,
     options: &PdfOptions,
     args: &ExportArgs,
@@ -1107,7 +1527,7 @@ fn typeset(
     } else {
         std::fs::write(&args.output, &output.bytes).map_err(failed)?;
     }
-    let mut diagnostics: Vec<ExportDiagnostic> = output
+    let diagnostics: Vec<ExportDiagnostic> = output
         .diagnostics
         .iter()
         .map(|diagnostic| ExportDiagnostic {
@@ -1122,16 +1542,16 @@ fn typeset(
                 .map(|source| (source.path.clone(), source.line)),
         })
         .collect();
-    diagnostics.extend(failed_diagrams(document));
     Ok(ExportSummary {
         output: args.output.clone(),
         pages: output.pages,
+        sources: Vec::new(),
         diagnostics,
     })
 }
 
 /// A warning for each page the parser could not read, which is shown as its source.
-#[cfg(feature = "typst")]
+#[cfg(feature = "export")]
 fn unread_pages(doms: &[(PathBuf, Dom)]) -> Vec<ExportDiagnostic> {
     doms.iter()
         .filter(|(_, dom)| {
@@ -1154,10 +1574,10 @@ fn unread_pages(doms: &[(PathBuf, Dom)]) -> Vec<ExportDiagnostic> {
 }
 
 /// A warning for each diagram that could not be rendered and is shown as its source.
-#[cfg(feature = "typst")]
-fn failed_diagrams(document: &Document) -> Vec<ExportDiagnostic> {
+#[cfg(feature = "export")]
+fn failed_diagrams(arranged: &Arranged) -> Vec<ExportDiagnostic> {
     let mut out = Vec::new();
-    let mut walk = |view: &ViewTree| {
+    for view in arranged.views() {
         view.each_block(&mut |block| {
             if let ViewKind::Diagram(DiagramView::Failed { kind, message, .. }) = &block.kind {
                 out.push(ExportDiagnostic {
@@ -1167,16 +1587,6 @@ fn failed_diagrams(document: &Document) -> Vec<ExportDiagnostic> {
                 });
             }
         });
-    };
-    match document {
-        Document::Article(page) => walk(&page.view),
-        Document::Book(book) => {
-            for item in &book.items {
-                if let BookItem::Page(page) = item {
-                    walk(&page.view);
-                }
-            }
-        }
     }
     out
 }

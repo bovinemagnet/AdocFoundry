@@ -50,6 +50,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # The engine with DOCX and without Typst, as a front end exporting only DOCX builds it; the
+      # workspace's own build turns every feature on together (#619).
+      - run: cargo check -p adoc-engine --no-default-features --features docx
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
       - run: cargo xtask layers
       # The desktop entry and AppStream metadata the Linux packages and the Flatpak install, as

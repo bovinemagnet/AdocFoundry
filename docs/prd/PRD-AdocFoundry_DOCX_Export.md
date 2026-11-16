@@ -208,7 +208,7 @@ Order: D1 and D2 first (D2's extraction may begin beside D1); D3 to D6 on their 
 Each is settled before work starts on the package it affects, and the outcome is recorded in that package's pull request and in §14.
 
 - **OOXML library (D1).** `docx-rs` is a candidate, not a mandate. The spike checks complex tables, footnotes, the table of contents, sections, field codes, image relationships in headers and footers, build size and licences. The alternative is narrowly scoped in-house WordprocessingML; `quick-xml` is already in the dependency tree, a ZIP writer is not. *Settled in D1: in-house (§14).*
-- **Request shape (D2).** Format-specific DOCX arguments, command ids and events, or one common request typed by format with no PDF-only field reachable from DOCX.
+- **Request shape (D2).** Format-specific DOCX arguments, command ids and events, or one common request typed by format with no PDF-only field reachable from DOCX. *Settled in D2: format-specific arguments and command ids, one shared event (§14).*
 - **Where SVG is rasterised (D4).** The app's `image_decode::svg_to_png` is at L4 and cannot be called from `adoc-docx`. Either `adoc-docx` rasterises (`resvg` at the version already in the tree), or the engine hands it prepared rasters.
 - **Formulas without Typst (D4).** The STEM provider is part of the engine's `typst` feature. A build with `docx` and without `typst` has no formula artwork; decide between the formula's source as text with a diagnostic, and a narrower feature that provides the artwork alone.
 - **Repeated footnote references (D3).** A real Word footnote per reference, or one footnote and cross-references to it.
@@ -240,6 +240,28 @@ Each work package records here where the implementation departs from this docume
   - Every other block is, until D3 to D5, written as plain paragraphs of its text with a warning at its source span. So are the footnotes, at the end of their page, while a table of contents block only warns.
   - The core properties take the title and the `author` (or `authors`), `description` and `keywords` attributes, and no date.
 - **Checked by hand.** LibreOffice 26 opened the samples `ADOC_DOCX_OUT=<dir> cargo test -p adoc-docx --test package -- --ignored` writes, and read their headings as headings. Microsoft Word is checked in D8.
+
+### D2 (#619): one pipeline for both formats
+
+- **Request shape: format-specific arguments, one event.**
+  - DOCX has its own `DocxExportArgs` (target, output, attributes; no theme, standard, fonts folder or Typst), its own `CommandArgs::ExportDocx` and its own commands, `export.docx_page` and `export.docx_component` ("Export Page to Word…", "Export Component to Word…"), registered only with the engine's `docx` feature.
+  - Both formats report with the existing `EngineEvent::ExportFinished`. An event names the output written, whatever its format, and front ends already handle it.
+  - `ExportSummary` gains `sources`, the AsciiDoc pages exported in order. For DOCX, `pages` is the number of those pages, since Word lays out its own pages when it opens the document.
+- **The shared pipeline.**
+  - `export.rs`'s plan (`Plan`: the article, or the book from the component version's or the given navigation files, the start page as a preface, each page once), the parsing of open buffers or files on a worker, the views and the wait for their diagrams now run for either format.
+  - A job holds a `Request`, PDF or DOCX. `arrange` puts the views in the plan's order once (`Arranged`), and only then does `to_pdf` or `to_docx` make the format's document. The diagnostics for unread pages and failed diagrams are worked out from the arranged views for both.
+  - The pipeline is the engine's `export` feature, which `typst` and `docx` each turn on. Front ends never name it, and turning it on alone is a compile error. Theme, typesetting, the PDF preview and `export.pdf_pages` stay under `typst`.
+  - `pdf-title`, which the book plan read, is now applied for PDF only. DOCX reads no `pdf-` attribute; its book takes the component version's title.
+- **Without Typst.** `adoc-engine --no-default-features --features docx` builds `adoc-docx` and neither `adoc-pdf` nor Typst. `cargo xtask layers` checks the dependency tree (`docx_builds_without_typst`), and CI's lint job compiles that build. Formulas have no artwork without Typst; D4 decides what DOCX shows instead.
+- **Safe output.**
+  - A DOCX output must be a `.docx` file name. A folder or a link there is refused before anything is read, and checked again when writing.
+  - The package is written to a temporary file beside the output (created, with its folders, as for PDF) and renamed over it only once complete. A failure leaves the source and whatever was at the output, and no temporary file.
+  - PDF's own writing is unchanged.
+- **Options.** The DOCX export writes with `DocxOptions::default()` (A4) until D6 adds `[docx]`.
+- **Tests.** `crates/adoc-engine/tests/docx_export.rs`:
+  - `docx_and_pdf_select_the_same_pages`: an open page with unsaved text, the component version, a file and two navigation files in the order given, each exported to both formats; the `sources` agree, and the DOCX holds the unsaved text and the pages in that order.
+  - `docx_failed_export_keeps_existing_output`: an unknown component, a non-`.docx` output, a folder, a link and a folder that refuses the write, each leaving what was there.
+  - An article, a book and the command's `ExportFinished`.
 
 ## 15. References
 
