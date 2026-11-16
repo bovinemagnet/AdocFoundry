@@ -102,6 +102,12 @@ impl Xml {
         self.out.into_bytes()
     }
 
+    /// `fragment` written into this one at `at`, a length this one had: only ever between two
+    /// elements.
+    pub(crate) fn insert(&mut self, at: usize, fragment: Xml) {
+        self.out.insert_str(at, &fragment.out);
+    }
+
     /// How much has been written.
     pub(crate) fn len(&self) -> usize {
         self.out.len()

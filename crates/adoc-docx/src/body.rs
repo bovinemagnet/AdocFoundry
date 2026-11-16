@@ -17,9 +17,10 @@ use crate::{
     labels::Labels,
     media::Media,
     numbering::{self, ListStyle, Numbering, DEEPEST_LEVEL},
+    pages::{RunningPart, Section},
     parts::DEEPEST_HEADING,
     xml::Xml,
-    BookItem, DocxDiagnostic, DocxDocument, DocxOptions, DocxPage, DocxSeverity, Paper,
+    BookItem, DocxDiagnostic, DocxDocument, DocxOptions, DocxPage, DocxSeverity,
 };
 
 /// How a run of text looks: what its inlines add up to.
@@ -48,11 +49,14 @@ pub(crate) struct Para<'a> {
     pub(crate) rule_below: bool,
 }
 
-/// Which part is being written: the document or its footnotes, each with its own relationships.
+/// Which part is being written: the document, its footnotes, or a header or footer, each with
+/// its own relationships.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Part {
-    Document,
-    Footnotes,
+pub(crate) struct Part(pub(crate) usize);
+
+impl Part {
+    pub(crate) const DOCUMENT: Self = Self(0);
+    pub(crate) const FOOTNOTES: Self = Self(1);
 }
 
 /// A hyperlink's relationship: its id and address.
@@ -82,10 +86,10 @@ pub(crate) struct Writer<'a> {
     pub(crate) part: Part,
     pub(crate) footnotes: Xml,
     pub(crate) footnote_count: u32,
-    pub(crate) hyperlinks: [Vec<Hyperlink>; 2],
+    pub(crate) hyperlinks: Vec<Vec<Hyperlink>>,
     /// The pictures, and each part's relationships to them: id and media index.
     pub(crate) media: Media,
-    pub(crate) pictures: [Vec<(String, usize)>; 2],
+    pub(crate) pictures: Vec<Vec<(String, usize)>>,
     /// The drawings written, for their ids, which are unique in the document.
     pub(crate) drawings: u32,
     pub(crate) numbering: Numbering,
@@ -106,6 +110,18 @@ pub(crate) struct Writer<'a> {
     /// Whether the last thing written was a table, which a paragraph must follow before
     /// another table or the end of a cell.
     pub(crate) after_table: bool,
+    /// The header and footer parts, and the document's relationships to them.
+    pub(crate) running_parts: Vec<RunningPart>,
+    pub(crate) document_links: Vec<(String, &'static str, String)>,
+    /// Each heading written, for the table of contents: its Word level, text and bookmark.
+    pub(crate) headings: Vec<(u8, String, String)>,
+    /// Where in the body the table of contents goes, and whether one was written.
+    toc_at: Option<usize>,
+    pub(crate) wrote_toc: bool,
+    /// The last section's properties, which end the body.
+    pub(crate) final_section: Xml,
+    /// The page asks for its table of contents at its `toc::[]` block.
+    toc_macro: bool,
 }
 
 fn heading(level: u8) -> String {
@@ -136,10 +152,11 @@ impl<'a> Writer<'a> {
                 })
                 .collect(),
         };
-        let width = match options.paper {
-            Paper::A4 => 11906,
-            Paper::Letter => 12240,
-        } - 2 * 1440;
+        let width = options
+            .page_size()
+            .0
+            .saturating_sub(options.margins.left + options.margins.right)
+            .max(1440);
         Self {
             xml: Xml::fragment(),
             options,
@@ -155,12 +172,12 @@ impl<'a> Writer<'a> {
             page_footnotes: HashMap::new(),
             written_footnotes: HashMap::new(),
             span: None,
-            part: Part::Document,
+            part: Part::DOCUMENT,
             footnotes: Xml::fragment(),
             footnote_count: 0,
-            hyperlinks: [Vec::new(), Vec::new()],
+            hyperlinks: vec![Vec::new(), Vec::new()],
             media: Media::default(),
-            pictures: [Vec::new(), Vec::new()],
+            pictures: vec![Vec::new(), Vec::new()],
             drawings: 0,
             numbering: Numbering::default(),
             bookmark_count: 0,
@@ -172,62 +189,117 @@ impl<'a> Writer<'a> {
             align: None,
             width,
             after_table: false,
+            running_parts: Vec::new(),
+            document_links: Vec::new(),
+            headings: Vec::new(),
+            toc_at: None,
+            wrote_toc: false,
+            final_section: Xml::fragment(),
+            toc_macro: false,
         }
     }
 
     pub(crate) fn document(&mut self, document: &DocxDocument) {
+        let margins = self.options.margins;
+        // The first page's view: its images for the covers and the title page's logo.
+        let first: Option<&ViewTree> = match document {
+            DocxDocument::Article(page) => Some(&page.view),
+            DocxDocument::Book(book) => book.items.iter().find_map(|item| match item {
+                BookItem::Page(page) => Some(&page.view),
+                _ => None,
+            }),
+        };
+        let image = |name: &str| {
+            first
+                .and_then(|view| view.attribute_images.get(name))
+                .cloned()
+        };
+        let (front, back, logo) = (
+            image("front-cover-image"),
+            image("back-cover-image"),
+            image("title-logo-image"),
+        );
+        let (title, attributes): (Vec<ViewInline>, BTreeMap<String, String>) = match document {
+            DocxDocument::Article(page) => (
+                page.view.title.clone().unwrap_or_default(),
+                page.view.attributes.clone(),
+            ),
+            DocxDocument::Book(book) => (
+                vec![ViewInline::Text(book.title.clone())],
+                book.attributes.clone(),
+            ),
+        };
+        let plain_title = ViewInline::plain_text(&title);
+
+        if let Some(front) = &front {
+            if self.cover(front, "Front cover") {
+                self.end_section(&Section::cover(Vec::new()));
+            }
+        }
+        // A book has a title page; an article only when it asks for one.
+        let title_page =
+            matches!(document, DocxDocument::Book(_)) || attributes.contains_key("title-page");
+        if title_page && !plain_title.trim().is_empty() {
+            let subtitle = match document {
+                DocxDocument::Book(book) => book.subtitle.clone(),
+                DocxDocument::Article(_) => None,
+            };
+            self.title_page(logo.as_ref(), &title, subtitle.as_deref(), &attributes);
+            self.end_section(&Section::plain(margins));
+        }
+
+        // A part is a level above the chapters, so where there are parts everything else moves
+        // down one, and a chapter's heading is a level lower.
+        let shift = match document {
+            DocxDocument::Book(book) => u8::from(
+                book.items
+                    .iter()
+                    .any(|item| matches!(item, BookItem::Part(_))),
+            ),
+            DocxDocument::Article(_) => 0,
+        };
+        let toc = match document {
+            DocxDocument::Book(_) => attributes.contains_key("toc"),
+            DocxDocument::Article(page) => !page.view.toc.is_empty(),
+        };
+        let toc_macro = attributes.get("toc").is_some_and(|toc| toc == "macro");
         match document {
             DocxDocument::Article(page) => {
                 self.begin_page(page);
-                if let Some(title) = &page.view.title {
-                    if !ViewInline::plain_text(title).trim().is_empty() {
-                        self.paragraph(
-                            Para {
-                                style: Some("Title"),
-                                ..Para::default()
-                            },
-                            |writer| writer.inlines(title, Format::default()),
-                        );
-                    }
+                if !title_page && !plain_title.trim().is_empty() {
+                    self.paragraph(
+                        Para {
+                            style: Some("Title"),
+                            ..Para::default()
+                        },
+                        |writer| writer.inlines(&title, Format::default()),
+                    );
                 }
+                if toc && !toc_macro {
+                    self.toc_at = Some(self.xml.len());
+                }
+                self.toc_macro = toc && toc_macro;
                 self.blocks(&page.view.blocks, page.depth);
             }
             DocxDocument::Book(book) => {
-                if !book.title.trim().is_empty() {
-                    self.text_paragraph(Some("Title"), &book.title);
+                if toc {
+                    self.toc_at = Some(self.xml.len());
                 }
-                if let Some(subtitle) = book.subtitle.as_deref().filter(|s| !s.trim().is_empty()) {
-                    self.text_paragraph(Some("Subtitle"), subtitle);
-                }
-                // A part is a level above the chapters, so where there are parts everything
-                // else moves down one.
-                let shift = u8::from(
-                    book.items
-                        .iter()
-                        .any(|item| matches!(item, BookItem::Part(_))),
-                );
                 // Parts and chapters start a page, unless a part has just started one.
                 let mut after_part = false;
                 for item in &book.items {
                     match item {
                         BookItem::Part(title) => {
-                            self.paragraph(
-                                Para {
-                                    style: Some(&heading(1)),
-                                    page_break_before: true,
-                                    ..Para::default()
-                                },
-                                |writer| writer.text(title, Format::default()),
-                            );
+                            self.heading_paragraph(1, true, title.clone(), |writer| {
+                                writer.text(title, Format::default());
+                            });
                             after_part = true;
                         }
                         BookItem::Heading { title, depth } => {
-                            self.paragraph(
-                                Para {
-                                    style: Some(&heading(depth.saturating_add(shift))),
-                                    page_break_before: *depth == 1 && !after_part,
-                                    ..Para::default()
-                                },
+                            self.heading_paragraph(
+                                depth.saturating_add(shift),
+                                *depth == 1 && !after_part,
+                                title.clone(),
                                 |writer| writer.text(title, Format::default()),
                             );
                             after_part = false;
@@ -240,12 +312,10 @@ impl<'a> Writer<'a> {
                                     !ViewInline::plain_text(title).trim().is_empty()
                                 })
                             {
-                                self.paragraph(
-                                    Para {
-                                        style: Some(&heading(depth)),
-                                        page_break_before: page.depth <= 1 && !after_part,
-                                        ..Para::default()
-                                    },
+                                self.heading_paragraph(
+                                    depth,
+                                    page.depth <= 1 && !after_part,
+                                    ViewInline::plain_text(title),
                                     |writer| writer.inlines(title, Format::default()),
                                 );
                             }
@@ -258,6 +328,71 @@ impl<'a> Writer<'a> {
         }
         // A paragraph ends the body after a table, as one ends every cell.
         self.close_tables();
+
+        // The table of contents, of the headings now written, where it was asked for.
+        if let Some(at) = self.toc_at {
+            let levels = attributes
+                .get("toclevels")
+                .and_then(|levels| levels.trim().parse::<u8>().ok())
+                .unwrap_or(2)
+                .clamp(1, 5)
+                .saturating_add(shift)
+                .min(DEEPEST_HEADING);
+            let title = attributes
+                .get("toc-title")
+                .cloned()
+                .unwrap_or_else(|| "Table of Contents".to_owned());
+            let contents = self.table_of_contents(levels, &title);
+            self.xml.insert(at, contents);
+        }
+
+        // The body's section: its running content and page numbers from 1.
+        let chapter = format!("heading {}", 1 + shift);
+        let (references, first_page) = self.running_references(&plain_title, &chapter);
+        let body = Section {
+            margins,
+            references,
+            title_page: first_page,
+            restart: true,
+        };
+        let last = match &back {
+            Some(back) => {
+                self.end_section(&body);
+                if self.cover(back, "Back cover") {
+                    let blank = self.blank_references();
+                    Section::cover(blank)
+                } else {
+                    Section::plain(margins)
+                }
+            }
+            None => body,
+        };
+        let content = std::mem::take(&mut self.xml);
+        self.section_properties(&last);
+        self.final_section = std::mem::replace(&mut self.xml, content);
+    }
+
+    /// A heading that the table of contents lists: its paragraph, with a bookmark the contents
+    /// links to.
+    fn heading_paragraph(
+        &mut self,
+        level: u8,
+        page_break_before: bool,
+        text: String,
+        content: impl FnOnce(&mut Self),
+    ) {
+        let level = level.clamp(1, DEEPEST_HEADING);
+        let name = format!("_Toc{}", self.headings.len() + 1);
+        self.headings.push((level, text, name.clone()));
+        self.pending.push(name);
+        self.paragraph(
+            Para {
+                style: Some(&heading(level)),
+                page_break_before,
+                ..Para::default()
+            },
+            content,
+        );
     }
 
     /// Starts writing `page`: its bookmarks and footnotes are its own.
@@ -419,18 +554,16 @@ impl<'a> Writer<'a> {
                 title,
                 blocks,
             } => {
-                self.paragraph(
-                    Para {
-                        style: Some(&heading(level.saturating_add(depth))),
-                        ..Para::default()
-                    },
-                    |writer| {
-                        if let Some(number) = number {
-                            writer.text(&format!("{number} "), Format::default());
-                        }
-                        writer.inlines(title, Format::default());
-                    },
-                );
+                let text = match number {
+                    Some(number) => format!("{number} {}", ViewInline::plain_text(title)),
+                    None => ViewInline::plain_text(title),
+                };
+                self.heading_paragraph(level.saturating_add(depth), false, text, |writer| {
+                    if let Some(number) = number {
+                        writer.text(&format!("{number} "), Format::default());
+                    }
+                    writer.inlines(title, Format::default());
+                });
                 self.blocks(blocks, depth);
             }
             ViewKind::Heading { level, title } => self.paragraph(
@@ -532,10 +665,13 @@ impl<'a> Writer<'a> {
                 writer.xml.empty("w:br", &[("w:type", "page")]);
                 writer.xml.close("w:r");
             }),
-            ViewKind::Toc => self.warn(
-                Some(&block.span),
-                "a table of contents is not exported to Word".to_owned(),
-            ),
+            // `toc::[]`: where the page asks for its table of contents.
+            ViewKind::Toc => {
+                if self.toc_macro && self.toc_at.is_none() && self.part == Part::DOCUMENT {
+                    self.close_tables();
+                    self.toc_at = Some(self.xml.len());
+                }
+            }
             ViewKind::Media { targets, .. } => {
                 self.title(block);
                 self.text_paragraph(None, &targets.join(", "));

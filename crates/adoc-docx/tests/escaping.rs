@@ -41,6 +41,9 @@ fn docx_text_is_escaped() {
         paragraphs(text(&entries, "word/document.xml")),
         [
             (Some("Title".to_owned()), cleaned.clone()),
+            // The author, on the title page, and the paragraph ending its section.
+            (Some("TitlePageDetail".to_owned()), cleaned.clone()),
+            (None, String::new()),
             (
                 Some("Heading1".to_owned()),
                 format!("tab\tand\nline {cleaned}")

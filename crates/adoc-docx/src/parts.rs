@@ -1,7 +1,7 @@
 //! The parts every document has: the main document around its body, the styles and the core
 //! properties.
 
-use crate::{xml::Xml, Paper};
+use crate::xml::Xml;
 
 pub(crate) const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 pub(crate) const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -57,32 +57,13 @@ pub(crate) const NAMESPACES: [(&str, &str); 5] = [
 /// The deepest heading style: Word has nine.
 pub(crate) const DEEPEST_HEADING: u8 = 9;
 
-/// `word/document.xml`: the body, then the section's page size and margins.
-pub(crate) fn document(body: Xml, paper: Paper) -> Vec<u8> {
-    // Twentieths of a point.
-    let (width, height) = match paper {
-        Paper::A4 => ("11906", "16838"),
-        Paper::Letter => ("12240", "15840"),
-    };
+/// `word/document.xml`: the body, then the last section's properties.
+pub(crate) fn document(body: Xml, last_section: Xml) -> Vec<u8> {
     let mut xml = Xml::part();
     xml.open("w:document", &NAMESPACES);
     xml.open("w:body", &[]);
     xml.append(body);
-    xml.open("w:sectPr", &[]);
-    xml.empty("w:pgSz", &[("w:w", width), ("w:h", height)]);
-    xml.empty(
-        "w:pgMar",
-        &[
-            ("w:top", "1440"),
-            ("w:right", "1440"),
-            ("w:bottom", "1440"),
-            ("w:left", "1440"),
-            ("w:header", "708"),
-            ("w:footer", "708"),
-            ("w:gutter", "0"),
-        ],
-    );
-    xml.close("w:sectPr");
+    xml.append(last_section);
     xml.close("w:body");
     xml.close("w:document");
     xml.into_bytes()
@@ -208,8 +189,10 @@ fn style(xml: &mut Xml, style: &Style<'_>) {
 
 /// `word/styles.xml`. Headings carry Word's built-in names (`heading 1`), so Word treats them
 /// as its own, outline levels and table of contents included; every other style the body uses
-/// is named for what it holds, so a reader can restyle it in Word.
-pub(crate) fn styles() -> Vec<u8> {
+/// is named for what it holds, so a reader can restyle it in Word. `width` is the text's, in
+/// twentieths of a point: headers and footers have their centre and right tab stops by it, and
+/// the table of contents its page numbers.
+pub(crate) fn styles(width: u32) -> Vec<u8> {
     let mut xml = Xml::part();
     xml.open("w:styles", &[("xmlns:w", W)]);
     xml.open("w:docDefaults", &[]);
@@ -445,6 +428,109 @@ pub(crate) fn styles() -> Vec<u8> {
             ..Style::default()
         },
     );
+    // Headers and footers: a centre and a right tab stop, for their three slots.
+    let centre = (width / 2).to_string();
+    let right = width.to_string();
+    for (id, name) in [("Header", "header"), ("Footer", "footer")] {
+        xml.open("w:style", &[("w:type", "paragraph"), ("w:styleId", id)]);
+        xml.empty("w:name", &[("w:val", name)]);
+        xml.empty("w:basedOn", &[("w:val", "Normal")]);
+        xml.empty("w:uiPriority", &[("w:val", "99")]);
+        xml.empty("w:unhideWhenUsed", &[]);
+        xml.open("w:pPr", &[]);
+        xml.open("w:tabs", &[]);
+        xml.empty("w:tab", &[("w:val", "center"), ("w:pos", &centre)]);
+        xml.empty("w:tab", &[("w:val", "right"), ("w:pos", &right)]);
+        xml.close("w:tabs");
+        xml.empty(
+            "w:spacing",
+            &[("w:after", "0"), ("w:line", "240"), ("w:lineRule", "auto")],
+        );
+        xml.close("w:pPr");
+        xml.open("w:rPr", &[]);
+        xml.empty("w:sz", &[("w:val", "18")]);
+        xml.empty("w:szCs", &[("w:val", "18")]);
+        xml.close("w:rPr");
+        xml.close("w:style");
+    }
+    // The table of contents: its heading (not itself listed), and an entry style per level,
+    // its page number at the right after a row of dots.
+    style(
+        &mut xml,
+        &Style {
+            id: "TOCHeading",
+            name: "TOC Heading",
+            next: Some("Normal"),
+            paragraph: &[
+                keep_next,
+                ("w:spacing", &[("w:before", "240"), ("w:after", "120")]),
+            ],
+            run: &[
+                BOLD[0],
+                BOLD[1],
+                ("w:sz", &[("w:val", "32")]),
+                ("w:szCs", &[("w:val", "32")]),
+            ],
+            ..Style::default()
+        },
+    );
+    for level in 1..=DEEPEST_HEADING {
+        let indent = (220 * u32::from(level - 1)).to_string();
+        xml.open(
+            "w:style",
+            &[
+                ("w:type", "paragraph"),
+                ("w:styleId", &format!("TOC{level}")),
+            ],
+        );
+        xml.empty("w:name", &[("w:val", &format!("toc {level}"))]);
+        xml.empty("w:basedOn", &[("w:val", "Normal")]);
+        xml.empty("w:next", &[("w:val", "Normal")]);
+        xml.empty("w:uiPriority", &[("w:val", "39")]);
+        xml.empty("w:unhideWhenUsed", &[]);
+        xml.open("w:pPr", &[]);
+        xml.open("w:tabs", &[]);
+        xml.empty(
+            "w:tab",
+            &[("w:val", "right"), ("w:leader", "dot"), ("w:pos", &right)],
+        );
+        xml.close("w:tabs");
+        xml.empty("w:spacing", &[("w:after", "60")]);
+        xml.empty("w:ind", &[("w:left", &indent)]);
+        xml.close("w:pPr");
+        xml.close("w:style");
+    }
+    style(
+        &mut xml,
+        &Style {
+            id: "CoverImage",
+            name: "Cover Image",
+            hidden: true,
+            paragraph: &[
+                (
+                    "w:spacing",
+                    &[
+                        ("w:before", "0"),
+                        ("w:after", "0"),
+                        ("w:line", "240"),
+                        ("w:lineRule", "auto"),
+                    ],
+                ),
+                ("w:jc", &[("w:val", "center")]),
+            ],
+            ..Style::default()
+        },
+    );
+    style(
+        &mut xml,
+        &Style {
+            id: "TitlePageDetail",
+            name: "Title Page Detail",
+            paragraph: &[("w:spacing", &[("w:after", "80")])],
+            run: &[("w:sz", &[("w:val", "24")]), ("w:szCs", &[("w:val", "24")])],
+            ..Style::default()
+        },
+    );
     for (id, name, run) in [
         ("CodeChar", "Code", &[MONO][..]),
         (
@@ -525,11 +611,19 @@ pub(crate) fn styles() -> Vec<u8> {
     xml.into_bytes()
 }
 
-/// `word/settings.xml`: Word's current compatibility mode, so it opens the document without
-/// "compatibility mode", and the footnotes' separators when there are footnotes.
-pub(crate) fn settings(footnotes: bool) -> Vec<u8> {
+/// `word/settings.xml`: odd and even pages' own headers and footers, when asked for; whether
+/// Word updates the fields on opening (when there is a table of contents, whose page numbers
+/// only Word can work out, it asks); the footnotes' separators; and Word's current
+/// compatibility mode, so it opens the document without "compatibility mode".
+pub(crate) fn settings(footnotes: bool, odd_even: bool, update_fields: bool) -> Vec<u8> {
     let mut xml = Xml::part();
     xml.open("w:settings", &[("xmlns:w", W)]);
+    if odd_even {
+        xml.empty("w:evenAndOddHeaders", &[]);
+    }
+    if update_fields {
+        xml.empty("w:updateFields", &[("w:val", "true")]);
+    }
     if footnotes {
         xml.open("w:footnotePr", &[]);
         xml.empty("w:footnote", &[("w:id", "-1")]);

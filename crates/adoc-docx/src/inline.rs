@@ -243,7 +243,7 @@ impl Writer<'_> {
 
     /// The relationship id of a hyperlink to `url` from the part being written.
     pub(crate) fn hyperlink(&mut self, url: &str) -> String {
-        let links = &mut self.hyperlinks[self.part as usize];
+        let links = &mut self.hyperlinks[self.part.0];
         let url = url.trim().replace(' ', "%20");
         if let Some(link) = links.iter().find(|link| link.url == url) {
             return link.id.clone();
@@ -369,13 +369,13 @@ impl Writer<'_> {
             ..Format::default()
         };
         if let Some((id, name)) = self.written_footnotes.get(&number).cloned() {
-            if repeat || self.part == Part::Footnotes {
+            if repeat || self.part == Part::FOOTNOTES {
                 self.field(&format!(" NOTEREF {name} \\f \\h "), &id.to_string(), mark);
                 return;
             }
         }
         let content = match self.page_footnotes.get(&number) {
-            Some(content) if !repeat && self.part == Part::Document => content.clone(),
+            Some(content) if !repeat && self.part == Part::DOCUMENT => content.clone(),
             _ => {
                 self.text(&format!("[{number}]"), mark);
                 self.warn(
@@ -403,7 +403,7 @@ impl Writer<'_> {
 
         // The footnote itself, written into the footnotes part.
         let body = std::mem::replace(&mut self.xml, std::mem::take(&mut self.footnotes));
-        let part = std::mem::replace(&mut self.part, Part::Footnotes);
+        let part = std::mem::replace(&mut self.part, Part::FOOTNOTES);
         let after_table = std::mem::replace(&mut self.after_table, false);
         self.xml.open("w:footnote", &[("w:id", &id.to_string())]);
         self.xml.open("w:p", &[]);

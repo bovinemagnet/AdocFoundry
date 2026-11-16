@@ -65,7 +65,7 @@ impl Writer<'_> {
 
     /// The relationship id of a picture's media part from the part being written.
     fn picture_relationship(&mut self, index: usize) -> String {
-        let pictures = &mut self.pictures[self.part as usize];
+        let pictures = &mut self.pictures[self.part.0];
         if let Some((id, _)) = pictures.iter().find(|(_, known)| *known == index) {
             return id.clone();
         }
@@ -76,7 +76,7 @@ impl Writer<'_> {
 
     /// A run holding `picture` at `size`, described by `alt`, lowered by `lowered` half-points,
     /// and leading to `link` when it is a safe address.
-    fn drawing(
+    pub(crate) fn drawing(
         &mut self,
         picture: &Picture,
         (width, height): (i64, i64),
