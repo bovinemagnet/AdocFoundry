@@ -2,6 +2,7 @@
 
 use std::{path::PathBuf, process::ExitCode};
 
+mod bench;
 mod bump;
 mod layers;
 // Shared with the app's build script, which uses what this binary does not.
@@ -28,12 +29,34 @@ fn main() -> ExitCode {
             }
         }
         Some("notices") => run_notices(std::env::args().nth(2)),
+        Some("bench") => run_bench(),
         Some("bump") => run_bump(std::env::args().nth(2)),
         Some("run") => run_app(),
         _ => {
             eprintln!(
-                "usage: cargo xtask <task>\n\ntasks:\n  bump       write a release's version into Cargo.toml, the docs and the changelog\n  layers     check the crate dependency ladder\n  notices    write the third-party notices to a file, or print them\n  package    release build and archive for this platform in dist/\n  run        build and run the desktop app (on macOS from a bundle, with its icon)"
+                "usage: cargo xtask <task>\n\ntasks:\n  bench      the engine's benchmarks for CI, for development against a baseline, or for a release\n  bump       write a release's version into Cargo.toml, the docs and the changelog\n  layers     check the crate dependency ladder\n  notices    write the third-party notices to a file, or print them\n  package    release build and archive for this platform in dist/\n  run        build and run the desktop app (on macOS from a bundle, with its icon)"
             );
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `cargo xtask bench <tier>`: the benchmarks judged for `ci`, `dev` or `release` (#612).
+fn run_bench() -> ExitCode {
+    let request = match bench::parse_args(std::env::args().skip(2)) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    match bench::run(&root, &cargo, &request) {
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => ExitCode::FAILURE,
+        Err(error) => {
+            eprintln!("bench: {error}");
             ExitCode::FAILURE
         }
     }

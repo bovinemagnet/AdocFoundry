@@ -25,6 +25,11 @@ use crate::editor::SourceEditorView;
 
 /// The environment variable that enables the benchmark; its value is the duration in seconds.
 pub const ENABLE: &str = "ADOCFOUNDRY_TYPING_BENCH";
+/// `ci` holds the run to [`CI_CEILING`] times the budget, as CI's `typing` job does: a shared
+/// runner's CPU time varies with the runner, and a release is held to the budget itself (#612).
+pub const TIER: &str = "ADOCFOUNDRY_TYPING_TIER";
+/// How far past the budget a run in CI may go.
+const CI_CEILING: u32 = 3;
 
 /// Faster than anyone types, so every frame has an edit to show.
 const KEYSTROKE_INTERVAL: Duration = Duration::from_millis(35);
@@ -388,7 +393,12 @@ fn report(frames: &[Frame]) {
         over(Duration::from_millis(33)),
     );
     eprintln!("typing benchmark work: {}", work_summary(frames));
-    match budget(frames) {
+    let ceiling = if std::env::var(TIER).as_deref() == Ok("ci") {
+        CI_CEILING
+    } else {
+        1
+    };
+    match budget(frames, ceiling) {
         Ok(within) => eprintln!("typing benchmark budget: within: {within}"),
         Err(over) => eprintln!("typing benchmark budget: over: {over}"),
     }
@@ -431,8 +441,20 @@ fn longest_piece<'a>(
 }
 
 /// The budget after [`SETTLING`]: the app's work in an interval at p99 within [`WORK_P99`], and
-/// no single piece of it over [`LONGEST_PIECE`]. `Ok` says what it held, `Err` what it missed.
-fn budget(frames: &[Frame]) -> Result<String, String> {
+/// no single piece of it over [`LONGEST_PIECE`], each times `ceiling`. `Ok` says what it held,
+/// `Err` what it missed.
+fn budget(frames: &[Frame], ceiling: u32) -> Result<String, String> {
+    let limit = |budget: Duration| {
+        let limit = budget * ceiling;
+        let shown = if ceiling == 1 {
+            ms(limit)
+        } else {
+            format!("{} ({ceiling} × {})", ms(limit), ms(budget))
+        };
+        (limit, shown)
+    };
+    let (work_p99, work_shown) = limit(WORK_P99);
+    let (piece_limit, longest_shown) = limit(LONGEST_PIECE);
     let judged: Vec<&Frame> = frames.iter().filter(|frame| frame.at >= SETTLING).collect();
     if judged.is_empty() {
         return Err(format!(
@@ -445,24 +467,21 @@ fn budget(frames: &[Frame]) -> Result<String, String> {
     let p99 = percentile(&work, 0.99);
     let longest = longest_piece(judged.iter().copied());
     let mut missed = Vec::new();
-    if p99 > WORK_P99 {
-        missed.push(format!("p99 work {} > {}", ms(p99), ms(WORK_P99)));
+    if p99 > work_p99 {
+        missed.push(format!("p99 work {} > {work_shown}", ms(p99)));
     }
-    if let Some((at, name, took)) = longest.filter(|(_, _, took)| *took > LONGEST_PIECE) {
+    if let Some((at, name, took)) = longest.filter(|(_, _, took)| *took > piece_limit) {
         missed.push(format!(
-            "{name} took {} at {:.2} s > {}",
+            "{name} took {} at {:.2} s > {longest_shown}",
             ms(took),
             at.as_secs_f64(),
-            ms(LONGEST_PIECE)
         ));
     }
     if missed.is_empty() {
         Ok(format!(
-            "p99 work {} ≤ {}, longest piece {} ≤ {}, after the first {} s",
+            "p99 work {} ≤ {work_shown}, longest piece {} ≤ {longest_shown}, after the first {} s",
             ms(p99),
-            ms(WORK_P99),
             ms(longest.map(|(_, _, took)| took).unwrap_or_default()),
-            ms(LONGEST_PIECE),
             SETTLING.as_secs()
         ))
     } else {
@@ -632,7 +651,7 @@ mod tests {
         );
         assert_eq!(frame.longest, Some((DRAW, Duration::from_millis(6))));
         assert_eq!(frame.work, Duration::from_millis(8));
-        assert!(budget(&[frame]).is_ok());
+        assert!(budget(&[frame], 1).is_ok());
     }
 
     #[test]
@@ -703,7 +722,7 @@ mod tests {
         // Start-up is left out, however long.
         frames.insert(0, work_frame(300, 400, Some(("type", 400))));
         assert_eq!(
-            budget(&frames),
+            budget(&frames, 1),
             Ok(
                 "p99 work 4.0 ms ≤ 16.7 ms, longest piece 4.0 ms ≤ 33.0 ms, after the first 1 s"
                     .to_owned()
@@ -721,8 +740,34 @@ mod tests {
         }
         frames[100].longest = Some(("type", Duration::from_millis(40)));
         assert_eq!(
-            budget(&frames),
+            budget(&frames, 1),
             Err("p99 work 20.0 ms > 16.7 ms; type took 40.0 ms at 2.70 s > 33.0 ms".to_owned())
+        );
+    }
+
+    #[test]
+    fn ci_holds_the_work_to_three_times_the_budget() {
+        // A shared runner's CPU time varies with the runner; CI catches a slowdown of several
+        // times, and a release is held to the budget itself (#612).
+        let mut frames: Vec<Frame> = (0..200)
+            .map(|n| work_frame(1_000 + n * 17, 4, Some((DRAW, 4))))
+            .collect();
+        for frame in frames.iter_mut().take(5) {
+            frame.work = Duration::from_millis(20);
+        }
+        frames[100].longest = Some(("type", Duration::from_millis(40)));
+        assert!(budget(&frames, 1).is_err());
+        assert_eq!(
+            budget(&frames, 3),
+            Ok(
+                "p99 work 20.0 ms ≤ 50.1 ms (3 × 16.7 ms), longest piece 40.0 ms ≤ 99.0 ms (3 × 33.0 ms), after the first 1 s"
+                    .to_owned()
+            )
+        );
+        frames[100].longest = Some(("type", Duration::from_millis(120)));
+        assert_eq!(
+            budget(&frames, 3),
+            Err("type took 120.0 ms at 2.70 s > 99.0 ms (3 × 33.0 ms)".to_owned())
         );
     }
 
@@ -733,13 +778,13 @@ mod tests {
             .map(|n| work_frame(1_000 + n * 17, 4, Some((DRAW, 4))))
             .collect();
         frames[50].interval = Duration::from_secs(1);
-        assert!(budget(&frames).is_ok());
+        assert!(budget(&frames, 1).is_ok());
     }
 
     #[test]
     fn a_run_with_nothing_after_the_first_second_is_not_within_the_budget() {
         assert_eq!(
-            budget(&[work_frame(500, 1, None)]),
+            budget(&[work_frame(500, 1, None)], 1),
             Err("no frames after the first 1 s to judge".to_owned())
         );
     }

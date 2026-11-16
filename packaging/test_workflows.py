@@ -156,6 +156,21 @@ def workflows():
     return sorted(name for name in os.listdir(WORKFLOWS) if name.endswith((".yml", ".yaml")))
 
 
+class BenchmarksInCi(unittest.TestCase):
+    """CI holds the benchmarks to the CI tier, generous ceilings and growth with size, since a
+    shared runner's speed varies by about 1.5x from run to run; the budgets themselves are a
+    release's (#612)."""
+
+    def test_the_engine_benches_are_judged_for_ci(self):
+        bench = "\n".join(jobs(read("ci.yml"))["bench"])
+        self.assertIn("run: cargo xtask bench ci", bench)
+        self.assertNotIn("cargo bench", bench, "the tier judges what the bench measured")
+
+    def test_typing_is_held_to_the_ci_ceiling(self):
+        typing = "\n".join(jobs(read("ci.yml"))["typing"])
+        self.assertRegex(typing, r"ADOCFOUNDRY_TYPING_TIER: ci\b")
+
+
 class WorkflowsAreReproducible(unittest.TestCase):
     """A run uses the same actions and tools next month as today, and a hung job is stopped."""
 
