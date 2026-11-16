@@ -20,6 +20,8 @@ pub use fonts::{FontFamily, FontSource};
 pub use look::{
     Border, BorderSides, BoxLook, RunningLook, StyleLook, TitlePageLook, WordLook, MAPPED_KEYS,
 };
+pub use template::{Template, TemplateError, TemplatePage, MAX_TEMPLATE_BYTES};
+pub use unzip::UnzipError;
 
 mod body;
 mod drawing;
@@ -28,13 +30,16 @@ mod inline;
 mod labels;
 mod look;
 mod media;
+mod merge;
 mod numbering;
 mod package;
 mod pages;
 mod parts;
 mod table;
+mod template;
 #[cfg(feature = "test-support")]
 pub mod testing;
+mod unzip;
 mod xml;
 mod zip;
 
@@ -314,6 +319,15 @@ pub fn write_docx(
     for warning in &fonts.warnings {
         writer.warn(None, warning.clone());
     }
+    // What a template held that the export leaves out.
+    for warning in options
+        .look
+        .template
+        .iter()
+        .flat_map(|template| &template.warnings)
+    {
+        writer.warn(None, warning.clone());
+    }
     let relationship = |id: &str, kind, target: &str| package::Relationship {
         id: id.to_owned(),
         kind,
@@ -351,13 +365,44 @@ pub fn write_docx(
     ];
     let mut parts = Vec::new();
     let footnotes = writer.footnote_count > 0;
-    if let Some(numbering) = writer.numbering.part() {
+    let template = options.look.template.as_deref();
+    // A template's numbering is kept whether or not the export writes a list: its styles may
+    // name it.
+    let numbering = match template.and_then(|template| template.numbering.as_deref()) {
+        Some(theirs) => Some(merge::numbering_part(
+            theirs,
+            writer.numbering.part().as_deref(),
+        )),
+        None => writer.numbering.part(),
+    };
+    if let Some(numbering) = numbering {
         document_relationships.push(relationship("rId3", parts::NUMBERING, "numbering.xml"));
+        // A template's picture bullets.
+        let mut relationships = Vec::new();
+        for (id, target) in template
+            .iter()
+            .flat_map(|template| &template.numbering_relationships)
+        {
+            if let template::TemplateTarget::Picture(index) = target {
+                writer.template_media.insert(*index);
+                relationships.push(package::Relationship {
+                    id: id.clone(),
+                    kind: parts::IMAGE,
+                    target: template.map_or_else(String::new, |template| {
+                        template.media[*index]
+                            .name
+                            .trim_start_matches("word/")
+                            .to_owned()
+                    }),
+                    external: false,
+                });
+            }
+        }
         parts.push(package::Part {
             name: "word/numbering.xml".to_owned(),
             content_type: parts::NUMBERING_TYPE,
             data: numbering,
-            relationships: Vec::new(),
+            relationships,
         });
     }
     if footnotes {
@@ -369,12 +414,29 @@ pub fn write_docx(
             relationships: links(body::Part::FOOTNOTES),
         });
     }
-    if !fonts.is_empty() {
+    // A template's own font table, with the fonts it embeds, when the look names none.
+    let template_fonts = template
+        .and_then(|template| template.fonts.as_ref())
+        .filter(|_| fonts.is_empty());
+    if !fonts.is_empty() || template_fonts.is_some() {
         document_relationships.push(relationship("rId5", parts::FONT_TABLE, "fontTable.xml"));
+    }
+    if let Some(theme) = template.and_then(|template| template.theme.as_ref()) {
+        document_relationships.push(relationship("rId6", template::THEME, "theme/theme1.xml"));
+        parts.push(package::Part {
+            name: "word/theme/theme1.xml".to_owned(),
+            content_type: template::THEME_TYPE,
+            data: theme.clone(),
+            relationships: Vec::new(),
+        });
     }
     document_relationships.extend(links(body::Part::DOCUMENT));
     // Odd and even pages differ only when the body has running content of its own for them.
-    let odd_even = options.running.odd_even && !writer.running_parts.is_empty();
+    let odd_even = if template.is_some() {
+        writer.odd_even
+    } else {
+        options.running.odd_even && !writer.running_parts.is_empty()
+    };
     for (id, kind, target) in std::mem::take(&mut writer.document_links) {
         document_relationships.push(package::Relationship {
             id,
@@ -383,13 +445,56 @@ pub fn write_docx(
             external: false,
         });
     }
+    let template_media = |index: usize| {
+        template
+            .and_then(|template| template.media.get(index))
+            .map_or_else(String::new, |media| {
+                media
+                    .name
+                    .strip_prefix("word/")
+                    .unwrap_or(&media.name)
+                    .to_owned()
+            })
+    };
     for running in std::mem::take(&mut writer.running_parts) {
+        let mut relationships = links(running.part);
+        relationships.extend(
+            running
+                .template
+                .into_iter()
+                .map(|(id, target)| match target {
+                    template::TemplateTarget::Picture(index) => package::Relationship {
+                        id,
+                        kind: parts::IMAGE,
+                        target: template_media(index),
+                        external: false,
+                    },
+                    template::TemplateTarget::Link(url) => package::Relationship {
+                        id,
+                        kind: parts::HYPERLINK,
+                        target: url,
+                        external: true,
+                    },
+                }),
+        );
         parts.push(package::Part {
             name: running.name,
             content_type: running.content_type,
             data: running.data,
-            relationships: links(running.part),
+            relationships,
         });
+    }
+    if let Some(template) = template {
+        for index in std::mem::take(&mut writer.template_media) {
+            if let Some(media) = template.media.get(index) {
+                parts.push(package::Part {
+                    name: media.name.clone(),
+                    content_type: media.content_type,
+                    data: media.data.clone(),
+                    relationships: Vec::new(),
+                });
+            }
+        }
     }
     parts.extend(media.into_iter().map(|part| package::Part {
         name: part.name,
@@ -410,13 +515,35 @@ pub fn write_docx(
             package::Part {
                 name: "word/styles.xml".to_owned(),
                 content_type: parts::STYLES_TYPE,
-                data: parts::styles(writer.width, &options.styles, &options.look, &fonts),
+                data: {
+                    let ours = parts::styles(writer.width, &options.styles, &options.look, &fonts);
+                    match template {
+                        Some(template) => merge::styles_part(
+                            &template.styles,
+                            &String::from_utf8_lossy(&ours),
+                            |id| parts::written_look(&options.styles, id),
+                            &StyleLook {
+                                font: options.styles.body_font.clone(),
+                                size: options.styles.body_size,
+                                ..StyleLook::default()
+                            },
+                        ),
+                        None => ours,
+                    }
+                },
                 relationships: Vec::new(),
             },
             package::Part {
                 name: "word/settings.xml".to_owned(),
                 content_type: parts::SETTINGS_TYPE,
-                data: parts::settings(footnotes, odd_even, writer.wrote_toc, fonts.embeds()),
+                data: parts::settings(
+                    footnotes,
+                    odd_even,
+                    writer.wrote_toc,
+                    fonts.embeds()
+                        || template_fonts
+                            .is_some_and(|fonts| fonts.embeds && !options.fonts_named_only),
+                ),
                 relationships: Vec::new(),
             },
         ],
@@ -443,6 +570,43 @@ pub fn write_docx(
             data,
             relationships: Vec::new(),
         }));
+    } else if let Some(theirs) = template_fonts.filter(|_| options.fonts_named_only) {
+        // `[docx] embed_fonts = false`: the template's families named, none embedded.
+        parts.push(package::Part {
+            name: "word/fontTable.xml".to_owned(),
+            content_type: parts::FONT_TABLE_TYPE,
+            data: merge::without_embeds(&theirs.table),
+            relationships: Vec::new(),
+        });
+    } else if let Some(theirs) = template_fonts {
+        parts.push(package::Part {
+            name: "word/fontTable.xml".to_owned(),
+            content_type: parts::FONT_TABLE_TYPE,
+            data: theirs.table.clone(),
+            relationships: theirs
+                .fonts
+                .iter()
+                .enumerate()
+                .map(|(index, (id, _))| package::Relationship {
+                    id: id.clone(),
+                    kind: parts::FONT,
+                    target: format!("fonts/template-font{}.odttf", index + 1),
+                    external: false,
+                })
+                .collect(),
+        });
+        parts.extend(
+            theirs
+                .fonts
+                .iter()
+                .enumerate()
+                .map(|(index, (_, data))| package::Part {
+                    name: format!("word/fonts/template-font{}.odttf", index + 1),
+                    content_type: parts::FONT_TYPE,
+                    data: data.clone(),
+                    relationships: Vec::new(),
+                }),
+        );
     }
     parts.push(package::Part {
         name: "docProps/core.xml".to_owned(),

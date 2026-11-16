@@ -525,7 +525,7 @@ fn write_style(
 }
 
 /// The look written `[docx.styles]` keys give each style, laid over a theme's.
-fn written_look(overrides: &StyleOverrides, id: &str) -> StyleLook {
+pub(crate) fn written_look(overrides: &StyleOverrides, id: &str) -> StyleLook {
     let heading = id == "Title"
         || id == "Subtitle"
         || id == "TOCHeading"

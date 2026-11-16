@@ -88,6 +88,7 @@ mod resolve {
         Template {
             name: String,
             path: PathBuf,
+            template: Box<adoc_docx::Template>,
         },
     }
 
@@ -107,7 +108,7 @@ mod resolve {
                         ThemeSource::Bundled(_) => None,
                     },
                 },
-                Self::Template { name, path } => ExportLook {
+                Self::Template { name, path, .. } => ExportLook {
                     kind: LookKind::Template,
                     name: name.clone(),
                     path: Some(path.clone()),
@@ -131,16 +132,37 @@ mod resolve {
                     look.fonts = theme_fonts(theme, fonts_dirs, access);
                     look
                 }
-                Self::None | Self::Template { .. } => adoc_docx::WordLook::default(),
+                Self::Template { template, .. } => {
+                    adoc_docx::WordLook::from_template(template.as_ref().clone())
+                }
+                Self::None => adoc_docx::WordLook::default(),
             }
         }
 
         /// The page the look gives: a PDF theme's, with the page's `pdf-page-size`,
-        /// `pdf-page-layout` and `pdf-page-margin` over it, as PDF export reads them.
+        /// `pdf-page-layout` and `pdf-page-margin` over it, as PDF export reads them, or a
+        /// template's last section's.
         pub(crate) fn page(&self, attributes: &BTreeMap<String, String>) -> Option<PageGeometry> {
             match self {
                 Self::PdfTheme { theme, .. } => Some(adoc_theme::page_geometry(theme, attributes)),
-                Self::None | Self::Template { .. } => None,
+                Self::Template { template, .. } => template.page().map(|page| {
+                    let points = |twips: u32| f64::from(twips) / 20.0;
+                    let (width, height) = if page.landscape {
+                        (page.height, page.width)
+                    } else {
+                        (page.width, page.height)
+                    };
+                    let margins = page.margins;
+                    PageGeometry {
+                        width: points(width),
+                        height: points(height),
+                        margin: [margins.top, margins.right, margins.bottom, margins.left]
+                            .map(points),
+                        landscape: page.landscape,
+                        warnings: Vec::new(),
+                    }
+                }),
+                Self::None => None,
             }
         }
     }
@@ -234,9 +256,35 @@ mod resolve {
                 }
                 LookChoice::Template(name) => {
                     let path = self.template_path(&name, attributes, page)?;
-                    Ok(ResolvedLook::Template { name, path })
+                    let template = self.read_template(&path)?;
+                    Ok(ResolvedLook::Template {
+                        name,
+                        path,
+                        template: Box::new(template),
+                    })
                 }
             }
+        }
+
+        /// The template at `path`, read through the engine's file access, its size checked
+        /// before it is read.
+        fn read_template(&self, path: &Path) -> Result<adoc_docx::Template, String> {
+            let failed = |why: &dyn std::fmt::Display| {
+                format!("the Word template {} cannot be used: {why}", path.display())
+            };
+            let size = std::fs::metadata(path)
+                .map_err(|error| failed(&error))?
+                .len();
+            if size > adoc_docx::MAX_TEMPLATE_BYTES as u64 {
+                return Err(failed(&adoc_docx::TemplateError::TooLarge(
+                    usize::try_from(size).unwrap_or(usize::MAX),
+                )));
+            }
+            let bytes = self
+                .file_access
+                .read(path)
+                .map_err(|error| failed(&error))?;
+            adoc_docx::Template::read(&bytes).map_err(|error| failed(&error))
         }
 
         /// The Word template `name` means: a path when it ends in `.dotx` or `.docx` (relative

@@ -14,17 +14,15 @@ adoc-theme.workspace = true
 crc32fast.workspace = true
 flate2.workspace = true
 resvg.workspace = true
+roxmltree.workspace = true
 sha2.workspace = true
-# `testing`, for tests here and in the engine.
-roxmltree = { workspace = true, optional = true }
 
 [features]
 # The package reader and validator in `testing`, for tests that read what was written.
-test-support = ["dep:roxmltree"]
+test-support = []
 
 [dev-dependencies]
 adoc-docx = { path = ".", features = ["test-support"] }
-roxmltree.workspace = true
 tempfile.workspace = true
 
 [lints]

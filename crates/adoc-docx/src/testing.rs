@@ -389,7 +389,15 @@ pub fn assert_valid_package(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
             .filter(|node| node.has_tag_name((W, "font")))
         {
             let name = font.attribute((W, "name")).expect("a font has a name");
-            assert!(families.insert(name), "font {name} twice in the font table");
+            // A family embedded once; a template's table may list a name more than once, a
+            // charset each (LibreOffice writes Symbol so).
+            let embeds = font
+                .children()
+                .any(|node| node.is_element() && node.tag_name().name().starts_with("embed"));
+            assert!(
+                !embeds || families.insert(name),
+                "font {name} embedded twice in the font table"
+            );
             for embed in font
                 .children()
                 .filter(|node| node.is_element() && node.tag_name().name().starts_with("embed"))
@@ -681,4 +689,123 @@ pub fn package<'a>(entries: impl IntoIterator<Item = (&'a str, &'a [u8])>) -> Ve
         zip.add(name, data).unwrap();
     }
     zip.finish().unwrap()
+}
+
+/// A two-by-two PNG.
+pub const TINY_PNG: [u8; 74] = [
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 2, 8, 2, 0,
+    0, 0, 253, 212, 154, 115, 0, 0, 0, 17, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 0, 68, 12,
+    96, 242, 63, 0, 27, 242, 3, 253, 243, 231, 75, 177, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96,
+    130,
+];
+
+const NS: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:v="urn:schemas-microsoft-com:vml""#;
+const PACKAGE_RELS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+const OFFICE_RELS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const WORD_TYPE: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml";
+
+/// The relationships part holding `relationships`: `(id, type's last segment, target,
+/// external)`.
+pub fn relationships(relationships: &[(&str, &str, &str, bool)]) -> String {
+    let mut xml = format!(r#"<?xml version="1.0"?><Relationships xmlns="{PACKAGE_RELS}">"#);
+    for (id, kind, target, external) in relationships {
+        xml.push_str(&format!(
+            r#"<Relationship Id="{id}" Type="{OFFICE_RELS}/{kind}" Target="{target}"{}/>"#,
+            if *external {
+                r#" TargetMode="External""#
+            } else {
+                ""
+            }
+        ));
+    }
+    xml.push_str("</Relationships>");
+    xml
+}
+
+/// A small corporate Word template for tests, as its entries, to change before
+/// [`package`]ing them: a Letter page with its own margins; styles with a `heading 1` of its own,
+/// a style of its own and Arial for the body; numbering; a theme; a font table; a header with
+/// text and a picture; a footer with a `PAGE` field split across runs and a link; and a body
+/// of its own, which an export never shows.
+pub fn template_entries() -> BTreeMap<String, Vec<u8>> {
+    let types = format!(
+        r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="{WORD_TYPE}.template.main+xml"/><Override PartName="/word/styles.xml" ContentType="{WORD_TYPE}.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="{WORD_TYPE}.numbering+xml"/><Override PartName="/word/settings.xml" ContentType="{WORD_TYPE}.settings+xml"/><Override PartName="/word/fontTable.xml" ContentType="{WORD_TYPE}.fontTable+xml"/><Override PartName="/word/header1.xml" ContentType="{WORD_TYPE}.header+xml"/><Override PartName="/word/footer1.xml" ContentType="{WORD_TYPE}.footer+xml"/><Override PartName="/word/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/></Types>"#
+    );
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document {NS}><w:body><w:p><w:r><w:t>TEMPLATE BODY TEXT</w:t></w:r></w:p><w:sectPr><w:headerReference w:type="default" r:id="rId6"/><w:footerReference w:type="default" r:id="rId7"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1000" w:right="1100" w:bottom="1200" w:left="1300" w:header="500" w:footer="600" w:gutter="0"/></w:sectPr></w:body></w:document>"#
+    );
+    let styles = format!(
+        r#"<?xml version="1.0"?><w:styles {NS}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="20"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:color w:val="1F4E79"/><w:sz w:val="36"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="CorporateNote"><w:name w:val="Corporate Note"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Header"><w:name w:val="header"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Footer"><w:name w:val="footer"/><w:basedOn w:val="Normal"/></w:style></w:styles>"#
+    );
+    let numbering = format!(
+        r#"<?xml version="1.0"?><w:numbering {NS}><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1)"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#
+    );
+    let header = format!(
+        r#"<?xml version="1.0"?><w:hdr {NS}><w:p><w:pPr><w:pStyle w:val="Header"/></w:pPr><w:r><w:t>CORPORATE HEADER</w:t></w:r><w:r><w:pict><v:shape style="width:24pt;height:24pt"><v:imagedata r:id="rIdLogo" o:title="" xmlns:o="urn:schemas-microsoft-com:office:office"/></v:shape></w:pict></w:r></w:p></w:hdr>"#
+    );
+    let footer = format!(
+        r#"<?xml version="1.0"?><w:ftr {NS}><w:p><w:pPr><w:pStyle w:val="Footer"/></w:pPr><w:r><w:t xml:space="preserve">Page </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PA</w:instrText></w:r><w:r><w:instrText xml:space="preserve">GE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:hyperlink r:id="rIdSite"><w:r><w:t>example.com</w:t></w:r></w:hyperlink></w:p></w:ftr>"#
+    );
+    let entries: Vec<(&str, Vec<u8>)> = vec![
+        ("[Content_Types].xml", types.into_bytes()),
+        (
+            "_rels/.rels",
+            relationships(&[("rId1", "officeDocument", "word/document.xml", false)]).into_bytes(),
+        ),
+        ("word/document.xml", document.into_bytes()),
+        (
+            "word/_rels/document.xml.rels",
+            relationships(&[
+                ("rId1", "styles", "styles.xml", false),
+                ("rId2", "numbering", "numbering.xml", false),
+                ("rId3", "settings", "settings.xml", false),
+                ("rId4", "theme", "theme/theme1.xml", false),
+                ("rId5", "fontTable", "fontTable.xml", false),
+                ("rId6", "header", "header1.xml", false),
+                ("rId7", "footer", "footer1.xml", false),
+            ])
+            .into_bytes(),
+        ),
+        ("word/styles.xml", styles.into_bytes()),
+        ("word/numbering.xml", numbering.into_bytes()),
+        (
+            "word/settings.xml",
+            format!(r#"<?xml version="1.0"?><w:settings {NS}/>"#).into_bytes(),
+        ),
+        (
+            "word/theme/theme1.xml",
+            br#"<?xml version="1.0"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Corporate"><a:themeElements/></a:theme>"#.to_vec(),
+        ),
+        (
+            "word/fontTable.xml",
+            format!(r#"<?xml version="1.0"?><w:fonts {NS}><w:font w:name="Arial"/></w:fonts>"#)
+                .into_bytes(),
+        ),
+        ("word/header1.xml", header.into_bytes()),
+        (
+            "word/_rels/header1.xml.rels",
+            relationships(&[("rIdLogo", "image", "media/logo.png", false)]).into_bytes(),
+        ),
+        ("word/footer1.xml", footer.into_bytes()),
+        (
+            "word/_rels/footer1.xml.rels",
+            relationships(&[("rIdSite", "hyperlink", "https://example.com/", true)]).into_bytes(),
+        ),
+        ("word/media/logo.png", TINY_PNG.to_vec()),
+    ];
+    entries
+        .into_iter()
+        .map(|(name, data)| (name.to_owned(), data))
+        .collect()
+}
+
+/// The [`template_entries`] packaged, after `change` has changed them.
+pub fn template(change: impl FnOnce(&mut BTreeMap<String, Vec<u8>>)) -> Vec<u8> {
+    let mut entries = template_entries();
+    change(&mut entries);
+    package(
+        entries
+            .iter()
+            .map(|(name, data)| (name.as_str(), data.as_slice())),
+    )
 }

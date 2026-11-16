@@ -1672,6 +1672,16 @@ impl Engine {
             (None, _) => settings.landscape,
         };
         let margins = settings.margins;
+        let mut look = look;
+        // A template's headers or footers give way to those `[docx]` wrote.
+        if let Some(template) = look.template.as_mut() {
+            for (header, key) in [(true, "header"), (false, "footer")] {
+                if written(key) && template.has_running(header) {
+                    std::sync::Arc::make_mut(template).without_running(header);
+                }
+            }
+        }
+        let template_page = look.template.as_ref().and_then(|template| template.page());
         let running = look.running.clone();
         let running = running.as_ref();
         let side = |key: &str, written_value: u32, index: usize| match page {
@@ -1688,11 +1698,17 @@ impl Engine {
                 right: side("margins.right", margins.right, 1),
                 bottom: side("margins.bottom", margins.bottom, 2),
                 left: side("margins.left", margins.left, 3),
-                header: match running.and_then(|running| running.header_distance) {
+                header: match running
+                    .and_then(|running| running.header_distance)
+                    .or(template_page.map(|page| page.margins.header))
+                {
                     Some(distance) if !written("margins.header") => distance,
                     _ => margins.header,
                 },
-                footer: match running.and_then(|running| running.footer_distance) {
+                footer: match running
+                    .and_then(|running| running.footer_distance)
+                    .or(template_page.map(|page| page.margins.footer))
+                {
                     Some(distance) if !written("margins.footer") => distance,
                     _ => margins.footer,
                 },

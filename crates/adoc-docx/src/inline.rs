@@ -77,7 +77,8 @@ impl Writer<'_> {
         }
         self.xml.open("w:rPr", &[]);
         if let Some(style) = format.style {
-            self.xml.empty("w:rStyle", &[("w:val", style)]);
+            let style = self.style_id(style);
+            self.xml.empty("w:rStyle", &[("w:val", &style)]);
         }
         if format.bold {
             self.xml.empty("w:b", &[]);
@@ -408,7 +409,8 @@ impl Writer<'_> {
         self.xml.open("w:footnote", &[("w:id", &id.to_string())]);
         self.xml.open("w:p", &[]);
         self.xml.open("w:pPr", &[]);
-        self.xml.empty("w:pStyle", &[("w:val", "FootnoteText")]);
+        let style = self.style_id("FootnoteText");
+        self.xml.empty("w:pStyle", &[("w:val", &style)]);
         self.xml.close("w:pPr");
         self.xml.open("w:r", &[]);
         self.run_properties(mark);

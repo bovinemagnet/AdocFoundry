@@ -26,7 +26,8 @@ impl Writer<'_> {
         self.close_tables();
         self.xml.open("w:tbl", &[]);
         self.xml.open("w:tblPr", &[]);
-        self.xml.empty("w:tblStyle", &[("w:val", style)]);
+        let style = self.style_id(style);
+        self.xml.empty("w:tblStyle", &[("w:val", &style)]);
         self.xml
             .empty("w:tblW", &[("w:w", "5000"), ("w:type", "pct")]);
         self.xml.empty(

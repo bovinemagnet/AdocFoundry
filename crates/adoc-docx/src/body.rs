@@ -93,6 +93,12 @@ pub(crate) struct Writer<'a> {
     /// The drawings written, for their ids, which are unique in the document.
     pub(crate) drawings: u32,
     pub(crate) numbering: Numbering,
+    /// The ids a template gives the export's styles, where they differ.
+    style_ids: BTreeMap<String, String>,
+    /// A template's pictures its kept headers and footers show.
+    pub(crate) template_media: std::collections::BTreeSet<usize>,
+    /// Odd and even pages have different headers and footers.
+    pub(crate) odd_even: bool,
     pub(crate) bookmark_count: u32,
     /// Bookmarks written, so each is written once.
     pub(crate) placed: HashSet<String>,
@@ -152,6 +158,7 @@ impl<'a> Writer<'a> {
                 })
                 .collect(),
         };
+        let template = options.look.template.as_deref();
         let width = options
             .page_size()
             .0
@@ -179,7 +186,25 @@ impl<'a> Writer<'a> {
             media: Media::default(),
             pictures: vec![Vec::new(), Vec::new()],
             drawings: 0,
-            numbering: Numbering::default(),
+            numbering: template.map_or_else(Numbering::default, |template| {
+                Numbering::after(
+                    template
+                        .numbering
+                        .as_deref()
+                        .map_or((0, 0), crate::merge::numbering_ids),
+                )
+            }),
+            style_ids: template.map_or_else(BTreeMap::new, |template| {
+                let ours = crate::parts::styles(
+                    width,
+                    &crate::StyleOverrides::default(),
+                    &crate::WordLook::default(),
+                    &crate::fonts::Fonts::default(),
+                );
+                crate::merge::style_ids(&template.styles, &String::from_utf8_lossy(&ours))
+            }),
+            template_media: std::collections::BTreeSet::new(),
+            odd_even: false,
             bookmark_count: 0,
             placed: HashSet::new(),
             pending: Vec::new(),
@@ -446,12 +471,21 @@ impl<'a> Writer<'a> {
         self.xml.empty("w:bookmarkEnd", &[("w:id", &id)]);
     }
 
+    /// The id style `id` has in the document: a template's own id for it, where it has one.
+    pub(crate) fn style_id(&self, id: &str) -> String {
+        self.style_ids
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| id.to_owned())
+    }
+
     /// The paragraph that ends a table before another, or before a cell's or the body's end.
     pub(crate) fn close_tables(&mut self) {
         if self.after_table {
             self.xml.open("w:p", &[]);
             self.xml.open("w:pPr", &[]);
-            self.xml.empty("w:pStyle", &[("w:val", "TableSpacer")]);
+            let style = self.style_id("TableSpacer");
+            self.xml.empty("w:pStyle", &[("w:val", &style)]);
             self.xml.close("w:pPr");
             self.xml.close("w:p");
             self.after_table = false;
@@ -475,7 +509,8 @@ impl<'a> Writer<'a> {
         if properties {
             self.xml.open("w:pPr", &[]);
             if let Some(style) = style {
-                self.xml.empty("w:pStyle", &[("w:val", style)]);
+                let style = self.style_id(style);
+                self.xml.empty("w:pStyle", &[("w:val", &style)]);
             }
             if para.page_break_before {
                 self.xml.empty("w:pageBreakBefore", &[]);

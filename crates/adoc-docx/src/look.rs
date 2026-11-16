@@ -157,6 +157,8 @@ pub struct WordLook {
     pub back_cover: Option<PathBuf>,
     /// The fonts the look's families are, embedded where its styles name them.
     pub fonts: Vec<crate::FontFamily>,
+    /// A Word template's styles, numbering, theme, fonts, headers and footers.
+    pub template: Option<std::sync::Arc<crate::Template>>,
 }
 
 /// The theme keys a Word export reads, with the `<n>` of `heading_h<n>` written as `<n>`;
@@ -376,6 +378,16 @@ impl Keys<'_> {
 }
 
 impl WordLook {
+    /// The look of a Word template: its own styles, numbering, page, headers and footers,
+    /// with the export's styles added where it has none.
+    #[must_use]
+    pub fn from_template(template: crate::Template) -> Self {
+        Self {
+            template: Some(std::sync::Arc::new(template)),
+            ..Self::default()
+        }
+    }
+
     /// The look of a PDF theme, as far as Word can show it; `attributes` are the document's,
     /// which its running content may name.
     #[must_use]

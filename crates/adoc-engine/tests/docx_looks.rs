@@ -1,6 +1,7 @@
 //! A Word export's look: the PDF theme, a Word template or none, chosen by the export, a
 //! profile or the settings. The Word looks PRD (`docs/prd/PRD-AdocFoundry_DOCX_Themes.md`),
-//! §9 tests 2 (`docx_look_follows_precedence`) and 3 (`docx_settings_apply_over_the_look`).
+//! §9 tests 2 (`docx_look_follows_precedence`), 3 (`docx_settings_apply_over_the_look`),
+//! 8 (`docx_template_is_used`) and 9 (`docx_template_is_untrusted`).
 
 #![cfg(feature = "docx")]
 
@@ -32,7 +33,11 @@ fn workspace(settings: &str, header: &str) -> (tempfile::TempDir, PathBuf, Engin
         "extends: default\npage:\n  layout: landscape\n",
     )
     .unwrap();
-    fs::write(root.join("themes/corporate.dotx"), b"PK\x05\x06").unwrap();
+    fs::write(
+        root.join("themes/corporate.dotx"),
+        adoc_docx::testing::template(|_| {}),
+    )
+    .unwrap();
     fs::write(root.join("page.adoc"), format!("= Page\n{header}\nText.\n")).unwrap();
     fs::write(root.join(".adocfoundry.toml"), settings).unwrap();
     let mut settings = Settings::load(None, Some(&root)).unwrap();
@@ -238,6 +243,251 @@ fn docx_settings_apply_over_the_look() {
         workspace("[pdf]\ntheme = \"narrow\"\nthemes_dir = \"themes\"\n", "");
     let (_, document) = export(&mut engine, &root, None).unwrap();
     assert!(document.contains(LETTER));
+
+    // A template's page and footer give way to what the settings wrote, key by key.
+    let settings = "[pdf]\nthemes_dir = \"themes\"\n\n[docx]\nlook = \"template\"\n\
+                    template = \"corporate\"\n\n[docx.margins]\ntop = \"30mm\"\n\n\
+                    [docx.footer]\ncenter = \"Written {page-number}\"\n";
+    let (_directory, root, mut engine) = workspace(settings, "");
+    let (summary, document) = export(&mut engine, &root, None).unwrap();
+    assert_eq!(look(&summary).0, LookKind::Template);
+    assert!(
+        document.contains(LETTER),
+        "the template's paper: {document}"
+    );
+    assert!(
+        document.contains(
+            r#"w:top="1701" w:right="1100" w:bottom="1200" w:left="1300" w:header="500" w:footer="600""#
+        ),
+        "{document}"
+    );
+    let entries =
+        adoc_docx::testing::assert_valid_package(&fs::read(root.join("page.docx")).unwrap());
+    let footers: Vec<&str> = entries
+        .keys()
+        .filter(|name| name.starts_with("word/footer"))
+        .map(|name| adoc_docx::testing::text(&entries, name))
+        .collect();
+    assert!(footers.iter().any(|footer| footer.contains("Written")));
+    assert!(footers.iter().all(|footer| !footer.contains("example.com")));
+    // The header nobody wrote is still the template's.
+    assert!(adoc_docx::testing::text(&entries, "word/header1.xml").contains("CORPORATE HEADER"));
+}
+
+#[test]
+fn docx_template_is_used() {
+    let settings = "[pdf]\nthemes_dir = \"themes\"\n";
+    let (_directory, root, mut engine) = workspace(settings, "");
+    fs::write(
+        root.join("page.adoc"),
+        "= Page\n\nText.\n\n== Steps\n\n. One\n. Two\n\n----\ncode\n----\n",
+    )
+    .unwrap();
+    let (summary, document) = export(
+        &mut engine,
+        &root,
+        Some(LookChoice::Template("corporate".to_owned())),
+    )
+    .unwrap();
+    assert_eq!(look(&summary), (LookKind::Template, "corporate".to_owned()));
+    assert_eq!(
+        summary.look.as_ref().unwrap().path.as_deref(),
+        Some(root.join("themes/corporate.dotx").as_path())
+    );
+    assert!(summary.diagnostics.is_empty(), "{:?}", summary.diagnostics);
+    let entries =
+        adoc_docx::testing::assert_valid_package(&fs::read(root.join("page.docx")).unwrap());
+    let text = |name: &str| adoc_docx::testing::text(&entries, name);
+
+    // Its styles, with the export's added where it has none; its numbering, then the export's.
+    let styles = text("word/styles.xml");
+    assert!(styles.contains(r#"<w:color w:val="1F4E79"/><w:sz w:val="36"/>"#));
+    assert!(styles.contains(r#"w:styleId="CorporateNote""#));
+    assert!(styles.contains(r#"w:styleId="SourceCode""#));
+    assert!(text("word/numbering.xml").contains(r#"<w:num w:numId="2">"#));
+    assert!(document.contains(r#"<w:numId w:val="2"/>"#));
+    // Its page, headers and footers, theme and font table; nothing of its body.
+    assert!(document.contains(LETTER), "{document}");
+    assert!(!document.contains("TEMPLATE BODY TEXT"));
+    assert!(text("word/header1.xml").contains("CORPORATE HEADER"));
+    assert!(entries.contains_key("word/media/template1.png"));
+    assert!(entries.contains_key("word/theme/theme1.xml"));
+    assert!(text("word/fontTable.xml").contains("Arial"));
+}
+
+#[test]
+fn docx_template_is_untrusted() {
+    let settings = "[pdf]\nthemes_dir = \"themes\"\n";
+    let (_directory, root, mut engine) = workspace(settings, "");
+    let write =
+        |name: &str, bytes: Vec<u8>| fs::write(root.join("themes").join(name), bytes).unwrap();
+    let edited = |name: &'static str, from: &'static str, to: &'static str| {
+        adoc_docx::testing::template(move |entries| {
+            let text = String::from_utf8(entries[name].clone())
+                .unwrap()
+                .replace(from, to);
+            entries.insert(name.to_owned(), text.into_bytes());
+        })
+    };
+    let failure = |engine: &mut Engine, name: &str| {
+        export(engine, &root, Some(LookChoice::Template(name.to_owned()))).unwrap_err()
+    };
+
+    // Refused, failing the export with the file and the reason.
+    write(
+        "macros.dotx",
+        edited(
+            "[Content_Types].xml",
+            "officedocument.wordprocessingml.template.main+xml",
+            "ms-word.template.macroEnabledTemplate.main+xml",
+        ),
+    );
+    let error = failure(&mut engine, "macros");
+    assert!(
+        error.contains("macros.dotx") && error.contains("macros"),
+        "{error}"
+    );
+    write(
+        "project.dotx",
+        adoc_docx::testing::template(|entries| {
+            entries.insert("word/vbaProject.bin".to_owned(), vec![1; 8]);
+        }),
+    );
+    assert!(failure(&mut engine, "project").contains("macros"));
+    write("huge.dotx", vec![0; adoc_docx::MAX_TEMPLATE_BYTES + 1]);
+    assert!(failure(&mut engine, "huge").contains("too large"));
+    write(
+        "broken.dotx",
+        edited("word/styles.xml", "</w:styles>", "</w:style>"),
+    );
+    let error = failure(&mut engine, "broken");
+    assert!(
+        error.contains("word/styles.xml") && error.contains("not well formed"),
+        "{error}"
+    );
+
+    // Left out with a warning: a picture linked from outside, an altChunk, a field that reads
+    // a file. Nothing of them reaches the export.
+    write(
+        "linked.dotx",
+        adoc_docx::testing::template(|entries| {
+            entries.insert(
+                "word/_rels/header1.xml.rels".to_owned(),
+                adoc_docx::testing::relationships(&[(
+                    "rIdLogo",
+                    "image",
+                    "https://tracker.example/pixel.png",
+                    true,
+                )])
+                .into_bytes(),
+            );
+            entries.insert(
+                "word/_rels/footer1.xml.rels".to_owned(),
+                adoc_docx::testing::relationships(&[
+                    ("rIdSite", "hyperlink", "https://example.com/", true),
+                    ("rIdChunk", "aFChunk", "chunk.html", false),
+                ])
+                .into_bytes(),
+            );
+            entries.insert("word/chunk.html".to_owned(), b"<p>chunk</p>".to_vec());
+        }),
+    );
+    let (summary, _) = export(
+        &mut engine,
+        &root,
+        Some(LookChoice::Template("linked".to_owned())),
+    )
+    .unwrap();
+    let messages: Vec<&str> = summary
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("tracker.example")),
+        "{messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("chunk.html")),
+        "{messages:?}"
+    );
+    let bytes = fs::read(root.join("page.docx")).unwrap();
+    let entries = adoc_docx::testing::assert_valid_package(&bytes);
+    for (name, data) in &entries {
+        let data = String::from_utf8_lossy(data);
+        assert!(
+            !data.contains("tracker.example") && !data.contains("chunk"),
+            "{name}"
+        );
+    }
+    assert!(!entries.contains_key("word/media/template1.png"));
+
+    // A link's id used as a picture to fetch.
+    write(
+        "fetching.dotx",
+        adoc_docx::testing::template(|entries| {
+            entries.insert(
+                "word/_rels/header1.xml.rels".to_owned(),
+                adoc_docx::testing::relationships(&[
+                    ("rIdLogo", "image", "media/logo.png", false),
+                    (
+                        "rIdTrack",
+                        "hyperlink",
+                        "https://tracker.example/p.png",
+                        true,
+                    ),
+                ])
+                .into_bytes(),
+            );
+            let header = String::from_utf8(entries["word/header1.xml"].clone())
+                .unwrap()
+                .replace(r#"r:id="rIdLogo""#, r#"r:id="rIdLogo" r:href="rIdTrack""#);
+            entries.insert("word/header1.xml".to_owned(), header.into_bytes());
+        }),
+    );
+    let (summary, _) = export(
+        &mut engine,
+        &root,
+        Some(LookChoice::Template("fetching".to_owned())),
+    )
+    .unwrap();
+    assert!(summary
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains("rIdTrack")));
+    let entries =
+        adoc_docx::testing::assert_valid_package(&fs::read(root.join("page.docx")).unwrap());
+    assert!(entries
+        .values()
+        .all(|data| !String::from_utf8_lossy(data).contains("tracker.example")));
+
+    write(
+        "including.dotx",
+        edited(
+            "word/footer1.xml",
+            "> PA<",
+            "> INCLUDETEXT \"C:/secret.txt\" <",
+        ),
+    );
+    let (summary, _) = export(
+        &mut engine,
+        &root,
+        Some(LookChoice::Template("including".to_owned())),
+    )
+    .unwrap();
+    assert!(summary
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains("INCLUDETEXT")));
+    let entries =
+        adoc_docx::testing::assert_valid_package(&fs::read(root.join("page.docx")).unwrap());
+    assert!(entries
+        .values()
+        .all(|data| !String::from_utf8_lossy(data).contains("secret")));
 }
 
 /// A book of two pages in `brand`'s look, from `tests/fixtures/docx/themes`, with `settings`
