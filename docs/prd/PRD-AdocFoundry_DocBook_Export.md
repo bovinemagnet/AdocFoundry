@@ -1,0 +1,251 @@
+# PRD: AdocFoundry — DocBook Export
+
+| Field | Value |
+| --- | --- |
+| Status | Draft, 2026-11-16; not yet approved for implementation. The open decisions in §14 are settled in the work package they affect |
+| Date | 2026-11-16 |
+| Scope | A native publication backend that writes semantic DocBook 5.2.1 XML, with its referenced assets, for a page, an Antora component version or selected navigation files, entirely in Rust, through the engine, CLI, desktop app and MCP server |
+| Repository | [bovinemagnet/AdocFoundry](https://github.com/bovinemagnet/AdocFoundry) |
+| Standard | [DocBook 5.2.1 schemas](https://docbook.org/schemas/docbook/) (RELAX NG and Schematron); [DocBook: The Definitive Guide, 5.2.1](https://tdg.docbook.org/tdg/5.2.1/index.html) |
+| Related work | Epic #615; work packages #649 to #657 (§12). #619 (the shared publication plan, from the DOCX epic #613). Separate exports, never prerequisites: #613 DOCX, #614 EPUB, #616 Kindle |
+| Related design | `docs/design/DESIGN-AdocFoundry_Architecture.md`; `AGENTS.md`; the DOCX, EPUB and Kindle export PRDs in `docs/prd/`; `docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md` (PDF export); `cargo xtask layers` |
+| Existing code | `crates/adoc-engine/src/export.rs`, `crates/adoc-engine/src/profiles.rs`; `crates/adoc-render/src/view.rs` |
+
+## 1. Purpose and problem
+
+AdocFoundry publishes a page or an Antora book as PDF. Some publishing pipelines do not want a finished rendering at all: they want structured XML to feed their own toolchain, where a house stylesheet, a translation system or a content management system takes over. DocBook is the long-standing XML vocabulary for technical books, and many such pipelines read it.
+
+Add a native Rust DocBook exporter: a single AsciiDoc page as a DocBook `article`, or an Antora component version or explicit navigation selection as a structured `book`, in **DocBook 5.2.1 XML**. It preserves chapters, sections, titles, metadata, lists, technical tables, source code, admonitions, footnotes, cross-references, figures, diagrams and STEM, writes the media the document refers to beside it, and reports source-located warnings, straight from AdocFoundry's resolved view data.
+
+**DocBook is semantic XML, not a rendered publication.** Page headers, footers and page numbers are outside the exporter by design: the downstream DocBook toolchain controls pagination and appearance.
+
+This is publication. It is not DocBook import, a DocBook preview or a DocBook processor.
+
+## 2. Goals
+
+1. Export one page as an `article` and one component version or navigation selection as a `book`, with the same content selection, order and deduplication as the PDF exporter.
+2. Write well-formed, deterministic XML in the DocBook namespace with the correct version, a valid article or book hierarchy and `info` metadata.
+3. Keep meaning as DocBook elements: lists, CALS tables, program listings, admonitions, footnotes and figures, never flattened text and never converted HTML.
+4. Keep references sound when many pages become one book: unique `xml:id` values and no dangling `linkend`.
+5. Make the output portable: every local `fileref` resolves to a file written beside the XML, by a relative path.
+6. Run every stage in process as Rust code (§7).
+7. State the validation coverage honestly: full schema validation only if it is really performed, otherwise partial structural validation described as such.
+8. Make publication repeatable through `[docbook]` settings and `[docbook.profiles.<name>]`, independent of every other format's settings.
+9. Offer the same export through the desktop app, the CLI and a write-gated MCP tool, all through `adoc-engine`.
+10. Never lose content silently: an unsupported construct, a missing asset or an unexported link target gives a diagnostic with its source location.
+
+## 3. Non-goals
+
+- DocBook input or import, a DocBook live preview, and any transformation *from* DocBook to PDF, HTML or DOCX.
+- XSLT themes, page styling and anything else that belongs to the downstream processor. No page headers, footers or page numbers are written.
+- Fetching remote images, DocBook extensions and customisation layers.
+- Output split into several XML files joined by XInclude. The first release writes one XML document and one assets folder.
+- Depending on another format's exporter. DocBook shares the engine's selection and preparation with DOCX (#613), EPUB (#614) and Kindle (#616), never their serialisers or style rules.
+- Requiring `xmllint`, `jing`, an XSLT processor, Java, Python or any other tool, to export or to run the tests, and downloading a schema.
+
+## 4. User workflows
+
+**Export a page.** With a page open, choose Export Page as DocBook…, pick a file, and receive `guide.xml` with `guide_assets/` beside it when the page has images. Diagnostics appear as they do for a PDF export.
+
+**Export a book.** Choose Export Component as DocBook… for a component version; the book follows the effective navigation order, with parts, chapters and sections.
+
+**Publish a profile.** Define `[docbook.profiles.manual]` once, then run `adocfoundry-cli docbook --profile manual` locally or in CI, with `--fail-on warning` to gate on diagnostics.
+
+**An agent exports.** With `--allow-write`, an MCP client calls `export_docbook` for a page, component or profile, under the same root confinement as `export_pdf`.
+
+**The pipeline takes over.** The XML and its assets folder are handed to a DocBook toolchain, which renders, translates or stores them. Nothing in them points back at the author's checkout.
+
+## 5. Functional requirements
+
+### 5.1 Output and publication structure
+
+- A selected page becomes an `article`; a component version or navigation selection becomes a `book`. Each has `info` with title, subtitle, authors, revision, keywords and description where available.
+- The start page or preface, navigation list parts, page chapters, navigation-only headings, nested sections and the depth of document-level headings map to a valid DocBook hierarchy. Where the schema fixes the placement of `title`, `info`, `part` and `chapter`, the output follows it exactly.
+- Selection matches the shared plan: `ExportTarget::{Page, File, Component, Navigation}`, the start page, navigation order, page deduplication, navigation-only grouping, component and version scoping and effective attributes.
+- Document attributes and profile overrides are kept. Metadata is never fabricated; a page without a title gets a documented fallback and a diagnostic.
+- The XML is UTF-8, in the DocBook namespace, with a `version` attribute on the root that the schema accepts. Text and attribute values are escaped, characters XML 1.0 forbids are refused or normalised, and the order of everything is predictable. No `DOCTYPE` and no entity declaration is written.
+
+### 5.2 Content
+
+- Paragraphs; emphasis and strong; inline code; hard breaks; superscript and subscript; keyboard, menu and button markup; quotations.
+- Itemised, ordered, variable and nested lists; callout groups; a `procedure` only where the source indicates one.
+- Source and literal blocks as `programlisting` and `screen`, with whitespace, language and callouts kept; sidebars, examples and open blocks; note, tip, warning, caution and important admonitions; captions and thematic breaks.
+- Footnotes as `footnote`, and a footnote referenced again as `footnoteref`, with stable identifiers.
+- Tables as **CALS** tables with header and footer rows, alignments, column widths, `colspan` and `rowspan` (as column and row spans), captions and blocks inside cells. Every combination is held to the DocBook table model, not to HTML's.
+- Raw passthrough is never written as XML: it is escaped and warned about. Nothing is converted from HTML.
+- An unsupported node keeps its text where possible and gives a warning with its source span; content never disappears.
+
+### 5.3 Identifiers and links
+
+- `xml:id` values for publication roots, chapters, sections, anchors, figures and tables are deterministic, valid XML names, unique across the publication and derived from Antora resource identities and anchors, not from checkout paths. Collisions, anchors repeated on different pages and Unicode identifiers are handled.
+- `ViewInline::Xref` and `ResolvedLink` are reused; nothing is resolved a second time. A reference to a target in the publication becomes a `linkend`. A target outside it uses its published URL as an `xlink:href` where one is configured and the content model allows, otherwise readable text and a diagnostic. External links are `xlink:href` links.
+- The author's link text is kept. A dangling `linkend` is never written.
+- Cross-chapter links, local anchors, repeated footnote references, figure and table identifiers, and references to content in a partial (under the page that includes it) are covered.
+- After writing, a reference pass checks that identifiers are unique and that every reference and asset resolves, with source ranges in its diagnostics.
+
+### 5.4 Images, diagrams and STEM
+
+- Images become `figure` or `informalfigure` with `mediaobject`, `imageobject` and `imagedata fileref`, a caption and a text alternative from `ViewImage`. Each `fileref` is a stable relative path.
+- The default output is `<name>.xml` with a companion `<name>_assets/` folder. The engine resolves and copies existing PNG, JPEG and supported SVG files into a confined staging folder, storing identical content once. No absolute path and no path into the checkout appears in the XML.
+- A `reference` asset policy, which leaves `fileref` pointing at the original files and copies nothing, is offered beside the default `copy`, and is documented as not portable.
+- Diagrams the view pipeline rendered in process are used. The export starts no Graphviz, D2, PlantUML, image converter or downloader. A diagram that is not available keeps its source in the document and gives a diagnostic.
+- STEM becomes valid MathML where Rust code can produce it; otherwise the formula's source is kept as a `mathphrase` and a warning notes the loss of fidelity. Both inline and display formulas are covered.
+- Assets are resolved under the engine's file-access rules. Nothing is fetched from a network.
+
+### 5.5 Configuration
+
+- `[docbook]` holds defaults: the asset policy, the assets folder's suffix, structural preferences, the diagnostic threshold, an optional self-check after writing and the fallbacks.
+- `[docbook.profiles.<name>]` holds a publication: a `page`, `component` or `nav` selection, an `output`, `attributes` and DocBook options. It reuses `ProfileContent` and the output-path validation of `crates/adoc-engine/src/profiles.rs`, and no PDF theme data.
+- User and workspace settings follow the documented precedence. Unknown and invalid values are refused or warned about, and no setting gets round a path boundary.
+- A profile fails explicitly for a missing component, an unknown version, an output that cannot be written, an unexpected extension and an asset collision.
+- The PDF profile interfaces, `pdf-theme`, defaults and output paths are untouched.
+
+### 5.6 Front ends
+
+- **CLI:** `adocfoundry-cli docbook <file|component-dir> [--root <dir>] [--component [<version>@]<name>] --output <file.xml>` and `docbook --profile <name>`, with `--assets copy|reference` and `--fail-on none|warning|error`.
+- **Desktop:** Export Page as DocBook…, Export Component as DocBook… and Export DocBook Profile… in the menu and command palette, with the dialogs, progress, completion and diagnostics of the other exports. No DocBook preview.
+- **MCP:** `export_docbook`, typed, listed and callable only with `--allow-write`, with root confinement covering the XML and its assets folder, link refusal and the safe overwrite policy.
+- Every front end calls `adoc-engine`, selects the same sources and produces the same XML and the same list of assets; none reaches `adoc-docbook` directly. The output and asset paths are reported, and never a path outside the workspace.
+
+## 6. Existing code to reuse
+
+| Code | What it gives | How DocBook uses it |
+| --- | --- | --- |
+| `crates/adoc-engine/src/export.rs` | `ExportTarget`, the article and book plan, parsing of unsaved buffers, view construction, the diagram lifecycle, worker completion, cancellation, diagnostics and source spans | Through the format-neutral plan #619 extracts. No second page selection and no copied book planner |
+| `crates/adoc-engine/src/profiles.rs` | `ProfileContent` and output-path validation | The selection model and path rules; no PDF option |
+| `crates/adoc-render/src/view.rs` | `ViewTree`, `ViewKind`, `ViewInline` (with `Xref`, `Link`, `FootnoteRef`), `ResolvedLink`, `ViewImage`, `DiagramView`, footnotes, attributes and source spans | The exporter's only input. AsciiDoc is not parsed a second time, and HTML is not an intermediate |
+| The PDF entry points in the CLI, the app and the MCP server | Commands, dialogs, notifications and the write gate | DocBook entry points sit beside them |
+
+## 7. Rust-only execution
+
+- Every stage of the export runs in process as Rust code. It never calls `xmllint`, `jing`, an XSLT processor, Java, Python, a converter or a publishing service, and downloads no schema. The same holds for the automated tests.
+- `adoc-docbook`'s own source is held to a forbidden-paths list in `xtask/src/layers.rs` (no process, no network), as `adoc-audit` and `adoc-impact` are.
+- New dependencies are pinned exactly, reviewed for licence, maintenance and the toolchain they need, and pass `cargo deny check`.
+- **Validation is described as what it is.** Well-formed XML is not schema conformance. If full RELAX NG and Schematron validation against the 5.2.1 schemas can be done by a permissively licensed Rust library in process, it is; if not, the self-check is called partial and the documentation lists exactly which constraints it covers.
+- Evidence from DocBook consumers, checked by hand, is welcome and recorded apart (§11), and is never needed to build, export or test.
+
+## 8. Architecture
+
+```text
+L4   adocfoundry / adocfoundry-cli / adoc-mcp
+                    | format-specific commands and presentation
+L3   adoc-engine    | shared publication plan (#619); parse + views + diagrams;
+                    | asset staging; safe output; DocBook settings and profiles
+L2   adoc-docbook   | DocBook 5.2.1 XML writer, identifiers and references,
+                    | asset references, structural validation
+L2   adoc-render    | shared ViewTree / ViewKind / ViewInline / source spans
+L1   existing parser, DOM, Antora and index crates
+```
+
+| Crate | Responsibility |
+| --- | --- |
+| `adoc-docbook` (L2, new) | Turn a publication's view trees and typed options into DocBook XML and a list of the assets it refers to, check its identifiers and references, and report typed diagnostics with source locations. Headless; no engine, worker, UI or LSP types, no process and no network |
+| `adoc-render` (L2) | Unchanged |
+| `adoc-engine` (L3) | The shared publication plan; the optional `docbook` feature; DocBook commands, arguments and events; `[docbook]` settings and profiles; staging and copying assets; the worker lifecycle; safe output |
+| `adocfoundry`, `adocfoundry-cli`, `adoc-mcp` (L4) | The entry points of §5.6 |
+
+- `adoc-docbook` sits at **L2**. It may depend on `adoc-render` through a new pair in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`, as `adoc-pdf` does, and on lower layers. It must not depend on `adoc-engine`, GPUI, Typst, `adoc-pdf` or another format's exporter.
+- The crate needs an entry in `LAYERS`, an entry in `[workspace.dependencies]`, and a mention in `AGENTS.md`, `README.md`, the design document and the developer documentation's crate table and diagram (`architecture.adoc`, `crate-layers.mmd`), which `every_crate_is_documented` in `xtask` checks.
+- The engine's `docbook` feature is opt-in and independent of `typst`, `git` and every other format's feature. It is off in `[workspace.dependencies]`, so each front end names it, and `adoc-ls` does not.
+
+## 9. Headless contracts
+
+Names are illustrative; DocBook 1/9 and 2/9 settle them and record the outcome in §15.
+
+- `adoc-docbook`: a `DocBookDocument` that is an `Article` or a `Book`, built from the plan's view trees and document facts; options; a result carrying the XML, the assets it names (each a source and its relative `fileref`) and the diagnostics. The crate writes no file: it names the assets and the engine copies them.
+- `adoc-engine`: DocBook export arguments with no PDF-only field, commands beside `export.pdf_page` and `export.pdf_component`, a blocking export for the CLI, cancellation and timeouts, progress, and completion as an `EngineEvent` consistent with `ExportFinished`. Publishing never modifies a source.
+- Diagnostics follow the existing `ExportDiagnostic` model, with severities that allow CI gating.
+
+## 10. Output safety, performance and reliability
+
+- The XML and the assets are staged beside their destination and put in place only when the whole export has succeeded. A failure, a worker panic or a cancellation leaves the source, the previous XML and the previous assets as they were.
+- A link as the output file or assets folder, a path that leaves the roots, an unexpected extension and a collision with unrelated files are refused.
+- Export runs on workers and never blocks the UI. Assembling a book is not superlinear in its pages, and views are not cloned needlessly.
+- Hostile input is handled without a panic or an unsafe result: markup in text, entities and `DOCTYPE` tricks, Unicode, truncated and invalid input, malicious paths and links that escape the roots.
+- The same input gives the same XML on every platform and from any checkout path.
+
+## 11. Tests and acceptance criteria
+
+Each test below exists under its name when its work package is done. All of them are Rust tests that run no other program.
+
+| # | Test | Package | What it shows |
+| --- | --- | --- | --- |
+| 1 | `docbook_root_is_wellformed_and_versioned` | DB1 | A minimal article and book are well formed, in the DocBook namespace, with the accepted `version` and `info` in its place |
+| 2 | `docbook_text_is_escaped` | DB1 | Escaping, Unicode and forbidden characters; no `DOCTYPE`, entity or raw passthrough; malformed metadata, empty output and inconsistent structure give errors or diagnostics |
+| 3 | `docbook_output_is_deterministic` | DB1 | Two exports of one input are the same bytes |
+| 4 | `docbook_and_pdf_select_the_same_pages` | DB2 | Article, component and navigation exports take the same pages in the same order as PDF, over several components and versions and with unsaved buffers |
+| 5 | `docbook_builds_alone` | DB2 | A build with `docbook` and no other format feature compiles neither Typst nor another exporter |
+| 6 | `docbook_failed_export_keeps_existing_output` | DB2 | A failed export, a worker panic, a link as the output and an invalid target leave the previous output and the source untouched |
+| 7 | `docbook_book_hierarchy_follows_the_plan` | DB3 | A version-aware fixture over several components gives an ordered book with the expected `part`, `chapter` and `section` nesting, unique headings, and the plan's deduplication and start page |
+| 8 | `docbook_article_has_metadata` | DB3 | A single page gives an `article` with its metadata; a missing title gives the fallback and a diagnostic |
+| 9 | `docbook_rich_content_uses_docbook_elements` | DB4 | Nested lists, code with callouts, admonitions, quotations and repeated footnotes are the proper elements |
+| 10 | `docbook_tables_are_cals` | DB4 | Header and footer rows, alignments, widths, merged cells and blocks in cells are valid CALS |
+| 11 | `docbook_unsupported_nodes_warn` | DB4 | An unsupported block gives a located warning and keeps its text; passthrough is escaped |
+| 12 | `docbook_assets_are_copied_and_relative` | DB5 | Every local `fileref` resolves to a file in the assets folder by a relative path; identical content is stored once; no absolute path appears |
+| 13 | `docbook_missing_media_is_reported` | DB5 | Missing media and an unavailable diagram give a located diagnostic; the caption and the text alternative remain |
+| 14 | `docbook_formulas_have_a_fallback` | DB5 | Inline and display formulas are MathML or a `mathphrase` with a warning, never absent |
+| 15 | `docbook_ids_are_unique_and_stable` | DB6 | Identifiers are valid, unique and the same across platforms, checkout paths and runs, with repeated anchors and Unicode |
+| 16 | `docbook_references_resolve` | DB6 | No missing or dangling `linkend`; links reach the intended chapters and sections; a target outside the publication is text or a URL |
+| 17 | `docbook_profiles_resolve_and_validate` | DB7 | Page, component and navigation profiles export the right documents; invalid settings, outputs and asset paths fail explicitly; precedence holds |
+| 18 | `docbook_settings_leave_pdf_unchanged` | DB7 | One book published as PDF and as DocBook with independent settings; the PDF profile tests are as before |
+| 19 | `docbook_cli_exports_and_gates` | DB8 | The CLI writes an article, a component book and a profile, with exit codes that follow `--fail-on` |
+| 20 | `docbook_mcp_export_is_write_gated` | DB8 | `export_docbook` is listed only with `--allow-write`, and confines both the XML and the assets folder |
+| 21 | `docbook_app_exports_through_engine` | DB8 | The desktop actions invoke the engine's commands and report completion and diagnostics |
+| 22 | `docbook_is_in_process` | DB9 | `adoc-docbook` names no process and no network path |
+| 23 | `docbook_reference_book_is_complete` | DB9 | The fixture book (several versions, the whole content vocabulary, merged CALS cells, code, repeated footnotes, links, figures, a diagram, a formula) exports with no unreported loss and no invalid link, against snapshots |
+| 24 | `docbook_hostile_input_is_safe` | DB9 | Markup in text, entity and `DOCTYPE` tricks, malicious paths, escaping links and a failure midway give no unsafe output and leave nothing behind |
+| 25 | `docbook_large_book_is_bounded` | DB9 | Books of about 100 and 1,000 pages export within an agreed time and memory budget, without superlinear growth |
+
+The XML snapshots use `insta`, as the CLI's and the engine's do. Evidence from DocBook consumers, inspected by hand, is recorded in `docs/qa/docbook.md`. The user guide carries a matrix of supported features, the known limits and the validation coverage of §7.
+
+Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo xtask layers` and `cargo deny check`.
+
+## 12. Work packages
+
+| WP | Deliverable | Issue |
+| --- | --- | --- |
+| DB1 | New `adoc-docbook` crate, XML emission and the 5.2.1 schema strategy | #649 (DocBook 1/9) |
+| DB2 | The shared Antora publication plan and the engine's export orchestration | #650 (DocBook 2/9) |
+| DB3 | Book and article hierarchy, navigation chapters and metadata | #651 (DocBook 3/9) |
+| DB4 | Rich AsciiDoc blocks and inline semantics as DocBook | #652 (DocBook 4/9) |
+| DB5 | Portable images, figures, diagrams, STEM and output assets | #653 (DocBook 5/9) |
+| DB6 | Publication-wide identifiers, cross-references and link integrity | #654 (DocBook 6/9) |
+| DB7 | DocBook settings, named publication profiles and safety | #655 (DocBook 7/9) |
+| DB8 | CLI, desktop and MCP entry points | #656 (DocBook 8/9) |
+| DB9 | Rust-only conformance, compatibility, regression and performance QA | #657 (DocBook 9/9) |
+
+Order: DB1 (the XML and validation decisions) and DB2 (the shared plan, with #619) first. DB3 follows; DB4, DB5 and DB6 then proceed independently on stable contracts. DB7 and DB8 come once the engine's interface is stable. DB9's schema-validation spike starts with DB1, and its release QA comes last.
+
+## 13. Definition of done
+
+1. An article and a version-aware Antora book produce deterministic, well-formed DocBook 5.2.1 XML with the correct publication hierarchy and metadata.
+2. The complex fixture keeps nested lists, CALS tables with column and row spans, code, admonitions, figures and their assets, diagrams, footnotes and valid internal cross-references, with explicit warnings where a fallback is used.
+3. Every link and asset reference in the XML is sound; path confinement, link refusal and the preservation of previous output on failure are tested.
+4. The app, the CLI and the MCP tool publish through the shared engine; the PDF, DOCX, EPUB and Kindle exporters stay independent.
+5. The Rust tests document the real validation coverage (RELAX NG and Schematron where feasible, otherwise structural validation marked as partial), and no external processor is ever invoked.
+
+## 14. Open decisions
+
+Each is settled before work starts on the package it affects, and the outcome is recorded in that package's pull request and in §15.
+
+- **The root's `version` value (DB1).** The schema release is 5.2.1; the value the root element carries is taken from the schema and its published examples, not guessed from the release's name.
+- **Schema validation (DB1, DB9).** Full RELAX NG and Schematron validation in Rust, or a partial structural self-check. Schematron in particular needs XPath evaluation. If the official schema files are kept in the repository as test fixtures, their licence and notice are recorded; they are never downloaded.
+- **XML writer (DB1).** `quick-xml`, already in the dependency tree, or a small in-house writer. `roxmltree`, also in the tree, can read the output back in tests.
+- **Replacing a file and a folder (DB2, DB5).** The other exporters rename one file into place. An XML document and an assets folder cannot be replaced in one step, so the staging, the order of replacement and what is left after a failure between the two need a rule. That rule also covers assets left over from a previous export.
+- **Book structure (DB3).** What becomes a `part`, a `chapter` and a `preface`: in particular navigation-only headings and the start page.
+- **Procedures (DB4).** What "semantically indicated" means for `procedure`: an explicit role on an ordered list, or never in the first release.
+- **Diagrams drawn by external tools (DB5).** This PRD starts no tool during a DocBook export, where a PDF export renders Graphviz, PlantUML and D2 diagrams through tools on `PATH`. Decide whether a diagram already in the cache from an earlier render may be used, and whether the four export PRDs should share one rule.
+- **Formulas (DB5).** Nothing in the workspace produces MathML; the view tree carries a formula's source and, with the `typst` feature, its typeset SVG. The first release can write a `mathphrase` with the source, add the SVG as an image where it exists, and leave MathML to a converter added later to `adoc-math`. The EPUB PRD has the same question.
+- **Asset names and the `reference` policy (DB5, DB7).** Whether copied assets keep their original names or take names from their content; and whether `reference`, which is not portable, is offered through MCP at all.
+- **Identifier scheme (DB6).** The exact derivation of `xml:id` from a resource identity and an anchor, and how a collision is resolved.
+- **Who extracts the shared plan (DB2).** #619 belongs to the DOCX epic and is now a prerequisite of four. Whichever epic starts first does the extraction, once.
+- **Profile sharing (DB7).** Whether a publication's content selection is declared once and named by each format's profiles, or repeated in each; shared with the other three export PRDs.
+
+## 15. Implementation notes
+
+None yet. Each work package records here where the implementation departs from this document and how the open decisions of §14 were settled.
+
+## 16. References
+
+- [DocBook schemas](https://docbook.org/schemas/docbook/) and the [5.2.1 release](https://cdn.docbook.org/schema/5.2.1/)
+- [DocBook: The Definitive Guide, 5.2.1](https://tdg.docbook.org/tdg/5.2.1/index.html)
