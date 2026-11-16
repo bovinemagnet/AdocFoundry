@@ -53,6 +53,10 @@ fn book_workspace_with(workspace_settings: &str) -> (tempfile::TempDir, PathBuf,
     let mut settings = Settings::load(None, Some(&root)).unwrap();
     settings.git.enabled = false;
     let mut engine = Engine::new(settings);
+    engine.set_diagrams(adoc_diagrams::Diagrams::with_providers(
+        adoc_diagrams::DiagramCache::new(directory.path().join("cache")),
+        vec![Box::new(adoc_diagrams::MermaidProvider::default())],
+    ));
     engine.open_workspace(vec![root.clone()]).unwrap();
     assert!(engine.wait_for_workers(WAIT));
     (directory, root, engine)
@@ -465,6 +469,66 @@ fn references_out_of_the_book_use_the_site_address() {
     assert!(
         summary.diagnostics.iter().any(|diagnostic| diagnostic.message
             == "the cross reference other::index.adoc leads outside the document and is exported as text"),
+        "{:?}",
+        summary.diagnostics
+    );
+}
+
+#[test]
+fn diagrams_are_rendered_and_embedded() {
+    let (directory, _root, mut engine) = book_workspace();
+    let output = directory.path().join("diagrams.docx");
+    let summary = engine
+        .export_docx_blocking(docx(book(), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let document = document_xml(&output);
+    assert!(document.contains("<wp:inline"), "the diagram is a picture");
+    assert!(
+        !document.contains("graph LR"),
+        "the diagram's source is not shown"
+    );
+    let relationships = part(&output, "word/_rels/document.xml.rels");
+    assert!(
+        relationships.contains(r#"Target="media/image1.png""#),
+        "{relationships}"
+    );
+    assert!(
+        summary
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("diagram")),
+        "{:?}",
+        summary.diagnostics
+    );
+}
+
+#[test]
+fn an_image_outside_the_roots_is_not_embedded() {
+    let (directory, root, mut engine) = book_workspace();
+    let outside = directory.path().join("outside.png");
+    fs::copy(
+        fixture("image-viewer/modules/ROOT/images/logo.png"),
+        &outside,
+    )
+    .unwrap();
+    let page = page(&root, "ROOT/pages/pictures.adoc");
+    fs::write(
+        &page,
+        format!("= Pictures\n\nimage::{}[Outside]\n", outside.display()),
+    )
+    .unwrap();
+    engine.set_file_access(adoc_engine::FileAccess::within([root.clone()]));
+    let output = root.join("pictures.docx");
+    let summary = engine
+        .export_docx_blocking(docx(ExportTarget::File(page), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(!document_xml(&output).contains("<wp:inline"));
+    assert!(document_xml(&output).contains("Outside"));
+    assert!(
+        summary
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("outside.png")),
         "{:?}",
         summary.diagnostics
     );

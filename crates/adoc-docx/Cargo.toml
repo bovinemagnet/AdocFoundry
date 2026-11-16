@@ -7,13 +7,14 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+adoc-core.workspace = true
 adoc-dom.workspace = true
 adoc-render.workspace = true
 crc32fast.workspace = true
 flate2.workspace = true
+resvg.workspace = true
 
 [dev-dependencies]
-adoc-core.workspace = true
 roxmltree.workspace = true
 tempfile.workspace = true
 
