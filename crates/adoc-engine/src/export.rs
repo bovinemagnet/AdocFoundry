@@ -215,6 +215,7 @@ enum Request {
     Docx(DocxExportArgs),
 }
 
+#[cfg(feature = "export")]
 impl Request {
     /// Whether the views exported need formulas rendered as images: a Word document's do.
     fn draws_formulas(&self) -> bool {
