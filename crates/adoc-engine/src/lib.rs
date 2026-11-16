@@ -16,6 +16,7 @@ mod deletion;
 mod discovery;
 mod doctor;
 mod document;
+mod docx_settings;
 mod edit;
 mod engine;
 mod error;
@@ -108,6 +109,9 @@ pub use deletion::{KeptDeletion, DELETED_DIR};
 pub use discovery::{IncomingReference, ReferenceKind, ResourceEntry, ResourceQuery};
 pub use doctor::{Doctor, DoctorLine, DoctorReport, DoctorSection, PROBE_TIMEOUT};
 pub use document::{DocumentId, OpenDocument};
+pub use docx_settings::{
+    DocxLine, DocxMargins, DocxPaper, DocxProfile, DocxSettings, DocxSlots, DocxStyles,
+};
 pub use edit::TextEdit;
 pub use engine::{Engine, INDEX_SETTLE, MAX_TEXT_FILE};
 pub use error::{ConflictKind, EngineError};

@@ -214,7 +214,7 @@ Each is settled before work starts on the package it affects, and the outcome is
 - **Repeated footnote references (D3).** A real Word footnote per reference, or one footnote and cross-references to it. *Settled in D3: one footnote, and `NOTEREF` fields to it (§14).*
 - **Table of contents (D5).** A `TOC` field alone, refreshed on opening, or a field with entries written in advance so the document reads correctly before any refresh. *Settled in D5: both, a field with its entries written, and Word asked to update fields on opening (§14).*
 - **Chapter titles in running content (D5).** `STYLEREF` fields, or static text per section. *Settled in D5: `STYLEREF` (§14).*
-- **Profile sharing (D6).** Whether a publication's content selection is declared once and named by both `[pdf.profiles]` and `[docx.profiles]`, or repeated in each.
+- **Profile sharing (D6).** Whether a publication's content selection is declared once and named by both `[pdf.profiles]` and `[docx.profiles]`, or repeated in each. *Settled in D6: repeated in each (§14).*
 
 ## 14. Implementation notes
 
@@ -377,6 +377,48 @@ The body is now written by `body.rs` (blocks), `inline.rs` (runs, links, footnot
   4. an even page, its header mirrored (logo left, title right) and its footer number at the left;
   5. an odd page, title left, logo right, the chapter's title left in the footer and `3 of 6` at the right;
   6. the back cover, with no running content.
+
+### D6 (#623): `[docx]` settings and profiles
+
+`crates/adoc-engine/src/docx_settings.rs` reads `[docx]` (its module documentation is the schema); the engine turns it into `DocxOptions` for each export (`Engine::docx_options`).
+
+- **`[docx]`, either layer.**
+  - Keys:
+    - `paper` (`a4`, `letter`) and `orientation` (`portrait`, `landscape`);
+    - `logo` (relative to the first root);
+    - `odd_even`;
+    - `[docx.margins]`: the four sides and the header and footer offsets, as `25mm`, `2.5cm`, `1in`, `72pt` or a number of points, at most 10 inches;
+    - `[docx.header]` and `[docx.footer]`: `left`, `centre` (or `center`) and `right`, with `[… .even]` and `[… .first]` tables;
+    - `[docx.styles]`: `body_font`, `heading_font` and `code_font` (1 to 31 characters), `body_size` (6 to 72 points), and `heading_colour` and `link_colour` (six hexadecimal digits, `#` optional; `color` spellings accepted).
+  - A workspace key replaces the user's. A header or footer table replaces that one's lines whole, so a workspace that sets `[docx.footer]` does not keep the user's even line.
+  - Unknown keys and values that cannot be used are warned about in the settings' usual form (`<file>: `docx.<key>`: <problem>`) and leave the default.
+  - The defaults are those of D5: A4, portrait, an inch of margin, the page number in the footer.
+- **Styles.** `DocxOptions::styles` (`StyleOverrides`) change `styles.xml`:
+  - the body font and size are the document defaults;
+  - the heading font and colour go on the title, subtitle, headings and the table of contents' heading;
+  - the code font goes on `CodeChar`, `Keyboard`, `SourceCode` and `LiteralBlock`;
+  - the link colour goes on `Hyperlink`.
+
+  `.dotx` templates remain out of scope (§3).
+- **Profiles: repeated in each format.**
+  - `[docx.profiles.<name>]` declares its own content (`page`, `component` or `nav`), `output`, `attributes`, and Word's own `paper` and `orientation`.
+  - The content and attribute parsing, and the content's resolution against the first root, are the PDF profiles' own (`profile_content`, `profile_attributes`, `profile_target`, `target_problems` in `profiles.rs`, refactored out of `parse_profile` without changing it). Nothing is shared at the level of a profile: a PDF profile and a DOCX profile of the same name are independent, and a book published in both repeats its one line of content.
+  - The cost is a repeated line; the gain is that neither format's profile can change the other's, and `[pdf.profiles]` keeps its meaning exactly.
+  - An `output` that is not a `.docx` file name, an unknown key (a PDF one such as `theme` included), more or fewer than one content key, and a bad `paper` or `orientation` leave the profile out with a warning.
+  - `Engine::docx_profile_export_args` resolves a profile as `profile_export_args` does: `<name>.docx` by default, refused when the output is outside the workspace. `docx_profile_problems` says what would stop it.
+  - `export.docx_profile` ("Export DOCX Profile…") exports one with `CommandArgs::Profile`.
+  - `DocxExportArgs` gains `paper` and `landscape`, a profile's.
+- **PDF unchanged.** `[pdf]`, its profiles, their default `<name>.pdf` and their precedence are as before. `docx_settings_leave_pdf_unchanged` loads the same `[pdf]` with and without `[docx]` and compares, and `a_pdf_profile_of_the_same_name_is_its_own` checks the engine side.
+- **Tests.**
+  - `docx_settings.rs`: every setting read, the layers, every unusable value warned about, the profiles.
+  - `tests/docx_export.rs`: `docx_profiles_resolve_and_validate`, covering:
+    - page, component and navigation profiles;
+    - the default output;
+    - an output outside the workspace, refused;
+    - a missing component, reported;
+    - a non-`.docx` output, warned about;
+    - an export through `export.docx_profile`, its document Letter landscape with the settings' margin, header and heading colour and the profile's author.
+  - `adoc-docx`: `style_overrides_change_the_document_s_styles`.
 
 ## 15. References
 

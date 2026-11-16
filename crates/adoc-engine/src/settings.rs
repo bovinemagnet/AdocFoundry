@@ -466,6 +466,8 @@ pub struct Settings {
     pub tools: ToolSettings,
     pub git: GitSettings,
     pub pdf: PdfSettings,
+    /// `[docx]`: Word documents' layout, styles and profiles, apart from `[pdf]`.
+    pub docx: crate::DocxSettings,
     pub updates: UpdateSettings,
     pub sidebar: SidebarSettings,
     pub history: HistorySettings,
@@ -844,6 +846,13 @@ impl Settings {
             for (key, value) in entries {
                 if section == "pdf" && key == "profiles" {
                     self.apply_profiles(&source, value);
+                    continue;
+                }
+                // Either layer: a workspace publishes its own documents.
+                if section == "docx" {
+                    for (name, problem) in crate::docx_settings::apply(&mut self.docx, key, value) {
+                        self.warn(&source, &name, &problem);
+                    }
                     continue;
                 }
                 if section == "quality" && key == "rules" {

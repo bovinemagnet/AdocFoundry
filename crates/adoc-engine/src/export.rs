@@ -91,6 +91,9 @@ pub struct DocxExportArgs {
     /// Attributes every page is read with before its own header, after Antora's, and that a
     /// book's own attributes take.
     pub attributes: Vec<(String, String)>,
+    /// The paper and orientation, in place of `[docx]`'s: a profile's.
+    pub paper: Option<crate::DocxPaper>,
+    pub landscape: Option<bool>,
 }
 
 /// A finished export.
@@ -317,7 +320,35 @@ pub(crate) fn register_export(registry: &mut CommandRegistry) {
             ),
             docx_command,
         );
+        register(
+            registry,
+            spec(
+                ids::EXPORT_DOCX_PROFILE,
+                "Export DOCX Profile…",
+                CommandCategory::Workspace,
+                None,
+                CommandContext::Always,
+            ),
+            docx_profile_command,
+        );
     }
+}
+
+/// Exports a Word publication profile to the output it names.
+#[cfg(feature = "docx")]
+fn docx_profile_command(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Profile(name) = args else {
+        return Err(EngineError::InvalidArguments {
+            command: ids::EXPORT_DOCX_PROFILE,
+            expected: "a profile name",
+        });
+    };
+    let args = engine.docx_profile_export_args(&name)?;
+    engine.start_export(Request::Docx(args), false)?;
+    Ok(CommandOutcome::Done)
 }
 
 #[cfg(feature = "docx")]
@@ -1417,16 +1448,7 @@ impl Engine {
         } = written;
         let failed = failed_diagrams(&arranged);
         let document = to_docx(arranged);
-        // A reference out of the document leads to its page on the site, as the PDF's do.
-        let options = adoc_docx::DocxOptions {
-            page_urls: self
-                .site_url()
-                .map(|site| self.page_urls(&site))
-                .unwrap_or_default(),
-            // Images, diagrams and formulas are read as the PDF's are.
-            access: self.file_access.clone(),
-            ..adoc_docx::DocxOptions::default()
-        };
+        let options = self.docx_options(&args);
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
         let crashed = move |error| WorkerMessage::ExportFinished {
@@ -1458,6 +1480,66 @@ impl Engine {
             });
             let _ = sender.send(WorkerMessage::ExportFinished { job, result });
         });
+    }
+}
+
+#[cfg(feature = "docx")]
+impl Engine {
+    /// How a document is written: `[docx]`, with the export's own paper and orientation.
+    fn docx_options(&self, args: &DocxExportArgs) -> adoc_docx::DocxOptions {
+        let settings = &self.settings.docx;
+        let line = |line: &crate::DocxLine| adoc_docx::Line {
+            left: line.left.clone(),
+            centre: line.centre.clone(),
+            right: line.right.clone(),
+        };
+        let slots = |slots: &crate::DocxSlots| adoc_docx::Slots {
+            odd: line(&slots.odd),
+            even: slots.even.as_ref().map(line),
+            first: slots.first.as_ref().map(line),
+        };
+        let margins = settings.margins;
+        let root = self.roots.first();
+        adoc_docx::DocxOptions {
+            paper: match args.paper.unwrap_or(settings.paper) {
+                crate::DocxPaper::A4 => adoc_docx::Paper::A4,
+                crate::DocxPaper::Letter => adoc_docx::Paper::Letter,
+            },
+            landscape: args.landscape.unwrap_or(settings.landscape),
+            margins: adoc_docx::Margins {
+                top: margins.top,
+                right: margins.right,
+                bottom: margins.bottom,
+                left: margins.left,
+                header: margins.header,
+                footer: margins.footer,
+            },
+            running: adoc_docx::Running {
+                header: slots(&settings.header),
+                footer: slots(&settings.footer),
+                odd_even: settings.odd_even,
+                logo: settings
+                    .logo
+                    .as_deref()
+                    .zip(root)
+                    .map(|(logo, root)| crate::normalize_path(&root.join(logo))),
+            },
+            styles: adoc_docx::StyleOverrides {
+                body_font: settings.styles.body_font.clone(),
+                heading_font: settings.styles.heading_font.clone(),
+                code_font: settings.styles.code_font.clone(),
+                body_size: settings.styles.body_size,
+                heading_colour: settings.styles.heading_colour.clone(),
+                link_colour: settings.styles.link_colour.clone(),
+            },
+            // A reference out of the document leads to its page on the site, as the PDF's do.
+            page_urls: self
+                .site_url()
+                .map(|site| self.page_urls(&site))
+                .unwrap_or_default(),
+            // Images, diagrams and formulas are read as the PDF's are.
+            access: self.file_access.clone(),
+        }
     }
 }
 

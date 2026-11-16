@@ -160,3 +160,68 @@ fn write_samples() {
     let (book, _) = written(&hostile);
     std::fs::write(folder.join("escaping.docx"), book).unwrap();
 }
+
+#[test]
+fn style_overrides_change_the_document_s_styles() {
+    let options = adoc_docx::DocxOptions {
+        styles: adoc_docx::StyleOverrides {
+            body_font: Some("Georgia".to_owned()),
+            heading_font: Some("Gill Sans <&>".to_owned()),
+            code_font: Some("Menlo".to_owned()),
+            body_size: Some(23),
+            heading_colour: Some("1F3864".to_owned()),
+            link_colour: Some("C00000".to_owned()),
+        },
+        ..adoc_docx::DocxOptions::default()
+    };
+    let mut bytes = Vec::new();
+    adoc_docx::write_docx(&common::article(PAGE), &options, &mut bytes).unwrap();
+    let entries = assert_valid_package(&bytes);
+    let styles = roxmltree::Document::parse(text(&entries, "word/styles.xml")).unwrap();
+    let w = common::W;
+    let style = |id: &str| {
+        styles
+            .descendants()
+            .find(|node| {
+                node.has_tag_name((w, "style")) && node.attribute((w, "styleId")) == Some(id)
+            })
+            .unwrap()
+    };
+    let value = |node: roxmltree::Node, element: &str, attribute: &str| {
+        node.descendants()
+            .find(|child| child.has_tag_name((w, element)))
+            .and_then(|child| child.attribute((w, attribute)))
+            .map(str::to_owned)
+    };
+    let defaults = styles
+        .descendants()
+        .find(|node| node.has_tag_name((w, "rPrDefault")))
+        .unwrap();
+    assert_eq!(
+        value(defaults, "rFonts", "ascii").as_deref(),
+        Some("Georgia")
+    );
+    assert_eq!(value(defaults, "sz", "val").as_deref(), Some("23"));
+    for level in ["Heading1", "Title"] {
+        assert_eq!(
+            value(style(level), "rFonts", "ascii").as_deref(),
+            Some("Gill Sans <&>")
+        );
+    }
+    assert_eq!(
+        value(style("Heading1"), "color", "val").as_deref(),
+        Some("1F3864")
+    );
+    assert_eq!(
+        value(style("CodeChar"), "rFonts", "ascii").as_deref(),
+        Some("Menlo")
+    );
+    assert_eq!(
+        value(style("SourceCode"), "rFonts", "ascii").as_deref(),
+        Some("Menlo")
+    );
+    assert_eq!(
+        value(style("Hyperlink"), "color", "val").as_deref(),
+        Some("C00000")
+    );
+}

@@ -67,6 +67,8 @@ fn docx(target: ExportTarget, output: &Path) -> DocxExportArgs {
         target,
         output: output.to_path_buf(),
         attributes: Vec::new(),
+        paper: None,
+        landscape: None,
     }
 }
 
@@ -532,4 +534,159 @@ fn an_image_outside_the_roots_is_not_embedded() {
         "{:?}",
         summary.diagnostics
     );
+}
+
+const PROFILES: &str = r#"
+[docx]
+paper = "letter"
+[docx.margins]
+top = "20mm"
+[docx.header]
+left = "{document-title}"
+[docx.styles]
+heading_colour = "1F3864"
+
+[docx.profiles.article]
+page = "guide/modules/ROOT/pages/install.adoc"
+
+[docx.profiles.book]
+component = "1.0@guide"
+output = "build/guide.docx"
+orientation = "landscape"
+attributes = { author = "Paul Snow" }
+
+[docx.profiles.selected]
+nav = ["guide/modules/admin/nav.adoc", "guide/modules/ROOT/nav.adoc"]
+
+[docx.profiles.escaping]
+page = "guide/modules/ROOT/pages/install.adoc"
+output = "../outside.docx"
+
+[docx.profiles.missing]
+component = "nothing"
+
+[docx.profiles.pdf]
+page = "guide/modules/ROOT/pages/install.adoc"
+output = "manual.pdf"
+"#;
+
+#[test]
+fn docx_profiles_resolve_and_validate() {
+    let (_directory, root, mut engine) = book_workspace_with(PROFILES);
+    // A profile whose output is not a `.docx` file is refused when read.
+    assert!(
+        engine
+            .settings()
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("docx.profiles.pdf")
+                && warning.contains("is not a .docx file")),
+        "{:?}",
+        engine.settings().warnings
+    );
+
+    let article = engine.docx_profile_export_args("article").unwrap();
+    assert_eq!(
+        article.target,
+        ExportTarget::File(page(&root, "ROOT/pages/install.adoc"))
+    );
+    assert_eq!(
+        article.output,
+        root.join("article.docx"),
+        "`<name>.docx` by default"
+    );
+    let book = engine.docx_profile_export_args("book").unwrap();
+    assert_eq!(
+        book.target,
+        ExportTarget::Component {
+            name: "guide".to_owned(),
+            version: Some("1.0".to_owned()),
+        }
+    );
+    assert_eq!(book.output, root.join("build/guide.docx"));
+    assert_eq!(book.landscape, Some(true));
+    assert_eq!(
+        book.attributes,
+        [("author".to_owned(), "Paul Snow".to_owned())]
+    );
+    let selected = engine.docx_profile_export_args("selected").unwrap();
+    assert_eq!(
+        selected.target,
+        ExportTarget::Navigation(vec![
+            page(&root, "admin/nav.adoc"),
+            page(&root, "ROOT/nav.adoc"),
+        ])
+    );
+
+    // Refused: an output outside the workspace, a profile that is not there; reported: content
+    // the workspace does not have.
+    assert!(matches!(
+        engine.docx_profile_export_args("escaping"),
+        Err(EngineError::Refused(_))
+    ));
+    assert!(matches!(
+        engine.docx_profile_export_args("absent"),
+        Err(EngineError::NotFound(_))
+    ));
+    assert_eq!(engine.docx_profile_problems("book"), Vec::<String>::new());
+    assert_eq!(
+        engine.docx_profile_problems("missing"),
+        ["its component nothing is not in the workspace"]
+    );
+    assert_eq!(engine.docx_profile_problems("escaping").len(), 1);
+
+    // Exported through the command, to the output it names.
+    let events = engine.subscribe();
+    engine
+        .invoke(
+            ids::EXPORT_DOCX_PROFILE,
+            CommandArgs::Profile("book".to_owned()),
+        )
+        .unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    let result = events
+        .try_iter()
+        .find_map(|event| match event {
+            EngineEvent::ExportFinished { output, result } => Some((output, result)),
+            _ => None,
+        })
+        .expect("the export finished");
+    assert_eq!(result.0, root.join("build/guide.docx"));
+    let summary = result.1.unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(summary.sources.len(), 8);
+
+    // `[docx]` and the profile shape the document: Letter, turned by the profile, the margin,
+    // the header and the heading colour from the settings.
+    let output = root.join("build/guide.docx");
+    let document = document_xml(&output);
+    assert!(
+        document.contains(r#"<w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/>"#),
+        "{document}"
+    );
+    assert!(document.contains(r#"w:top="1134""#));
+    let header = part(&output, "word/header1.xml");
+    assert!(header.contains("The Guide"), "{header}");
+    let styles = part(&output, "word/styles.xml");
+    assert!(styles.contains(r#"<w:color w:val="1F3864"/>"#));
+    // The core properties take the profile's author.
+    assert!(part(&output, "docProps/core.xml").contains("<dc:creator>Paul Snow</dc:creator>"));
+}
+
+#[cfg(feature = "typst")]
+#[test]
+fn a_pdf_profile_of_the_same_name_is_its_own() {
+    let settings = format!("{PROFILES}\n[pdf.profiles.book]\ncomponent = \"1.0@guide\"\n");
+    let (_directory, root, engine) = book_workspace_with(&settings);
+    let pdf = engine.profile_export_args("book").unwrap();
+    assert_eq!(pdf.output, root.join("book.pdf"), "still `<name>.pdf`");
+    assert!(
+        pdf.attributes.is_empty(),
+        "the DOCX profile's attributes are its own"
+    );
+    let docx = engine.docx_profile_export_args("book").unwrap();
+    assert_eq!(docx.output, root.join("build/guide.docx"));
+    assert!(matches!(
+        engine.profile_export_args("article"),
+        Err(EngineError::NotFound(_))
+    ));
 }
