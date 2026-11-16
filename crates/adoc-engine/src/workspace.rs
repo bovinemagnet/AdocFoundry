@@ -183,12 +183,12 @@ pub(crate) enum WorkerMessage {
         output: PathBuf,
         result: Result<(), String>,
     },
-    #[cfg(feature = "typst")]
+    #[cfg(feature = "export")]
     ExportParsed {
         job: u64,
         doms: Vec<(PathBuf, adoc_dom::Dom)>,
     },
-    #[cfg(feature = "typst")]
+    #[cfg(feature = "export")]
     ExportFinished {
         job: u64,
         result: Result<crate::ExportSummary, String>,
@@ -840,9 +840,9 @@ impl Engine {
                 built,
             } => self.impact_inspected(generation, result, built),
             WorkerMessage::HtmlExported { output, result } => self.html_exported(output, result),
-            #[cfg(feature = "typst")]
+            #[cfg(feature = "export")]
             WorkerMessage::ExportParsed { job, doms } => self.export_parsed(job, doms),
-            #[cfg(feature = "typst")]
+            #[cfg(feature = "export")]
             WorkerMessage::ExportFinished { job, result } => self.export_finished(job, result),
             #[cfg(feature = "typst")]
             WorkerMessage::PdfPreviewTypeset { preview, theme } => {

@@ -172,6 +172,7 @@ impl Engine {
         let result = result.map(|()| ExportSummary {
             output: output.clone(),
             pages: 1,
+            sources: Vec::new(),
             diagnostics: Vec::new(),
         });
         self.emit(EngineEvent::ExportFinished { output, result });

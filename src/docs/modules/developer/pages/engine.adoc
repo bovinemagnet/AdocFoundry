@@ -343,6 +343,9 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `Peek`, `E
 |`export.pdf_page`, `export.pdf_component`
 |Export the active page, or a component version, to PDF.
 
+|`export.docx_page`, `export.docx_component`
+|Export the active page, or a component version, as an editable Word document (DOCX); see <<the-export-service>>. They are registered only with the `docx` feature.
+
 |`export.html_page`
 |Export the active page as standalone HTML, with local images, diagrams and formula images embedded as `data:` URIs. It does not need the `typst` feature.
 
@@ -542,20 +545,34 @@ Only the active page has a shared parse, so the spell check of a background page
 [[the-export-service]]
 == The export service
 
-The engine exports a page, or a component version in navigation order, to PDF.
+The engine exports a page, or a component version in navigation order, to PDF or to DOCX, through one pipeline in `export.rs`.
 `export.pdf_page` and `export.pdf_component` take `CommandArgs::Export(ExportArgs)`, with an `ExportTarget`, the output path, an optional theme, the standards, a fonts directory and an optional path for the generated Typst.
+`export.docx_page` ("Export Page to Word…") and `export.docx_component` ("Export Component to Word…") take `CommandArgs::ExportDocx(DocxExportArgs)`, which has a `target`, an `output` and `attributes`, and nothing of PDF's: no theme, standards, fonts directory or Typst path.
 
+A job holds a `Request`, PDF or DOCX, over the same plan.
+The plan is an article, or a book made from the component version's navigation (or the given navigation files, in their order), with the start page as a preface when the navigation does not list it, and each page once.
 The pages are parsed on a worker from their open buffers or files, their views are built on the engine thread, and their diagrams are rendered.
-Once no diagram is pending, a worker typesets with `adoc-pdf`, writes the file and reports.
-The result arrives as `EngineEvent::ExportFinished`, with an `ExportSummary` (the page count and diagnostics) or the error.
+Once no diagram is pending, `arrange` puts the views in the plan's order, and only then is the document made for its format.
+For PDF, a worker typesets with `adoc-pdf`, writes the file and reports.
+For DOCX, a worker writes the package with `adoc_docx::write_docx` and reports.
+The result arrives as `EngineEvent::ExportFinished`, with an `ExportSummary` (the page count, the diagnostics and `sources`) or the error.
+`sources` lists the AsciiDoc pages exported, in order, and is empty for HTML.
+For DOCX, the page count is the number of AsciiDoc pages, since Word lays out its own pages.
 
-`export.html_page` takes the same `CommandArgs::Export` with an `ExportTarget::Page` and an output path (the PDF options are ignored), returns at once and reports with `EngineEvent::ExportFinished` (an `ExportSummary` with one page and no diagnostics).
+A DOCX output must be a `.docx` file name; a folder or a link there is refused before anything is read, and again when writing.
+The package is written to a temporary file beside the output, with its folders created as for PDF, and renamed over the output only once it is complete.
+A failure therefore leaves whatever was there before and no temporary file.
+The page's `pdf-title` applies to PDF only; a DOCX book takes the component version's title.
+Formulas have no artwork without Typst.
+
+`export.html_page` takes the same `CommandArgs::Export` with an `ExportTarget::Page` and an output path (the PDF options are ignored), returns at once and reports with `EngineEvent::ExportFinished` (an `ExportSummary` with one page, no diagnostics and no `sources`).
 It is implemented in `html_export.rs`: `Engine::render_now` starts the page's render, and the crate-private `finished_preview` tells when it is complete, diagrams included.
 The HTML comes from `adoc_render::to_html`, and `adoc_render::embed_local_files` then replaces local `file://` image addresses with `data:` URIs.
 Remote images, unreadable files and files that are not images keep their addresses.
 It exports the open buffer, and needs no Typst.
 
 `Engine::export_blocking(args, timeout)` runs the same job and waits, for the command-line `pdf`, and `Engine::is_exporting()` is true while a job is in flight.
+`Engine::export_docx_blocking(args, timeout)` is to DOCX what `export_blocking` is to PDF; without the `docx` feature it fails as an unknown command, as `export_blocking` does without `typst`.
 The settings' `[pdf]` table supplies the default theme, the themes and fonts directories, the site address and the standards.
 `Engine::profile_export_args(name)` turns a publication profile into export arguments.
 `Engine::profile_problems(name)` says what would stop a profile from exporting, without exporting: an unknown profile, an output outside the workspace, content not in it, or a theme not found.

@@ -142,7 +142,7 @@ pub struct Engine {
     pub(crate) graph: crate::graph::GraphState,
     pub(crate) local_history: crate::local_history::LocalHistory,
     pub(crate) html_exports: crate::html_export::HtmlExports,
-    #[cfg(feature = "typst")]
+    #[cfg(feature = "export")]
     pub(crate) export: crate::export::ExportState,
     #[cfg(feature = "typst")]
     pub(crate) pdf_preview: crate::pdf_preview::PdfPreviewState,
@@ -267,7 +267,7 @@ impl Engine {
             graph: crate::graph::GraphState::default(),
             local_history: crate::local_history::LocalHistory::default(),
             html_exports: crate::html_export::HtmlExports::default(),
-            #[cfg(feature = "typst")]
+            #[cfg(feature = "export")]
             export: crate::export::ExportState::default(),
             #[cfg(feature = "typst")]
             pdf_preview: crate::pdf_preview::PdfPreviewState::default(),

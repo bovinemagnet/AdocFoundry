@@ -616,7 +616,7 @@ impl Engine {
     }
 
     /// The parse input of the page at `path`: its open buffer when it is open, else the file.
-    #[cfg(feature = "typst")]
+    #[cfg(feature = "export")]
     pub(crate) fn parse_input_for_path(&self, path: &Path) -> Option<OwnedInput> {
         if let Some(id) = self.document_for_path(path) {
             return self.parse_input(id);
@@ -956,7 +956,7 @@ impl Engine {
     }
 
     /// Whether the diagram `checksum` is rendering or waiting to.
-    #[cfg(feature = "typst")]
+    #[cfg(feature = "export")]
     pub(crate) fn diagram_rendering(&self, checksum: &str) -> bool {
         self.rendered.rendering.contains(checksum)
     }
@@ -1017,7 +1017,7 @@ impl Engine {
             self.publish_preview(id);
         }
         self.visual_diagram_rendered(checksum);
-        #[cfg(feature = "typst")]
+        #[cfg(feature = "export")]
         self.export_diagram_rendered(checksum);
     }
 }

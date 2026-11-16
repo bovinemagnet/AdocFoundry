@@ -35,7 +35,7 @@ cargo run -p adocfoundry-cli -- check tests/fixtures/antora-single-component
 
 `default-members` is the app crate, so a bare `cargo test` covers only the app: pass `--workspace` or `-p <crate>`.
 
-`adoc-engine`'s features `typst` (PDF export and typeset STEM) and `git` (`adoc-git`) are on by default for the crate but off in `[workspace.dependencies]`, so each front end names the ones it wants; `adoc-ls` builds neither by default, which `cargo xtask layers` checks.
+`adoc-engine`'s features `typst` (PDF export and typeset STEM), `docx` (DOCX export through `adoc-docx`, with no Typst) and `git` (`adoc-git`) are on by default for the crate but off in `[workspace.dependencies]`, so each front end names the ones it wants; `adoc-ls` builds none of them by default, and the engine built with `docx` and without `typst` compiles neither `adoc-pdf` nor Typst, which `cargo xtask layers` checks. `typst` and `docx` each turn on `export`, the pipeline they share; front ends never name `export`.
 
 ## Coding Style and Conventions
 

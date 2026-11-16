@@ -1,0 +1,415 @@
+//! DOCX 2/8: the engine's DOCX export over the publication plan PDF export uses. PRD
+//! `docs/prd/PRD-AdocFoundry_DOCX_Export.md` §10, tests 4 (`docx_and_pdf_select_the_same_pages`)
+//! and 5 (`docx_failed_export_keeps_existing_output`).
+
+#![cfg(feature = "docx")]
+
+use std::{
+    collections::BTreeMap,
+    fs,
+    io::Read,
+    path::{Path, PathBuf},
+    time::Duration,
+};
+
+use adoc_engine::{
+    commands::ids, CommandArgs, DocxExportArgs, Engine, EngineError, EngineEvent, ExportTarget,
+    Settings,
+};
+
+const WAIT: Duration = Duration::from_secs(120);
+const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+fn fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures")
+        .join(name)
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+/// The book fixture copied to a temporary directory and indexed.
+fn book_workspace() -> (tempfile::TempDir, PathBuf, Engine) {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("book");
+    copy_tree(&fixture("pdf/book"), &root);
+    let mut settings = Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    (directory, root, engine)
+}
+
+fn docx(target: ExportTarget, output: &Path) -> DocxExportArgs {
+    DocxExportArgs {
+        target,
+        output: output.to_path_buf(),
+        attributes: Vec::new(),
+    }
+}
+
+fn book() -> ExportTarget {
+    ExportTarget::Component {
+        name: "guide".to_owned(),
+        version: Some("1.0".to_owned()),
+    }
+}
+
+/// The package's `word/document.xml`, read through its ZIP central directory.
+fn document_xml(path: &Path) -> String {
+    let bytes = fs::read(path).unwrap();
+    let end = bytes.len() - 22;
+    assert_eq!(&bytes[end..end + 4], b"PK\x05\x06");
+    let read16 = |at: usize| usize::from(u16::from_le_bytes([bytes[at], bytes[at + 1]]));
+    let read32 = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
+    let mut at = read32(end + 16);
+    for _ in 0..read16(end + 10) {
+        let (compressed, name_length) = (read32(at + 20), read16(at + 28));
+        let local = read32(at + 42);
+        let name = &bytes[at + 46..at + 46 + name_length];
+        at += 46 + name_length + read16(at + 30) + read16(at + 32);
+        if name == b"word/document.xml" {
+            let start = local + 30 + read16(local + 26) + read16(local + 28);
+            let mut text = String::new();
+            flate2::read::DeflateDecoder::new(&bytes[start..start + compressed])
+                .read_to_string(&mut text)
+                .unwrap();
+            return text;
+        }
+    }
+    panic!("no word/document.xml in {}", path.display());
+}
+
+/// The document's paragraphs: each one's style and text.
+fn paragraphs(path: &Path) -> Vec<(Option<String>, String)> {
+    let xml = document_xml(path);
+    let document = roxmltree::Document::parse(&xml).unwrap();
+    document
+        .descendants()
+        .filter(|node| node.has_tag_name((W, "p")))
+        .map(|paragraph| {
+            let style = paragraph
+                .descendants()
+                .find(|node| node.has_tag_name((W, "pStyle")))
+                .and_then(|node| node.attribute((W, "val")))
+                .map(str::to_owned);
+            let text = paragraph
+                .descendants()
+                .filter(|node| node.has_tag_name((W, "t")))
+                .filter_map(|node| node.text())
+                .collect();
+            (style, text)
+        })
+        .collect()
+}
+
+/// The headings of a document, as (level, text).
+fn headings(path: &Path) -> Vec<(String, String)> {
+    paragraphs(path)
+        .into_iter()
+        .filter_map(|(style, text)| Some((style?, text)))
+        .collect()
+}
+
+fn page(root: &Path, relative: &str) -> PathBuf {
+    root.join("guide/modules").join(relative)
+}
+
+#[test]
+fn exports_a_page_as_an_article() {
+    let (directory, root, mut engine) = book_workspace();
+    let id = engine
+        .open(&page(&root, "ROOT/pages/install.adoc"))
+        .unwrap();
+    let output = directory.path().join("install.docx");
+    let summary = engine
+        .export_docx_blocking(docx(ExportTarget::Page(id), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(summary.output, output);
+    assert_eq!(summary.pages, 1);
+    assert_eq!(summary.sources, [page(&root, "ROOT/pages/install.adoc")]);
+    let headings = headings(&output);
+    assert_eq!(headings[0], ("Title".to_owned(), "Install".to_owned()));
+    assert!(
+        headings.contains(&("Heading1".to_owned(), "Requirements".to_owned())),
+        "{headings:?}"
+    );
+}
+
+#[test]
+fn exports_a_component_as_a_book_in_navigation_order() {
+    let (directory, root, mut engine) = book_workspace();
+    let output = directory.path().join("guide.docx");
+    let summary = engine
+        .export_docx_blocking(docx(book(), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    // The start page leads as a preface, then the two nav files' pages as parts, each page
+    // once, the entry without a link a heading of its own.
+    assert_eq!(
+        summary.sources,
+        [
+            page(&root, "ROOT/pages/index.adoc"),
+            page(&root, "ROOT/pages/install.adoc"),
+            page(&root, "ROOT/pages/configure.adoc"),
+            page(&root, "ROOT/pages/use.adoc"),
+            page(&root, "admin/pages/index.adoc"),
+            page(&root, "admin/pages/backup.adoc"),
+            page(&root, "admin/pages/restore.adoc"),
+            page(&root, "admin/pages/empty.adoc"),
+        ]
+    );
+    assert_eq!(summary.pages, summary.sources.len());
+    let headings = headings(&output);
+    assert_eq!(headings[0], ("Title".to_owned(), "The Guide".to_owned()));
+    let parts: Vec<&str> = headings
+        .iter()
+        .filter(|(style, _)| style == "Heading1")
+        .map(|(_, text)| text.as_str())
+        .collect();
+    assert!(parts.contains(&"Getting Started"), "{headings:?}");
+    assert!(parts.contains(&"Administration"), "{headings:?}");
+    assert!(
+        headings.contains(&("Heading2".to_owned(), "Recovery".to_owned())),
+        "{headings:?}"
+    );
+}
+
+/// Exports `target` to both formats and returns the pages each took, in order.
+#[cfg(feature = "typst")]
+fn both(
+    engine: &mut Engine,
+    directory: &Path,
+    target: ExportTarget,
+) -> (Vec<PathBuf>, Vec<PathBuf>, PathBuf) {
+    let pdf = engine
+        .export_blocking(
+            adoc_engine::ExportArgs {
+                target: target.clone(),
+                output: directory.join("out.pdf"),
+                theme: None,
+                standards: Vec::new(),
+                fonts_dir: None,
+                typst: None,
+                attributes: Vec::new(),
+            },
+            WAIT,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    let output = directory.join("out.docx");
+    let word = engine
+        .export_docx_blocking(docx(target, &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    (pdf.sources, word.sources, output)
+}
+
+#[cfg(feature = "typst")]
+#[test]
+fn docx_and_pdf_select_the_same_pages() {
+    let (directory, root, mut engine) = book_workspace();
+    let folder = directory.path();
+
+    // An open page with unsaved text: both read the buffer, not the file.
+    let use_page = page(&root, "ROOT/pages/use.adoc");
+    let id = engine.open(&use_page).unwrap();
+    let end = engine.document(id).unwrap().text.to_string().len();
+    engine
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: adoc_core::SourceRange::new(end, end),
+                text: "\nAn unsaved sentence.\n".to_owned(),
+            },
+        )
+        .unwrap();
+
+    let (pdf, word, output) = both(&mut engine, folder, ExportTarget::Page(id));
+    assert_eq!(pdf, std::slice::from_ref(&use_page));
+    assert_eq!(word, pdf);
+    let text: String = paragraphs(&output)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    assert!(text.contains("An unsaved sentence."), "{text}");
+    assert!(!fs::read_to_string(&use_page).unwrap().contains("unsaved"));
+
+    let (pdf, word, output) = both(&mut engine, folder, book());
+    assert_eq!(pdf.len(), 8);
+    assert_eq!(word, pdf);
+    let text: String = paragraphs(&output)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    assert!(
+        text.contains("An unsaved sentence."),
+        "a book reads the open buffer too"
+    );
+
+    let (pdf, word, _) = both(
+        &mut engine,
+        folder,
+        ExportTarget::File(page(&root, "admin/pages/backup.adoc")),
+    );
+    assert_eq!(word, pdf);
+
+    // Navigation files in the order given: the administration guide first this time.
+    let (pdf, word, output) = both(
+        &mut engine,
+        folder,
+        ExportTarget::Navigation(vec![
+            page(&root, "admin/nav.adoc"),
+            page(&root, "ROOT/nav.adoc"),
+        ]),
+    );
+    assert_eq!(pdf.first(), Some(&page(&root, "ROOT/pages/index.adoc")));
+    assert_eq!(pdf.get(1), Some(&page(&root, "admin/pages/index.adoc")));
+    assert_eq!(word, pdf);
+    // The document holds the pages in that order.
+    let titles: Vec<String> = headings(&output)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    let at = |title: &str| titles.iter().position(|found| found == title).unwrap();
+    assert!(at("Backup") < at("Install"), "{titles:?}");
+}
+
+/// The bytes at `path`, or none.
+fn contents(path: &Path) -> Option<Vec<u8>> {
+    fs::read(path).ok()
+}
+
+#[test]
+fn docx_failed_export_keeps_existing_output() {
+    let (directory, root, mut engine) = book_workspace();
+    let folder = directory.path();
+    let existing = folder.join("existing.docx");
+    fs::write(&existing, b"the previous document").unwrap();
+    let page_target = ExportTarget::File(page(&root, "ROOT/pages/install.adoc"));
+
+    // A target that does not exist.
+    let error = engine
+        .export_docx_blocking(
+            docx(
+                ExportTarget::Component {
+                    name: "missing".to_owned(),
+                    version: None,
+                },
+                &existing,
+            ),
+            WAIT,
+        )
+        .unwrap_err();
+    assert!(matches!(error, EngineError::NotFound(_)), "{error:?}");
+    assert_eq!(contents(&existing).unwrap(), b"the previous document");
+
+    // An output that is not a `.docx` file is refused before anything is read.
+    let pdf = folder.join("existing.pdf");
+    fs::write(&pdf, b"a PDF").unwrap();
+    let error = engine
+        .export_docx_blocking(docx(page_target.clone(), &pdf), WAIT)
+        .unwrap_err();
+    assert!(matches!(error, EngineError::InvalidRequest(_)), "{error:?}");
+    assert_eq!(contents(&pdf).unwrap(), b"a PDF");
+
+    // A folder at the output.
+    let folder_output = folder.join("folder.docx");
+    fs::create_dir(&folder_output).unwrap();
+    assert!(engine
+        .export_docx_blocking(docx(page_target.clone(), &folder_output), WAIT)
+        .is_err());
+    assert!(folder_output.is_dir());
+
+    // A link at the output is never written through.
+    #[cfg(unix)]
+    {
+        let elsewhere = folder.join("elsewhere.docx");
+        fs::write(&elsewhere, b"another document").unwrap();
+        let link = folder.join("link.docx");
+        std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+        let error = engine
+            .export_docx_blocking(docx(page_target.clone(), &link), WAIT)
+            .unwrap_err();
+        assert!(matches!(error, EngineError::InvalidRequest(_)), "{error:?}");
+        assert_eq!(contents(&elsewhere).unwrap(), b"another document");
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    // A folder that refuses the write: the document there is left as it was.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let locked = folder.join("locked");
+        fs::create_dir(&locked).unwrap();
+        let inside = locked.join("out.docx");
+        fs::write(&inside, b"the locked document").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+        let result = engine.export_docx_blocking(docx(page_target.clone(), &inside), WAIT);
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(contents(&inside).unwrap(), b"the locked document");
+        let left: Vec<_> = fs::read_dir(&locked).unwrap().collect();
+        assert_eq!(left.len(), 1, "no temporary file is left behind");
+    }
+
+    // A successful export replaces the document whole.
+    engine
+        .export_docx_blocking(docx(page_target, &existing), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(contents(&existing).unwrap().starts_with(b"PK\x03\x04"));
+    let names: Vec<String> = fs::read_dir(folder)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".tmp"))
+        .collect();
+    assert_eq!(
+        names,
+        Vec::<String>::new(),
+        "no temporary file is left behind"
+    );
+}
+
+#[test]
+fn the_command_reports_when_the_document_is_written() {
+    let (directory, root, mut engine) = book_workspace();
+    let id = engine
+        .open(&page(&root, "ROOT/pages/install.adoc"))
+        .unwrap();
+    let output = directory.path().join("command.docx");
+    let events = engine.subscribe();
+    engine
+        .invoke(
+            ids::EXPORT_DOCX_PAGE,
+            CommandArgs::ExportDocx(docx(ExportTarget::Page(id), &output)),
+        )
+        .unwrap();
+    // The command returns at once; the document is written on workers.
+    assert!(engine.is_exporting());
+    assert!(engine.wait_for_workers(WAIT));
+    assert!(!engine.is_exporting());
+    let mut finished: BTreeMap<PathBuf, _> = events
+        .try_iter()
+        .filter_map(|event| match event {
+            EngineEvent::ExportFinished { output, result } => Some((output, result)),
+            _ => None,
+        })
+        .collect();
+    let result = finished.remove(&output).expect("the export finished");
+    assert_eq!(result.unwrap().sources.len(), 1);
+    assert!(fs::read(&output).unwrap().starts_with(b"PK\x03\x04"));
+}

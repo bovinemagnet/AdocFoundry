@@ -171,6 +171,16 @@ class BenchmarksInCi(unittest.TestCase):
         self.assertRegex(typing, r"ADOCFOUNDRY_TYPING_TIER: ci\b")
 
 
+class DocxWithoutTypst(unittest.TestCase):
+    """DOCX export builds without Typst (docs/prd/PRD-AdocFoundry_DOCX_Export.md, test 3):
+    `cargo xtask layers` checks the dependency tree, and CI compiles the engine that way, since
+    the workspace's own build turns every feature on together (#619)."""
+
+    def test_the_engine_is_compiled_with_docx_and_without_typst(self):
+        lint = "\n".join(jobs(read("ci.yml"))["lint"])
+        self.assertIn("run: cargo check -p adoc-engine --no-default-features --features docx", lint)
+
+
 class WorkflowsAreReproducible(unittest.TestCase):
     """A run uses the same actions and tools next month as today, and a hung job is stopped."""
 

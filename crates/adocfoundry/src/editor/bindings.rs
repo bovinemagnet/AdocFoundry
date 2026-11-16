@@ -581,6 +581,10 @@ mod tests {
             ids::APPEARANCE_SAVE,
             // Saved by Select Font Set…, which is the app's own.
             ids::APPEARANCE_SAVE_FONT_SET,
+            // Word export: the app does not build the engine's `docx` feature until DOCX 7/8
+            // (#624) gives these actions, but a workspace build turns it on for every crate.
+            ids::EXPORT_DOCX_PAGE,
+            ids::EXPORT_DOCX_COMPONENT,
         ];
         let engine = Engine::new(Settings::default());
         let missing: Vec<&str> = engine

@@ -415,10 +415,30 @@ const LEAN_EXCLUDED: &[&str] = &["adoc-pdf", "adoc-math", "adoc-git", "typst", "
 /// The packages `cargo build -p <package>` compiles with its default features, from
 /// `cargo tree`; `cargo metadata` resolves features for the whole workspace at once.
 fn default_build_packages(root: &Path, package: &str) -> Result<BTreeSet<String>, String> {
+    build_packages(root, package, &[])
+}
+
+/// The packages the engine compiles with DOCX and without Typst: `--no-default-features
+/// --features docx`.
+fn docx_engine_packages(root: &Path) -> Result<BTreeSet<String>, String> {
+    build_packages(
+        root,
+        "adoc-engine",
+        &["--no-default-features", "--features", "docx"],
+    )
+}
+
+/// The packages `cargo build -p <package> <features>` compiles.
+fn build_packages(
+    root: &Path,
+    package: &str,
+    features: &[&str],
+) -> Result<BTreeSet<String>, String> {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let output = Command::new(cargo)
         .current_dir(root)
         .args(["tree", "--locked", "-p", package, "-e", "normal,build"])
+        .args(features)
         .args(["--prefix", "none", "--format", "{p}"])
         .output()
         .map_err(|error| format!("cargo tree: {error}"))?;
@@ -444,8 +464,9 @@ fn lean_violations(packages: &BTreeSet<String>) -> Vec<String> {
         .collect()
 }
 
-/// What the DOCX writer must never compile: it writes Word documents from the view tree, never
-/// through the PDF exporter or Typst.
+/// What DOCX export must never compile, in `adoc-docx` or in the engine built with `docx` and
+/// without `typst`: Word documents are written from the view tree, never through the PDF
+/// exporter or Typst.
 const DOCX_EXCLUDED: &[&str] = &["adoc-pdf", "typst"];
 
 /// A violation for each crate of [`DOCX_EXCLUDED`] in the DOCX writer's build.
@@ -453,7 +474,7 @@ fn docx_violations(packages: &BTreeSet<String>) -> Vec<String> {
     DOCX_EXCLUDED
         .iter()
         .filter(|name| packages.contains(**name))
-        .map(|name| format!("adoc-docx builds {name}; DOCX export needs neither PDF nor Typst"))
+        .map(|name| format!("DOCX export builds {name}; it needs neither PDF nor Typst"))
         .collect()
 }
 
@@ -487,6 +508,7 @@ pub fn run(root: &Path) -> Result<Vec<String>, String> {
     }
     violations.extend(lean_violations(&default_build_packages(root, "adoc-ls")?));
     violations.extend(docx_violations(&default_build_packages(root, "adoc-docx")?));
+    violations.extend(docx_violations(&docx_engine_packages(root)?));
     Ok(violations)
 }
 
@@ -772,14 +794,19 @@ libc = "=0.2.0"
         assert!(packages.contains("adoc-render"), "{packages:?}");
         assert_eq!(docx_violations(&packages), Vec::<String>::new());
 
+        // The engine with DOCX and without Typst.
+        let engine = docx_engine_packages(&root).unwrap();
+        assert!(engine.contains("adoc-docx"), "{engine:?}");
+        assert_eq!(docx_violations(&engine), Vec::<String>::new());
+
         let with_pdf: BTreeSet<String> = ["adoc-render", "adoc-pdf", "typst"]
             .map(str::to_owned)
             .into();
         assert_eq!(
             docx_violations(&with_pdf),
             [
-                "adoc-docx builds adoc-pdf; DOCX export needs neither PDF nor Typst",
-                "adoc-docx builds typst; DOCX export needs neither PDF nor Typst",
+                "DOCX export builds adoc-pdf; it needs neither PDF nor Typst",
+                "DOCX export builds typst; it needs neither PDF nor Typst",
             ]
         );
     }

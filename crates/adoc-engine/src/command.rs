@@ -115,6 +115,8 @@ pub enum CommandArgs {
     Visual(crate::VisualArgs),
     /// A PDF export: what to export and where to write it.
     Export(crate::ExportArgs),
+    /// A DOCX export: what to export and the `.docx` file to write.
+    ExportDocx(crate::DocxExportArgs),
     /// Pages to export each as its own PDF into a folder: `export.pdf_pages`.
     ExportPages {
         pages: Vec<PathBuf>,
