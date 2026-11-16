@@ -98,6 +98,7 @@ page = "docs/modules/ROOT/pages/quick-start.adoc"
 output = "build/quick-start.pdf"
 
 [docx]                           # Word export; nothing here is read for PDF
+look = "pdf-theme"               # pdf-theme | template | none
 paper = "a4"                     # a4 | letter
 orientation = "portrait"         # portrait | landscape
 
@@ -570,11 +571,24 @@ A workspace profile replaces a user profile of the same name.
 An unknown key, or a value that cannot be used, warns and leaves the default.
 
 Word export and PDF export are set apart.
-Nothing in `[pdf]`, its theme, fonts or standards, is read for Word, and nothing in `[docx]` is read for PDF.
+Nothing in `[docx]` is read for PDF.
+Nothing in `[pdf]` is read for Word except, for the PDF-theme look only, the theme and the folder it is found in (`[pdf] theme` and `themes_dir`); its fonts and standards are never read.
 
 [cols="2,2,2,4"]
 |===
 |Key |Type |Default |Meaning
+
+|`docx.look`
+|string
+|`"pdf-theme"`
+|The Word export's look: `"pdf-theme"`, `"template"` or `"none"`.
+See <<docx-looks>>.
+
+|`docx.template`
+|string
+|none
+|The template that `look = "template"` uses: a name, found as `<name>.dotx` or `<name>.docx` in the PDF themes folder, or a path ending in `.dotx` or `.docx`.
+See <<docx-looks>>.
 
 |`docx.paper`
 |string
@@ -644,6 +658,8 @@ No length may be more than 10 inches.
 [source,toml]
 ----
 [docx]
+look = "pdf-theme"                  # pdf-theme (the default) | template | none
+template = "acme"                   # used when look = "template": acme.dotx, else acme.docx
 paper = "letter"
 orientation = "portrait"
 logo = "images/logo.png"
@@ -671,6 +687,39 @@ link_colour = "0563C1"
 ----
 
 By default the page is A4, portrait, with a margin of an inch on every side, no header, and the page number in the footer: at the right of odd pages and at the left of even ones.
+A look can change those defaults; see <<docx-looks>>.
+
+[#docx-looks]
+=== Looks
+
+A Word export has a look: a PDF theme, a Word template, or none.
+`[docx] look` sets the default, and is `"pdf-theme"`, `"template"` or `"none"`.
+The default is `"pdf-theme"`.
+A `look` value that cannot be used is warned about and leaves the default.
+
+With `look = "pdf-theme"`, Word follows a PDF theme only when one is named: the page's `pdf-theme` attribute, or `[pdf] theme` written in a settings file.
+Unlike PDF export, it never falls back to the bundled `default` theme, so a workspace that names no theme gets the Word export's own look, as before.
+The theme is found exactly as PDF export finds it.
+
+With `look = "template"`, `[docx] template` names the template.
+A name is found as `<name>.dotx`, else `<name>.docx`, in the PDF themes folder: the page's `pdf-themesdir` attribute, else `[pdf] themes_dir`.
+A path ending in `.dotx` or `.docx` is relative to that folder, else to the first workspace root.
+`look = "none"` reads no theme and no template.
+
+A theme or template that cannot be found fails the export, and the error names where it was looked for.
+`look = "template"` with no `template` set fails too.
+
+What a look gives today:
+
+* A theme gives the page: its `page_size`, `page_layout` and `page_margin`.
+The page's `pdf-page-size`, `pdf-page-layout` and `pdf-page-margin` attributes win over the theme, as they do for PDF.
+The theme's styles, title page, headers and footers, and fonts come to Word in later releases.
+* A template is found and checked to exist, and the export reports it as the look used.
+Its styles, page, and headers and footers are applied in a later release.
+
+A `[docx]` key written in either settings file applies over the look.
+A key that is not written takes the look's value, else the built-in default.
+So `paper`, `orientation` and each `[docx.margins]` side, when written, win over the theme's page, and an export's or profile's own `paper` and `orientation` win over everything.
 
 [#docx-running]
 === Headers and footers
@@ -725,10 +774,24 @@ It must be a `.docx` file name and inside the workspace folder; a profile whose 
 
 |`attributes`
 |A table of attribute names to strings, numbers or `true`, applied to every page before its own header.
+
+|`theme`
+|The name of a PDF theme to take this document's look from, found as <<docx-looks>> describes.
+
+|`template`
+|The name of a Word template to use as this document's look.
+
+|`look`
+|`"none"`, to give this document the Word export's own look whatever `[docx]` says.
 |===
 
+At most one of `theme`, `template` and `look` may be given.
+A profile that gives more than one is left out with a warning.
+A profile that gives none uses the look `[docx]` sets.
+
 A profile that has none of `page`, `component` and `nav`, or more than one of them, that has an `output` which is not a `.docx` file name, a bad `paper` or `orientation`, or an unknown key is left out with a warning.
-A key that only PDF profiles have, such as `theme`, is an unknown key here.
+A key that only PDF profiles have, such as `standards`, is an unknown key here.
+A Word profile may set its own look, as <<docx-looks>> describes, with `theme`, `template` and `look`.
 
 A profile declares its own content in each format, and a PDF profile and a Word profile of the same name are independent.
 A book published in both formats therefore repeats its one line of content, and neither profile can change the other.
@@ -759,7 +822,7 @@ left = "{chapter-title}"
 right = "{page-number} of {page-count}"
 ----
 
-The PDF profile's `theme` is not read for Word, and the Word profile's `orientation` is not read for PDF.
+The PDF profile's `theme` is not read for Word, which has its own look keys, and the Word profile's `orientation` is not read for PDF.
 
 == What a workspace file may set
 

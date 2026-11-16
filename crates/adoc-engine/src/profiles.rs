@@ -271,6 +271,7 @@ impl Engine {
             attributes: profile.attributes.clone(),
             paper: profile.paper,
             landscape: profile.landscape,
+            look: profile.look.clone(),
         })
     }
 

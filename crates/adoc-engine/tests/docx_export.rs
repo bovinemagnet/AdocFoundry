@@ -73,6 +73,7 @@ fn docx(target: ExportTarget, output: &Path) -> DocxExportArgs {
         attributes: Vec::new(),
         paper: None,
         landscape: None,
+        look: None,
     }
 }
 

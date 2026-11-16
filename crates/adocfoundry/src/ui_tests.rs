@@ -1643,6 +1643,7 @@ fn docx_app_exports_through_engine(cx: &mut TestAppContext) {
                         attributes: Vec::new(),
                         paper: None,
                         landscape: None,
+                        look: None,
                     },
                     std::time::Duration::from_secs(120),
                 )

@@ -1181,6 +1181,7 @@ fn docx(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         attributes: Vec::new(),
         paper: None,
         landscape: None,
+        look: None,
     };
     let result = engine.export_docx_blocking(args, INDEX_TIMEOUT);
     report(result, &output, &root, fail_on, out, true)

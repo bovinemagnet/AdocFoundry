@@ -470,6 +470,7 @@ fn docx_export(target: ExportTarget, output: PathBuf) -> CommandArgs {
         attributes: Vec::new(),
         paper: None,
         landscape: None,
+        look: None,
     })
 }
 

@@ -16,6 +16,7 @@ mod deletion;
 mod discovery;
 mod doctor;
 mod document;
+mod docx_look;
 mod docx_settings;
 mod edit;
 mod engine;
@@ -109,6 +110,7 @@ pub use deletion::{KeptDeletion, DELETED_DIR};
 pub use discovery::{IncomingReference, ReferenceKind, ResourceEntry, ResourceQuery};
 pub use doctor::{Doctor, DoctorLine, DoctorReport, DoctorSection, PROBE_TIMEOUT};
 pub use document::{DocumentId, OpenDocument};
+pub use docx_look::{DocxLook, ExportLook, LookChoice, LookKind};
 pub use docx_settings::{
     DocxLine, DocxMargins, DocxPaper, DocxProfile, DocxSettings, DocxSlots, DocxStyles,
 };

@@ -481,6 +481,9 @@ pub struct Settings {
     workspace_file: Option<PathBuf>,
     /// Whether a settings file set `[git] enabled`, rather than leaving the default.
     git_enabled_set: bool,
+    /// Whether a settings file set `[pdf] theme`, which then names the theme a Word export
+    /// follows; the value defaults to `default` either way.
+    pdf_theme_set: bool,
     /// Whether the user file set `[appearance] mode`, which `[editor] theme` then gives way to.
     appearance_mode_set: bool,
     /// Whether a settings file set the older `[editor] theme`.
@@ -813,6 +816,13 @@ impl Settings {
 
     /// Makes Git opt-in: off unless a settings file sets `[git] enabled = true`, now and on
     /// every reload. For front ends where Git is not expected, such as the language server.
+    /// Whether a settings file names `[pdf] theme`, rather than leaving the bundled default:
+    /// only a named theme gives a Word export its look.
+    #[must_use]
+    pub fn pdf_theme_named(&self) -> bool {
+        self.pdf_theme_set
+    }
+
     #[must_use]
     pub fn with_git_opt_in(mut self) -> Self {
         self.git_opt_in = true;
@@ -1179,7 +1189,10 @@ impl Settings {
             ("quality", "require_complete") => {
                 self.quality.policy.require_complete = boolean(value)?;
             }
-            ("pdf", "theme") => self.pdf.theme = string(value)?,
+            ("pdf", "theme") => {
+                self.pdf.theme = string(value)?;
+                self.pdf_theme_set = true;
+            }
             ("pdf", "themes_dir") => self.pdf.themes_dir = Some(string(value)?),
             ("pdf", "fonts_dir") => self.pdf.fonts_dir = Some(string(value)?),
             ("pdf", "site_url") => self.pdf.site_url = Some(string(value)?),

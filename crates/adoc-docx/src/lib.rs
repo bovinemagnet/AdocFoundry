@@ -78,6 +78,11 @@ pub enum Paper {
     #[default]
     A4,
     Letter,
+    /// Any other size, in portrait, in twentieths of a point: a theme's.
+    Custom {
+        width: u32,
+        height: u32,
+    },
 }
 
 impl Paper {
@@ -87,6 +92,7 @@ impl Paper {
         match self {
             Self::A4 => (11906, 16838),
             Self::Letter => (12240, 15840),
+            Self::Custom { width, height } => (width.max(1440), height.max(1440)),
         }
     }
 }

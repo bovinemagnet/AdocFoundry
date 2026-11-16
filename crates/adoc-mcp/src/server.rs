@@ -1371,6 +1371,7 @@ fn docx_args(target: ExportTarget) -> DocxExportArgs {
         attributes: Vec::new(),
         paper: None,
         landscape: None,
+        look: None,
     }
 }
 

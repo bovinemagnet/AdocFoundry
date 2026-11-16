@@ -221,6 +221,7 @@ dependencies = [
  "adoc-pdf",
  "adoc-render",
  "adoc-spell",
+ "adoc-theme",
  "dirs 6.0.0",
  "flate2",
  "insta",
