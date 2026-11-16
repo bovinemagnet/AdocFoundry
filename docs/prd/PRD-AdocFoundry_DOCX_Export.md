@@ -212,8 +212,8 @@ Each is settled before work starts on the package it affects, and the outcome is
 - **Where SVG is rasterised (D4).** The app's `image_decode::svg_to_png` is at L4 and cannot be called from `adoc-docx`. Either `adoc-docx` rasterises (`resvg` at the version already in the tree), or the engine hands it prepared rasters. *Settled in D4: `adoc-docx` rasterises with `resvg` (§14).*
 - **Formulas without Typst (D4).** The STEM provider is part of the engine's `typst` feature. A build with `docx` and without `typst` has no formula artwork; decide between the formula's source as text with a diagnostic, and a narrower feature that provides the artwork alone. *Settled in D4: the source as text, with a warning (§14).*
 - **Repeated footnote references (D3).** A real Word footnote per reference, or one footnote and cross-references to it. *Settled in D3: one footnote, and `NOTEREF` fields to it (§14).*
-- **Table of contents (D5).** A `TOC` field alone, refreshed on opening, or a field with entries written in advance so the document reads correctly before any refresh.
-- **Chapter titles in running content (D5).** `STYLEREF` fields, or static text per section.
+- **Table of contents (D5).** A `TOC` field alone, refreshed on opening, or a field with entries written in advance so the document reads correctly before any refresh. *Settled in D5: both, a field with its entries written, and Word asked to update fields on opening (§14).*
+- **Chapter titles in running content (D5).** `STYLEREF` fields, or static text per section. *Settled in D5: `STYLEREF` (§14).*
 - **Profile sharing (D6).** Whether a publication's content selection is declared once and named by both `[pdf.profiles]` and `[docx.profiles]`, or repeated in each.
 
 ## 14. Implementation notes
@@ -334,6 +334,49 @@ The body is now written by `body.rs` (blocks), `inline.rs` (runs, links, footnot
 - **Diagrams.** A diagram still rendering is written as its source with a warning. One that failed is written as its source, the engine reporting the failure as it does for PDF.
 - **Not yet.** Cover and logo images, and header and footer pictures, come with D5, through the same per-part relationships.
 - **Checked by hand.** LibreOffice 26 rendered the sample (`ADOC_DOCX_OUT=<dir> cargo test -p adoc-docx --test media -- --ignored`), offline. It showed a PNG at its asked width, a centred JPEG with its caption, a GIF in a line, an SVG with its transparency and an inline formula on its line.
+
+### D5 (#622): pages, running content and the table of contents
+
+`pages.rs` writes the sections, covers, title page, header and footer parts and the table of contents; the writer's parts are now numbered (`Part`), each header and footer a part with relationships of its own.
+
+- **Sections.**
+  - A book is a front cover, a title page, the body and a back cover, each a section. The body starts with the table of contents, and its page numbers start at 1 (`pgNumType`).
+  - An article is one section, with a title page before it when it sets `title-page`, and covers when it names them.
+  - Every section has the page size (`DocxOptions::paper`: A4 or Letter; `landscape` turns it and sets `orient`) and the margins (`DocxOptions::margins`: the four sides, and the header and footer offsets).
+  - A cover's section has no margins.
+  - A section ends with a paragraph holding its properties; the last section's end the body.
+- **Covers and the title page.**
+  - `front-cover-image` and `back-cover-image` come from the first page's view, as the PDF exporter takes them, and fill their page, proportions kept.
+  - The title page is centred: `title-logo-image`, the title (a book's, or an article's), a book's subtitle, then `author` (or `authors`), `Version {revnumber}` and `revdate`, each when set.
+  - Covers and the title page show no running content. The first sections name no header or footer. The back cover names empty ones for every type, since in Word a section without its own takes the previous section's.
+- **Running content.**
+  - `DocxOptions::running` (`Running`) gives the header's and footer's lines (`Slots`: `odd`, optional `even` and `first`). Each line has left, centre and right slots (`Line`), placed by a centre and a right tab stop in the `Header` and `Footer` styles.
+  - Slots hold text and the placeholders:
+    - `{page-number}` and `{page-count}`: live `PAGE` and `NUMPAGES` fields. `NUMPAGES` counts every page, covers included, as Word does.
+    - `{document-title}`.
+    - `{chapter-title}`: a `STYLEREF` field on the chapter's heading style.
+    - `{logo}`: `Running::logo`, drawn 32 pixels high, a relationship of its own header or footer part.
+
+    An unknown placeholder stays as written.
+  - With `odd_even`, `w:evenAndOddHeaders` is set. An even page's line is its own, or the odd page's mirrored, left and right swapped.
+  - A `first` line in either the header or the footer gives the body's first page headers and footers of its own (`titlePg`), empty where none is given.
+  - A header or footer with no line is not written.
+  - The default follows asciidoctor-pdf's default theme: no header, and the page number in the footer, at the right of odd pages and the left of even ones.
+- **Chapter titles: `STYLEREF`.** `{chapter-title}` is `STYLEREF "heading 1"`, or `"heading 2"` where parts take Heading 1. Word and LibreOffice show the latest chapter heading on each page, with no section per chapter.
+- **Table of contents: a field with its entries written, updated on opening.**
+  - Each listed heading (parts, book headings, page titles and sections; not discrete headings or the title) gets a bookmark `_Toc<n>` as it is written, and the contents is built after the body, from the headings actually written, then inserted where it was asked for. In a book that is the body's start (books have `toc`). In an article it is after the title when the page asks for a table of contents (`ViewTree::toc`), or at `toc::[]` with `toc: macro`.
+  - It is a `TOC \o "1-<n>" \h \z \u` field, its result already written: a `TOCHeading` paragraph (`toc-title`, else `Table of Contents`), then a `TOC<level>` paragraph per heading, each a link to the heading's bookmark with a `PAGEREF` field for its page number, blank until updated.
+  - `n` is `toclevels` (default 2) counted from the chapters, as Asciidoctor counts it in a book, plus one where there are parts.
+  - `w:updateFields` is set when there is a table of contents, so Word offers to update the document's fields on opening. The prompt says the document contains fields that may refer to other files; updating fills in the page numbers.
+  - LibreOffice does not update on opening. Its contents reads correctly, without page numbers, until Tools › Update › Update All. Accurate page numbers before an update are not promised.
+- **Styles.** Added: `Header`, `Footer` (both with the tab stops), `TOCHeading`, `TOC1`–`TOC9` (indented, a dotted right tab for the page number), `CoverImage` and `TitlePageDetail`. `styles.xml` takes the text width for the tab stops.
+- **Checked by hand.** LibreOffice 26 laid out the book sample (`ADOC_DOCX_OUT=<dir> cargo test -p adoc-docx --test pages -- --ignored`), Letter landscape, as six pages:
+  1. the front cover, filling the page;
+  2. the title page, logo, title, subtitle, author, version and date, with no running content;
+  3. the contents, its first-page footer a centred `1`;
+  4. an even page, its header mirrored (logo left, title right) and its footer number at the left;
+  5. an odd page, title left, logo right, the chapter's title left in the footer and `3 of 6` at the right;
+  6. the back cover, with no running content.
 
 ## 15. References
 

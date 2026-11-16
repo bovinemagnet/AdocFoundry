@@ -90,6 +90,9 @@ fn a_book_s_pages_take_headings_at_their_depth() {
         [
             (Some("Title".to_owned()), "The Manual".to_owned()),
             (Some("Subtitle".to_owned()), "For everyone".to_owned()),
+            // The rest of the title page, and the paragraph ending its section.
+            (Some("TitlePageDetail".to_owned()), "Paul Snow".to_owned()),
+            (None, String::new()),
             (heading(1), "Getting started".to_owned()),
             (heading(2), "Basics".to_owned()),
             (heading(3), "Install".to_owned()),

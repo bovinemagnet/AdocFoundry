@@ -46,7 +46,20 @@ It must never build `adoc-pdf` or Typst.
 
 |`DocxOptions`
 |A `paper`, `Paper::A4` by default or `Paper::Letter`, and `page_urls`, the published address of each page, which a cross reference to a page outside the document uses.
-It also has `access`, the `FileAccess` that pictures are read through.
+It also has `access`, the `FileAccess` that pictures are read through, `landscape`, `margins` and `running`.
+
+|`Margins`
+|The four sides and the header and footer offsets, as whole units for Word.
+
+|`Running`
+|The running content: `header` and `footer` (each `Slots`), `odd_even`, and a `logo` that `\{logo}` draws.
+
+|`Slots`
+|A header's or footer's lines: `odd`, an optional `even` and an optional `first`.
+
+|`Line`
+|A `left`, `centre` and `right` slot of text.
+A slot may hold `\{page-number}`, `\{page-count}`, `\{document-title}`, `\{chapter-title}` and `\{logo}`.
 
 |`DocxReport`
 |`diagnostics`, each a `DocxDiagnostic` with a `DocxSeverity`, a `message` and an optional `source` span.
@@ -63,10 +76,11 @@ The crate writes these parts, in a fixed order.
 * `_rels/.rels`
 * `word/document.xml`, with `word/_rels/document.xml.rels`
 * `word/styles.xml`
-* `word/settings.xml`, always, holding compatibility mode 15 and, when there are footnotes, their separators
+* `word/settings.xml`, always, holding compatibility mode 15 and, when there are footnotes, their separators, and also `w:evenAndOddHeaders` and `w:updateFields` when they are used
 * `word/numbering.xml`, when there are lists
 * `word/footnotes.xml`, when there are footnotes, with its separators first and its own relationships for links in footnotes
 * `word/media/image<n>.png`, `.jpeg` or `.gif`, one for each distinct picture, each with its content type, and image relationships from the part that shows it (the document or the footnotes)
+* `word/header<n>.xml` and `word/footer<n>.xml`, one for each header and footer written, each with its own relationships for a logo or a link
 * `docProps/core.xml`, holding the title, the creator (from `author` or `authors`), the description and the keywords, and no dates
 
 An external hyperlink is a relationship with `TargetMode="External"` of the part it is in.
@@ -78,6 +92,7 @@ Everything the crate writes comes from the view tree, by way of `body.rs` (block
 === Headings, text and breaks
 
 * The title is in the Title style, and a book's subtitle is in Subtitle.
+It is on the title page for a book, and for an article that sets `title-page`; otherwise it is at the top of an article.
 * Sections and discrete headings use Word's built-in heading styles, `Heading1` to `Heading9`, named `heading 1` and so on, so that Word treats them as its own and gives them outline levels.
 * Paragraphs are editable text, with tabs as Word tabs and line breaks as breaks.
 * Thematic breaks are a bordered empty paragraph, and page breaks are page breaks.
@@ -195,9 +210,6 @@ These are written as text (alt text, source or address) and each is reported wit
 
 * Media (video and audio), passthrough blocks and unsupported blocks.
 
-A table of contents block only gives a warning, until DOCX 5/8.
-Cover and logo images come with DOCX 5/8.
-
 === Styles
 
 The body uses these styles, which the package defines.
@@ -208,7 +220,7 @@ A reader can restyle any of them in Word, and the document follows.
 |Kind |Styles
 
 |Paragraph
-|`Title`, `Subtitle`, `Heading1` to `Heading9`, `Caption`, `Quote`, `QuoteAttribution`, `Verse`, `SourceCode`, `LiteralBlock`, `DescriptionTerm`, `FootnoteText` and `TableSpacer`
+|`Title`, `Subtitle`, `Heading1` to `Heading9`, `Caption`, `Quote`, `QuoteAttribution`, `Verse`, `SourceCode`, `LiteralBlock`, `DescriptionTerm`, `FootnoteText`, `TableSpacer`, `Header`, `Footer`, `TOCHeading`, `TOC1` to `TOC9`, `CoverImage` and `TitlePageDetail`
 
 |Character
 |`CodeChar`, `Keyboard`, `Hyperlink` and `FootnoteReference`
@@ -216,6 +228,72 @@ A reader can restyle any of them in Word, and the document follows.
 |Table
 |`AdocTable`, `AdocAdmonition`, `AdocSidebar` and `AdocExample`
 |===
+
+== Pages
+
+`pages.rs` writes the sections, the covers and title page, the header and footer parts and the table of contents.
+
+=== Sections
+
+* A book is a front cover, a title page, the body and a back cover, each a section.
+The body starts with the table of contents, and its page numbers start at 1.
+* An article is one section.
+It has a title page before it when it sets `title-page`, and covers when it names them.
+* Every section has the page size (`Paper::A4` or `Paper::Letter`, turned by `landscape`) and the margins of `DocxOptions::margins`.
+A cover's section has no margins.
+
+=== Covers and the title page
+
+* `front-cover-image` and `back-cover-image` are taken from the first page's view, as the PDF exporter takes them.
+Each fills its page, with its proportions kept.
+* The title page is centred.
+It holds `title-logo-image`, the title, a book's subtitle, then `author` (or `authors`), `Version \{revnumber}` and `revdate`, each when set.
+* Covers and the title page show no running content.
+The back cover names empty headers and footers, since in Word a section without its own takes the previous section's.
+
+=== Running content
+
+* `DocxOptions::running` gives the header's and footer's lines.
+Each line has a left, centre and right slot, placed by a centre and a right tab stop in the `Header` and `Footer` styles.
+* A slot holds text and these placeholders:
+** `\{page-number}` and `\{page-count}`, which are live `PAGE` and `NUMPAGES` fields.
+`\{page-count}` counts every page, covers included, as Word does.
+** `\{document-title}`.
+** `\{chapter-title}`, a `STYLEREF` field.
+** `\{logo}`, which draws `Running::logo` 32 pixels high, through a relationship of its own header or footer part.
+* An unknown placeholder stays as written.
+* With `odd_even`, `w:evenAndOddHeaders` is set.
+An even page's line is its own, or else the odd page's mirrored, with left and right swapped.
+* A `first` line in either the header or the footer gives the body's first page headers and footers of its own, empty where none is given.
+* A header or footer with no line is not written.
+* The default follows asciidoctor-pdf's default theme: no header, and the page number in the footer, at the right of odd pages and the left of even ones.
+
+=== Chapter titles
+
+`\{chapter-title}` is `STYLEREF "heading 1"`, or `"heading 2"` where parts take Heading 1.
+Word and LibreOffice show the latest chapter heading on each page, so a book needs no section for each chapter.
+
+=== The table of contents
+
+* Each listed heading gets a bookmark `_Toc<n>` as it is written.
+The listed headings are parts, book headings, page titles and sections, but not discrete headings or the title.
+* The contents is built after the body, from the headings actually written, and inserted where it was asked for.
+In a book that is the start of the body.
+In an article it is after the title when the page asks for a table of contents, or at `toc::[]` when `toc` is `macro`.
+* It is a `TOC \o "1-<n>" \h \z \u` field with its result already written.
+A `TOCHeading` paragraph (`toc-title`, else `Table of Contents`) is followed by a `TOC<level>` paragraph for each heading.
+Each is a link to the heading's bookmark, with a `PAGEREF` field for its page number.
+* `n` is `toclevels` (default 2), counted from the chapters as Asciidoctor counts it in a book, plus one where there are parts.
+
+==== Updating the contents
+
+The page numbers are blank until the fields are updated.
+
+* `w:updateFields` is set whenever there is a table of contents, so Word offers to update the fields when it opens the document.
+The prompt says that the document contains fields that may refer to other files, and updating fills in the page numbers.
+* LibreOffice does not update on opening.
+Its contents reads correctly, without page numbers, until you choose Tools › Update › Update All.
+* Accurate page numbers before an update are not promised.
 
 == Why it is written in-house
 
@@ -254,6 +332,7 @@ cargo test -p adoc-docx
 ADOC_DOCX_OUT=/tmp cargo test -p adoc-docx --test package -- --ignored
 ADOC_DOCX_OUT=/tmp cargo test -p adoc-docx --test content -- --ignored
 ADOC_DOCX_OUT=/tmp cargo test -p adoc-docx --test media -- --ignored
+ADOC_DOCX_OUT=/tmp cargo test -p adoc-docx --test pages -- --ignored
 ----
 
 `tests/package.rs` reads the package back with its own ZIP reader.
@@ -265,12 +344,22 @@ The same file holds `the_same_document_gives_the_same_bytes`, `a_book_s_pages_ta
 It also holds `docx_bad_images_are_reported`, in which each bad case is warned at its line and nothing is embedded, and a remote image is a link.
 The engine's `diagrams_are_rendered_and_embedded` and `an_image_outside_the_roots_is_not_embedded` in `crates/adoc-engine/tests/docx_export.rs` cover the same through the export command.
 `tests/escaping.rs` holds `docx_text_is_escaped`, `every_character_survives_or_is_replaced` (over every Unicode scalar value), `line_endings_become_breaks` and `empty_documents_are_written`.
+`tests/pages.rs` holds `docx_running_content_has_live_fields`, `docx_covers_and_sections` and `an_article_is_one_section_with_the_running_content`.
 
 The `ADOC_DOCX_OUT` command writes `article.docx` and `escaping.docx` (the `package` test) into the folder named, for opening by hand.
-The `content` command writes `rich.docx` as well, and the `media` command writes `media.docx`.
+The `content` command writes `rich.docx` as well, the `media` command writes `media.docx`, and the `pages` command writes `book.docx`.
 LibreOffice 26 opened both and read the headings as headings.
 In `rich.docx` it kept the table's spans, the nested lists, the footnote and the containers.
 LibreOffice 26 rendered `media.docx` offline with every picture shown.
+LibreOffice 26 laid out `book.docx` (Letter, landscape) as six pages:
+
+. the front cover, filling the page;
+. the title page, with the logo, title, subtitle, author, version and date, and no running content;
+. the contents, with a centred `1` in its first-page footer;
+. an even page, its header mirrored (logo at the left, title at the right) and its footer number at the left;
+. an odd page, with the title at the left and the logo at the right, the chapter's title at the left of the footer and `3 of 6` at the right;
+. the back cover, with no running content.
+
 Microsoft Word has not been tried yet, and its manual checks come with DOCX 8/8.
 
 == Related
