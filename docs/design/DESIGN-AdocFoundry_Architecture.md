@@ -210,7 +210,7 @@ Engine            adoc-engine: sessions, documents, command registry, undo, watc
 Document services adoc-render   adoc-diagrams   adoc-model   adoc-git   adoc-pdf   adoc-docx   adoc-audit   adoc-impact
                           |
                           v
-Language layer    adoc-parser   adoc-dom   adoc-antora   adoc-index   adoc-lang   adoc-math   adoc-spell   adoc-graph
+Language layer    adoc-parser   adoc-dom   adoc-antora   adoc-index   adoc-lang   adoc-math   adoc-spell   adoc-graph   adoc-theme
                           |
                           v
 Core              adoc-core: Document, LineIndex, SourceRange, Section, Anchor, Reference, Diagnostic
@@ -235,6 +235,7 @@ AdocFoundry/
     adoc-math                L1  Phase 5: AsciiMath and LaTeX to checked Typst maths
     adoc-spell               L1  spell checking: Hunspell dictionaries, words, word lists
     adoc-graph               L1  Phase 7: link graph, layout, groups, mind maps, SVG
+    adoc-theme               L1  asciidoctor-pdf themes and bundled fonts, no Typst; read by PDF and Word export
     adoc-render              L2  view tree and HTML backend (from zed-asciidoc)
     adoc-diagrams            L2  Phase 2: Mermaid in process, other tools on PATH, cache
     adoc-model               L2  Phase 3: the visual editor's model and steps

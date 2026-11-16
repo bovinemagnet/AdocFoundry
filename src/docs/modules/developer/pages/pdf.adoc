@@ -28,7 +28,7 @@ It knows nothing of the engine, the workspace or a UI framework: it is given a `
 |Module |Responsibility
 
 |`theme/`
-|The theme loader.
+|The theme loader, now the `adoc-theme` crate (`crates/adoc-theme`), which `adoc-pdf` re-exports as `adoc_pdf::theme`. Only `compatibility.txt` stays here.
 
 |`emit.rs`
 |The emitter: view blocks and inlines to Typst source, with a source map.
@@ -244,7 +244,7 @@ Typst's bundled fonts (`typst-assets`) are not enabled, so the output depends on
 Typst interns file ids for the life of the process, so virtual paths are derived from the real path to stay stable between exports.
 
 `fonts.rs` registers each family of the catalogue under the theme's own name, one face per style, so a theme picks faces as asciidoctor-pdf's catalogue does.
-Bundled fonts are parsed once per process.
+Bundled fonts (the Noto Serif, Noto Sans and M+ 1mn subsets live in `crates/adoc-theme/fonts/`, the bundled themes in `crates/adoc-theme/themes/`) are parsed once per process.
 So are a theme's own font files: they are kept by path in a process-wide map and read again only when a file's modification time or size changes.
 The `FileAccess` check still applies on every use.
 The line gaps (`line_gaps`, read from `hhea.lineGap`) are read through the same fonts, so a compile no longer reads each font file twice.

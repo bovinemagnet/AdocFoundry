@@ -11,6 +11,7 @@
 *** xref:crates:adoc-math.adoc[adoc-math]
 *** xref:crates:adoc-spell.adoc[adoc-spell]
 *** xref:crates:adoc-graph.adoc[adoc-graph]
+*** xref:crates:adoc-theme.adoc[adoc-theme]
 ** L2
 *** xref:crates:adoc-render.adoc[adoc-render]
 *** xref:crates:adoc-diagrams.adoc[adoc-diagrams]

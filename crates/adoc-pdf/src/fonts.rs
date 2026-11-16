@@ -18,62 +18,20 @@ use typst::{
 
 use crate::theme::{FontFile, LoadedTheme};
 
-/// The fonts asciidoctor-pdf bundles, by file name.
-const BUNDLED: &[(&str, &[u8])] = &[
+/// The maths font STEM is typeset in, which is not asciidoctor-pdf's (OFL-1.1,
+/// `fonts/LICENSE-stix`); asciidoctor-pdf's own come from [`adoc_theme::BUNDLED_FONTS`].
+const MATHS: &[(&str, &[u8])] = &[
     // Not asciidoctor-pdf's: the maths font STEM is typeset in (OFL-1.1, `fonts/LICENSE-stix`).
     (
         "STIXTwoMath-Regular.otf",
         include_bytes!("../fonts/STIXTwoMath-Regular.otf"),
     ),
-    (
-        "notoserif-regular-subset.ttf",
-        include_bytes!("../fonts/notoserif-regular-subset.ttf"),
-    ),
-    (
-        "notoserif-bold-subset.ttf",
-        include_bytes!("../fonts/notoserif-bold-subset.ttf"),
-    ),
-    (
-        "notoserif-italic-subset.ttf",
-        include_bytes!("../fonts/notoserif-italic-subset.ttf"),
-    ),
-    (
-        "notoserif-bold_italic-subset.ttf",
-        include_bytes!("../fonts/notoserif-bold_italic-subset.ttf"),
-    ),
-    (
-        "notosans-regular-subset.ttf",
-        include_bytes!("../fonts/notosans-regular-subset.ttf"),
-    ),
-    (
-        "notosans-bold-subset.ttf",
-        include_bytes!("../fonts/notosans-bold-subset.ttf"),
-    ),
-    (
-        "notosans-italic-subset.ttf",
-        include_bytes!("../fonts/notosans-italic-subset.ttf"),
-    ),
-    (
-        "notosans-bold_italic-subset.ttf",
-        include_bytes!("../fonts/notosans-bold_italic-subset.ttf"),
-    ),
-    (
-        "mplus1mn-regular-subset.ttf",
-        include_bytes!("../fonts/mplus1mn-regular-subset.ttf"),
-    ),
-    (
-        "mplus1mn-bold-subset.ttf",
-        include_bytes!("../fonts/mplus1mn-bold-subset.ttf"),
-    ),
-    (
-        "mplus1mn-italic-subset.ttf",
-        include_bytes!("../fonts/mplus1mn-italic-subset.ttf"),
-    ),
-    (
-        "mplus1mn-bold_italic-subset.ttf",
-        include_bytes!("../fonts/mplus1mn-bold_italic-subset.ttf"),
-    ),
 ];
+
+/// Every bundled font, by file name: the maths font and asciidoctor-pdf's.
+fn bundled_files() -> impl Iterator<Item = &'static (&'static str, &'static [u8])> {
+    MATHS.iter().chain(adoc_theme::BUNDLED_FONTS)
+}
 
 /// The PDF core fonts asciidoctor-pdf's `base` theme names, which are not bundled: each stands
 /// in as the bundled family closest to it.
@@ -113,8 +71,7 @@ fn icons() -> &'static [(&'static str, Font)] {
 fn bundled(name: &str) -> Option<Font> {
     static FONTS: OnceLock<Vec<(&'static str, Font)>> = OnceLock::new();
     let fonts = FONTS.get_or_init(|| {
-        BUNDLED
-            .iter()
+        bundled_files()
             .filter_map(|(name, data)| Font::new(Bytes::new(*data), 0).map(|font| (*name, font)))
             .collect()
     });
@@ -127,7 +84,7 @@ fn bundled(name: &str) -> Option<Font> {
 /// The bundled fonts, each under its own family name: enough for a formula typeset on its own.
 pub(crate) fn bundled_set() -> FontSet {
     let mut set = FontSet::default();
-    for (name, _) in BUNDLED {
+    for (name, _) in bundled_files() {
         if let Some(font) = bundled(name) {
             let info = font.info().clone();
             set.fonts.push(font);
@@ -276,7 +233,7 @@ pub(crate) fn font_set(
         );
     }
     // Every bundled font under its own name, last, for glyphs nothing else has.
-    for (name, _) in BUNDLED {
+    for (name, _) in bundled_files() {
         if let Some(font) = bundled(name) {
             let info = font.info().clone();
             set.fonts.push(font);
@@ -410,7 +367,7 @@ fn read(path: &Path, access: &FileAccess) -> Option<Font> {
 
 #[cfg(test)]
 mod tests {
-    use super::{line_gap, BUNDLED};
+    use super::{bundled_files, line_gap};
 
     /// `font` as the one font of a collection: a `ttcf` header before it, and its tables'
     /// offsets moved by the header's length, as they are from the start of the file.
@@ -433,8 +390,7 @@ mod tests {
 
     #[test]
     fn a_collection_s_line_gap_is_its_first_font_s() {
-        let (name, font) = BUNDLED
-            .iter()
+        let (name, font) = bundled_files()
             .find(|(_, data)| line_gap(data).is_some_and(|gap| gap > 0.0))
             .expect("a bundled font with a line gap");
         assert_eq!(line_gap(&collection(font)), line_gap(font), "{name}");

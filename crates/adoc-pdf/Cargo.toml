@@ -14,6 +14,7 @@ fuzzing = []
 adoc-core.workspace = true
 adoc-math.workspace = true
 adoc-render.workspace = true
+adoc-theme.workspace = true
 regex.workspace = true
 roxmltree.workspace = true
 serde.workspace = true

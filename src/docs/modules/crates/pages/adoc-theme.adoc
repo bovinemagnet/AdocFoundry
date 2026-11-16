@@ -1,0 +1,64 @@
+= adoc-theme
+Paul Snow
+:revnumber: 0.0.0
+:description: How the adoc-theme crate loads asciidoctor-pdf 2.3 themes and carries the bundled themes and fonts, with no dependency on Typst.
+
+`adoc-theme` loads asciidoctor-pdf 2.3 YAML themes and carries the themes and fonts that asciidoctor-pdf bundles.
+It is a layer 1 crate that exists so that both exporters can read themes.
+`adoc-pdf` uses it today; Word export will map themes onto Word in a later change, and that is not done yet.
+
+== What it does
+
+The loader, its types and its files moved here unchanged from `crates/adoc-pdf/src/theme/`.
+
+Loading::
+`ThemeSource` says where a theme comes from: a bundled name, a file or a themes directory.
+`load_theme` and `load_theme_within` read it, following `extends`, and give a `LoadedTheme`.
+`KeptTheme` keeps a loaded theme with its source and the modification time and size of each file, so a caller can tell whether it is still current.
+
+Keys and values::
+`ThemeKeys` holds the flattened keys under asciidoctor-pdf's own names.
+`ThemeValue` is a typed value and `Color` a colour.
+`to_pt` and `value_number` convert lengths and numbers.
+
+Fonts::
+`FontCatalog`, `FontFaces` and `FontFile` describe the font families a theme names and the files for each style.
+`BUNDLED_FONTS` lists the fonts asciidoctor-pdf bundles, and `bundled_font(name)` returns one.
+
+Problems::
+`ThemeError` is a theme that cannot be loaded, and `ThemeWarning` a problem that does not stop it.
+
+== Bundled themes and fonts
+
+The themes `default`, `default-sans`, `default-for-print` and `base` are in `crates/adoc-theme/themes/`.
+The fonts are the Noto Serif, Noto Sans and M+ 1mn subsets that asciidoctor-pdf bundles, in `crates/adoc-theme/fonts/` with their notices.
+Both are embedded in the crate, so nothing is read from disk for them.
+
+STIX Two Math and the Font Awesome icon fonts stay in `crates/adoc-pdf/fonts/`, because only Typst uses them.
+The key classification, `crates/adoc-pdf/src/theme/compatibility.txt`, stays in `adoc-pdf` too, since it describes what the PDF template supports.
+
+== Where it sits
+
+`adoc-theme` is on layer 1 and depends only on `adoc-core`, `regex`, `serde` and `serde-saphyr`.
+It never depends on Typst, so a build with Word export and without PDF export can read themes.
+
+`adoc-pdf` depends on it and re-exports it with `pub use adoc_theme as theme;`, so callers still write `adoc_pdf::theme`.
+See xref:adoc-pdf.adoc[adoc-pdf] and xref:developer:pdf.adoc[PDF export] for how the template reads the keys.
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-theme
+cargo test -p xtask theme_crate_builds_without_typst
+----
+
+The xtask test `theme_crate_builds_without_typst` checks that the crate compiles no Typst and that `adoc-pdf` builds on it.
+The theme loader is also checked key by key against asciidoctor-pdf's golden maps by `cargo test -p adoc-pdf --test themes`.
+
+== Related
+
+* xref:adoc-pdf.adoc[adoc-pdf] uses the loader and the bundled files.
+* xref:adoc-docx.adoc[adoc-docx] is the Word exporter that will read themes through this crate.
+* xref:developer:architecture.adoc[Architecture] lists the crate ladder and the layering rules.
+* xref:index.adoc[Crates]

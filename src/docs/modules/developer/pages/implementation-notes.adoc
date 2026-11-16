@@ -367,7 +367,7 @@ PDF/A-1b and PDF/A-1a were added later (issue #63), and PDF/UA-2 waits on Typst,
 
 |Layout of assets
 |`themes/` and `fonts/` at the repository root
-|`crates/adoc-pdf/themes` and `crates/adoc-pdf/fonts`, embedded with `include_str!` and `include_bytes!`
+|`crates/adoc-theme/themes` and `crates/adoc-theme/fonts` (with STIX and Font Awesome in `crates/adoc-pdf/fonts`), embedded with `include_str!` and `include_bytes!`
 |The crate stays self-contained when packaged, and nothing is read from disk.
 
 |Bundled themes

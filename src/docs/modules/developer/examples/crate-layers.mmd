@@ -27,6 +27,7 @@ flowchart TD
         math["adoc-math<br/>(STEM to Typst maths)"]
         spell["adoc-spell<br/>(only spellbook importer)"]
         linkgraph["adoc-graph<br/>(graph types and layout)"]
+        theme["adoc-theme<br/>(PDF themes and fonts, no Typst)"]
     end
     subgraph L0["L0: domain types"]
         core["adoc-core"]
@@ -62,6 +63,8 @@ flowchart TD
     docx --> render
     docx --> dom
     pdf --> math
+    pdf --> theme
+    theme --> core
     audit --> antora
     audit --> lang
     audit --> index

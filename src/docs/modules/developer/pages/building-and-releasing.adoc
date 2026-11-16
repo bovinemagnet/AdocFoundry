@@ -438,7 +438,7 @@ A new font, theme or dictionary needs an entry.
 
 The app's build script, `crates/adocfoundry/build.rs`, includes the module by `#[path]`, writes `notices.json` to `OUT_DIR` and sets `ADOCFOUNDRY_BUILD` to `<target>, <profile>`.
 It reruns when `Cargo.lock`, `Cargo.toml`, the generator, `xtask/licences` or an asset's notice files change.
-The xtask tests `every_dependency_of_the_release_build_has_a_notice` and `every_bundled_file_has_its_notice` fail when a dependency has no notice or a file in `crates/adoc-pdf/fonts`, `crates/adoc-pdf/themes` or `crates/adoc-spell/dictionaries` belongs to no asset.
+The xtask tests `every_dependency_of_the_release_build_has_a_notice` and `every_bundled_file_has_its_notice` fail when a dependency has no notice or a file in `crates/adoc-pdf/fonts`, `crates/adoc-theme/fonts`, `crates/adoc-theme/themes` or `crates/adoc-spell/dictionaries` belongs to no asset.
 
 == The app icon
 
