@@ -577,3 +577,142 @@ fn theme_images_outside_the_roots_are_not_embedded() {
         summary.diagnostics
     );
 }
+
+/// The Word looks PRD, §9 test 6: the theme's headers and footers, odd (recto) and even
+/// (verso), with their fields, attributes, image, font and rule; written `[docx]` lines win.
+#[test]
+fn docx_pdf_theme_running_content() {
+    let (_directory, root, mut engine) = brand_book("");
+    let entries = export_book(&mut engine, &root);
+    let document = adoc_docx::testing::text(&entries, "word/document.xml");
+    let settings = adoc_docx::testing::text(&entries, "word/settings.xml");
+    assert!(settings.contains("<w:evenAndOddHeaders/>"));
+    // Each reference of the body's section, by kind, to its part's text.
+    let rels = adoc_docx::testing::text(&entries, "word/_rels/document.xml.rels");
+    let part = |id: &str| {
+        let at = rels.find(&format!("Id=\"{id}\"")).unwrap();
+        let target = &rels[at..];
+        let start = target.find("Target=\"").unwrap() + 8;
+        let end = target[start..].find('"').unwrap();
+        adoc_docx::testing::text(&entries, &format!("word/{}", &target[start..start + end]))
+            .to_owned()
+    };
+    let xml = roxmltree::Document::parse(document).unwrap();
+    let body_section = xml
+        .descendants()
+        .filter(|node| node.has_tag_name((W, "sectPr")))
+        .find(|node| {
+            node.descendants()
+                .any(|child| child.has_tag_name((W, "pgNumType")))
+        })
+        .expect("the body's section");
+    let reference = |element: &str, kind: &str| {
+        body_section
+            .children()
+            .find(|node| {
+                node.has_tag_name((W, element)) && node.attribute((W, "type")) == Some(kind)
+            })
+            .and_then(|node| {
+                node.attribute((
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+                    "id",
+                ))
+            })
+            .map(part)
+            .unwrap_or_else(|| panic!("no {kind} {element}"))
+    };
+    let text = |part: &str| {
+        adoc_docx::testing::paragraphs(part)
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect::<String>()
+    };
+    let odd_header = reference("headerReference", "default");
+    assert!(text(&odd_header).contains("The Guide"), "{odd_header}");
+    assert!(
+        odd_header.contains("STYLEREF \"heading 1\""),
+        "{odd_header}"
+    );
+    let even_header = reference("headerReference", "even");
+    assert!(
+        even_header.contains("STYLEREF \"heading 2\""),
+        "{even_header}"
+    );
+    assert!(
+        even_header.contains("<w:drawing>"),
+        "the theme's image: {even_header}"
+    );
+    // An inch wide.
+    assert!(even_header.contains(r#"cx="914400""#), "{even_header}");
+    let odd_footer = reference("footerReference", "default");
+    assert!(
+        odd_footer.contains(" PAGE ") && odd_footer.contains(" NUMPAGES "),
+        "{odd_footer}"
+    );
+    let footer_text = text(&odd_footer);
+    assert!(footer_text.contains("of"), "{footer_text}");
+    assert!(
+        footer_text.contains("· v1.0"),
+        "the version and the character: {footer_text}"
+    );
+    assert!(
+        !footer_text.contains('*'),
+        "bold marks left out: {footer_text}"
+    );
+    assert!(
+        !footer_text.contains("Draft"),
+        "a line naming an unset attribute is dropped: {footer_text}"
+    );
+    let even_footer = reference("footerReference", "even");
+    assert!(
+        even_footer.contains(" PAGE ") && !text(&even_footer).contains('_'),
+        "{even_footer}"
+    );
+
+    // The Header and Footer styles: the theme's font colour and size, the header's rule.
+    let styles = adoc_docx::testing::text(&entries, "word/styles.xml");
+    assert_eq!(
+        style_value(styles, "Header", "color", "val").as_deref(),
+        Some("595959")
+    );
+    assert_eq!(
+        style_value(styles, "Header", "sz", "val").as_deref(),
+        Some("16")
+    );
+    assert_eq!(
+        style_value(styles, "Header", "bottom", "color").as_deref(),
+        Some("CC0000")
+    );
+    assert_eq!(
+        style_value(styles, "Header", "bottom", "sz").as_deref(),
+        Some("4")
+    );
+    assert_eq!(
+        style_value(styles, "Footer", "top", "color"),
+        None,
+        "no rule of width 0"
+    );
+    // The header sits in the middle of its 0.6 inch box: (43.2 - 8 * 1.2) / 2 points.
+    assert!(document.contains(r#"w:header="336""#), "{document}");
+
+    // A footer written in the settings wins over the theme's; the header stays the theme's.
+    let (_directory, root, mut engine) = brand_book("\n[docx.footer]\nright = \"Written\"\n");
+    let entries = export_book(&mut engine, &root);
+    let parts: Vec<String> = entries
+        .keys()
+        .filter(|name| name.starts_with("word/footer"))
+        .map(|name| adoc_docx::testing::text(&entries, name).to_owned())
+        .collect();
+    assert!(
+        parts.iter().any(|part| part.contains("Written")),
+        "{parts:?}"
+    );
+    assert!(
+        parts.iter().all(|part| !part.contains("NUMPAGES")),
+        "{parts:?}"
+    );
+    assert!(entries
+        .keys()
+        .filter(|name| name.starts_with("word/header"))
+        .any(|name| adoc_docx::testing::text(&entries, name).contains("The Guide")));
+}

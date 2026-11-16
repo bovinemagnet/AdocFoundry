@@ -248,10 +248,17 @@ fn set_attribute(props: &mut Vec<Prop>, name: &str, key: &str, value: &str) {
 
 /// A run's properties with `look` laid over them.
 fn run_props(props: &[Property<'_>], look: Option<&StyleLook>) -> Vec<Prop> {
-    let mut props: Vec<Prop> = props
-        .iter()
-        .map(|(name, attributes)| Prop::new(name, attributes))
-        .collect();
+    run_look(
+        props
+            .iter()
+            .map(|(name, attributes)| Prop::new(name, attributes))
+            .collect(),
+        look,
+    )
+}
+
+/// `props` with `look` laid over them, in the schema's order.
+fn run_look(mut props: Vec<Prop>, look: Option<&StyleLook>) -> Vec<Prop> {
     if let Some(look) = look {
         if let Some(font) = &look.font {
             let font = font.as_str();
@@ -308,10 +315,17 @@ fn shading(fill: &str) -> Prop {
 
 /// A paragraph's properties with `look` laid over them.
 fn paragraph_props(props: &[Property<'_>], look: Option<&StyleLook>) -> Vec<Prop> {
-    let mut props: Vec<Prop> = props
-        .iter()
-        .map(|(name, attributes)| Prop::new(name, attributes))
-        .collect();
+    paragraph_look(
+        props
+            .iter()
+            .map(|(name, attributes)| Prop::new(name, attributes))
+            .collect(),
+        look,
+    )
+}
+
+/// `props` with `look` laid over them, in the schema's order.
+fn paragraph_look(mut props: Vec<Prop>, look: Option<&StyleLook>) -> Vec<Prop> {
     if let Some(look) = look {
         if let Some(before) = look.before {
             set_attribute(&mut props, "w:spacing", "w:before", &before.to_string());
@@ -331,11 +345,7 @@ fn paragraph_props(props: &[Property<'_>], look: Option<&StyleLook>) -> Vec<Prop
         }
         if let Some(border) = &look.border {
             let width = border.width.to_string();
-            let sides: &[&str] = if border.left_only {
-                &["left"]
-            } else {
-                &["top", "left", "bottom", "right"]
-            };
+            let sides = border.sides.names();
             let mut box_prop = Prop::new("w:pBdr", &[]);
             for side in sides {
                 box_prop.children.push(Prop::new(
@@ -822,20 +832,32 @@ pub(crate) fn styles(width: u32, overrides: &StyleOverrides, look: &WordLook) ->
         xml.empty("w:basedOn", &[("w:val", "Normal")]);
         xml.empty("w:uiPriority", &[("w:val", "99")]);
         xml.empty("w:unhideWhenUsed", &[]);
-        xml.open("w:pPr", &[]);
-        xml.open("w:tabs", &[]);
-        xml.empty("w:tab", &[("w:val", "center"), ("w:pos", &centre)]);
-        xml.empty("w:tab", &[("w:val", "right"), ("w:pos", &right)]);
-        xml.close("w:tabs");
-        xml.empty(
+        // Its tab stops, its spacing and the look's rule; its font, size and colour.
+        let mut tabs = Prop::new("w:tabs", &[]);
+        tabs.children = vec![
+            Prop::new("w:tab", &[("w:val", "center"), ("w:pos", &centre)]),
+            Prop::new("w:tab", &[("w:val", "right"), ("w:pos", &right)]),
+        ];
+        let spacing = Prop::new(
             "w:spacing",
             &[("w:after", "0"), ("w:line", "240"), ("w:lineRule", "auto")],
         );
-        xml.close("w:pPr");
-        xml.open("w:rPr", &[]);
-        xml.empty("w:sz", &[("w:val", "18")]);
-        xml.empty("w:szCs", &[("w:val", "18")]);
-        xml.close("w:rPr");
+        let own = look.style(id);
+        let paragraph = paragraph_look(vec![tabs, spacing], own);
+        let run = run_look(
+            vec![
+                Prop::new("w:sz", &[("w:val", "18")]),
+                Prop::new("w:szCs", &[("w:val", "18")]),
+            ],
+            own,
+        );
+        for (element, properties) in [("w:pPr", &paragraph), ("w:rPr", &run)] {
+            xml.open(element, &[]);
+            for property in properties {
+                property.write(&mut xml);
+            }
+            xml.close(element);
+        }
         xml.close("w:style");
     }
     // The table of contents: its heading (not itself listed), and an entry style per level,

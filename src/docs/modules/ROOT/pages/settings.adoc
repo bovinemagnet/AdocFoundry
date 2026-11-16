@@ -725,8 +725,23 @@ The page's `pdf-page-size`, `pdf-page-layout` and `pdf-page-margin` attributes w
 The page's own `title-logo-image` wins over the theme's logo.
 * A theme gives the covers: `cover_front_image` and `cover_back_image`, when the page names none.
 The page's `front-cover-image` and `back-cover-image` win.
+* A theme gives the headers and footers: its `header_*` and `footer_*` keys become the Word document's headers and footers.
+** Recto and verso: odd pages take the `recto` content (`header_recto_left_content`, `header_recto_center_content` and `header_recto_right_content`, and the footer's), and even pages the `verso` content.
+As in the PDF, even pages show only their own `verso` content, so a theme without verso content leaves even pages blank.
+** A theme with no `header_height` (or `footer_height`) shows no header (or footer), as the PDF does.
+** Content: `\{page-number}` and `\{page-count}` are live page fields, and `\{document-title}` is the document's title.
+`\{chapter-title}`, `\{section-title}`, `\{section-or-chapter-title}` and `\{part-title}` are Word fields that show the current heading.
+Word cannot fall back from one heading to another, so `\{section-or-chapter-title}` shows the section's title.
+Any other attribute is the document's value, and a line naming an attribute that is not set is left out, as asciidoctor-pdf leaves it out.
+** Pictures: an `image:` macro standing alone is a picture from the theme's folder, as wide as its `pdfwidth` (or `scaledwidth`, `width`) when that is an absolute length, else a line high.
+** Marks and references: `*bold*`, `_italic_` and `` `monospace` `` marks are left out, keeping their text, and character references such as `&#169;` are the characters.
+** Font and rule: the `header_font_*` and `footer_font_*` keys style Word's Header and Footer styles.
+`header_border_color` and `header_border_width` draw a rule under the header, and the footer's draw a rule above it.
+** Position: each header and footer sits within the theme's `header_height` (or `footer_height`) at the page's edge, placed by its `vertical_align` and `padding` as in the PDF.
+** Column widths (`header_columns`) are not used: Word's left, centre and right tab stops place the three slots.
+** A `[docx.header]` or `[docx.footer]` written in the settings replaces the theme's, and so do written `margins.header`, `margins.footer` and `odd_even`.
 * A key that Word cannot express is ignored.
-* Still to come in a later release: the theme's headers and footers, and the theme's fonts embedded in the document.
+* Still to come in a later release: the theme's fonts embedded in the document.
 Until then, Word shows the theme's fonts only where they are installed.
 * A template is found and checked to exist, and the export reports it as the look used.
 Its contents, meaning its styles, page, and headers and footers, are applied in a later release.

@@ -338,12 +338,64 @@ impl Writer<'_> {
                 "chapter-title" => {
                     self.field(&format!(" STYLEREF \"{chapter}\" "), "", Format::default());
                 }
+                // A part is the level above a chapter, a section the level below; Word's
+                // fields cannot fall back from one style to another.
+                "part-title" => self.field(" STYLEREF \"heading 1\" ", "", Format::default()),
+                "section-title" | "section-or-chapter-title" => {
+                    let level = chapter
+                        .rsplit(' ')
+                        .next()
+                        .and_then(|level| level.parse::<u8>().ok())
+                        .unwrap_or(1);
+                    let section = format!("heading {}", (level + 1).min(9));
+                    self.field(&format!(" STYLEREF \"{section}\" "), "", Format::default());
+                }
                 "logo" => self.logo(),
+                image if image.starts_with("image:") => {
+                    self.running_image(&image["image:".len()..]);
+                }
                 other => self.text(&format!("{{{other}}}"), Format::default()),
             }
             rest = &rest[end + 1..];
         }
         self.text(rest, Format::default());
+    }
+
+    /// A theme's running image: `<path>`, or `<path>|<width in points>`; a line high
+    /// without a width.
+    fn running_image(&mut self, spec: &str) {
+        let (path, width) = match spec.rsplit_once('|') {
+            Some((path, width)) => (path, width.parse::<f64>().ok()),
+            None => (spec, None),
+        };
+        let path = std::path::PathBuf::from(path);
+        match self.media.load(&path, &self.options.access) {
+            Ok(picture) => {
+                let ratio = picture.height / picture.width.max(1.0);
+                // A width in points, as EMUs; else a line high, in pixels at 96 to the inch.
+                let (width, height) = match width {
+                    Some(width) => (width * 12700.0, width * ratio * 12700.0),
+                    None => (
+                        LOGO_HEIGHT / ratio.max(f64::EPSILON) * 9525.0,
+                        LOGO_HEIGHT * 9525.0,
+                    ),
+                };
+                self.drawing(
+                    &picture,
+                    (width.round() as i64, height.round() as i64),
+                    "Logo",
+                    None,
+                    None,
+                );
+            }
+            Err(reason) => self.warn(
+                None,
+                format!(
+                    "the running content's image {} {reason}; it is left out",
+                    path.display()
+                ),
+            ),
+        }
     }
 
     /// The running content's logo, a line high.

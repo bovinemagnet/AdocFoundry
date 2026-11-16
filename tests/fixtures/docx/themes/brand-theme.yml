@@ -76,3 +76,28 @@ title_page:
 cover:
   front:
     image: brand-cover.png
+header:
+  height: 0.6in
+  font_color: '595959'
+  font_size: 8
+  border_color: 'CC0000'
+  border_width: 0.5
+  recto:
+    left:
+      content: '{document-title}'
+    right:
+      content: '{chapter-title}'
+  verso:
+    left:
+      content: '{section-title}'
+    right:
+      content: 'image:brand-logo.png[pdfwidth=1in]'
+footer:
+  height: 0.5in
+  border_width: 0
+  recto:
+    right:
+      content: "*{page-number}* of {page-count} &#183; v{revnumber}\nDraft {unset-attribute}"
+  verso:
+    left:
+      content: '_{page-number}_'

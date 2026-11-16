@@ -16,7 +16,9 @@ use std::{
 
 use adoc_dom::SourceSpan;
 use adoc_render::ViewTree;
-pub use look::{Border, BoxLook, StyleLook, TitlePageLook, WordLook, MAPPED_KEYS};
+pub use look::{
+    Border, BorderSides, BoxLook, RunningLook, StyleLook, TitlePageLook, WordLook, MAPPED_KEYS,
+};
 
 mod body;
 mod drawing;

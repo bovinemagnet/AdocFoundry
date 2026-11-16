@@ -113,10 +113,14 @@ mod resolve {
             }
         }
 
-        /// What the look gives the writer's styles, title page and covers.
-        pub(crate) fn word_look(&self) -> adoc_docx::WordLook {
+        /// What the look gives the writer's styles, title page, covers and running content;
+        /// `attributes` are the document's, which running content may name.
+        pub(crate) fn word_look(
+            &self,
+            attributes: &BTreeMap<String, String>,
+        ) -> adoc_docx::WordLook {
             match self {
-                Self::PdfTheme { theme, .. } => adoc_docx::WordLook::from_theme(theme),
+                Self::PdfTheme { theme, .. } => adoc_docx::WordLook::from_theme(theme, attributes),
                 Self::None | Self::Template { .. } => adoc_docx::WordLook::default(),
             }
         }

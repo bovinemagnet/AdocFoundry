@@ -268,3 +268,25 @@ As a GitHub stack, one PR each:
 - **Tests.** `docx_pdf_theme_styles` and `docx_pdf_theme_page_and_title_page` (`tests/docx_looks.rs`) export a book in `tests/fixtures/docx/themes/brand-theme.yml`, which gives every mapped family a distinct value, and check each family arrived. The first also checks that a written `[docx.styles]` key wins and the rest stays the theme's.
 - **On a real theme.** A real corpus theme (one with its own fonts) exported through LibreOffice keeps its heading sizes and colours, its table header shading and its link colours. Its fonts show as substitutes until T5 embeds them.
 
+### T4 (#672): theme headers and footers
+
+- **Translation, not shared parsing.** The theme's running content is translated in `adoc-docx` (`look.rs`, `running`) into the Word writer's own slot language. It is not parsed by the PDF's `running.rs`, which writes Typst markup; moving that into `adoc-theme`, as §7 proposed, would have shared only the attribute rules. The rules are the PDF's:
+  - page values (`{page-number}`, `{page-count}`, `{document-title}`, the chapter, section and part titles) are kept;
+  - other attributes take the document's values, and a line naming an unset one is dropped;
+  - character references are decoded;
+  - an `image:` macro standing alone is a picture from the theme's folder, as `{image:<path>|<points>}`;
+  - an absolute `pdfwidth`, `scaledwidth` or `width` sizes it, and anything else makes it a line high.
+- **Odd and even pages.** Even (verso) pages show only their own content, with no fallback to recto, as the PDF template does (`contents.at(side, default: (:))`). A periphery with no `<periphery>_height` shows none.
+- **Fields.**
+  - `{part-title}` is `STYLEREF "heading 1"`.
+  - `{section-title}` and `{section-or-chapter-title}` are the level below the chapter's; Word's fields cannot fall back from one style to another.
+  - `*bold*`, `_italic_` and `` `monospace` `` marks are left out with their text kept, rather than formatted; this is an approximation.
+- **Position.** The distance from the page's edge follows the PDF's box: within `<periphery>_height`, by `_vertical_align` and `_padding`, with the text taken as 1.2 times the font size.
+- **Styles.** The Header and Footer styles take `<periphery>_font_*` and a rule from `_border_color`/`_border_width`: below the header, above the footer. They are written through the same look overlay as the other styles (`paragraph_look`, `run_look`).
+- **What wins.** Written `[docx]` `header`, `footer`, `margins.header`, `margins.footer` and `odd_even` keys win over the theme's.
+- **Not used.** `<periphery>_columns` is ignored: Word's left, centre and right tab stops place the slots.
+- **Tests.**
+  - `docx_pdf_theme_running_content` (`tests/docx_looks.rs`) covers odd and even headers and footers, fields, an attribute, a dropped line, the marks, a character reference, a one-inch image, the style's colour, size and rule, the header's distance, and a written footer winning while the theme's header stays.
+  - `running_content_is_read_as_the_pdf_reads_it` (`look.rs`) covers half-written content, which never panics, marks inside words, and image macros.
+- **On a real theme.** A corpus page exported in its own theme shows the theme's logo, section title and rule in the header, and its logo, copyright line and "Page n of m" in the footer.
+

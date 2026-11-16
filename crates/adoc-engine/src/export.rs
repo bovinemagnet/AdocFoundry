@@ -1570,7 +1570,7 @@ impl Engine {
                 self.docx_options(
                     &args,
                     resolved.page(&attributes).as_ref(),
-                    resolved.word_look(),
+                    resolved.word_look(&attributes),
                 ),
                 resolved.report(),
             ),
@@ -1668,6 +1668,8 @@ impl Engine {
             (None, _) => settings.landscape,
         };
         let margins = settings.margins;
+        let running = look.running.clone();
+        let running = running.as_ref();
         let side = |key: &str, written_value: u32, index: usize| match page {
             Some(page) if !written(key) => twips(page.margin[index]),
             _ => written_value,
@@ -1682,13 +1684,34 @@ impl Engine {
                 right: side("margins.right", margins.right, 1),
                 bottom: side("margins.bottom", margins.bottom, 2),
                 left: side("margins.left", margins.left, 3),
-                header: margins.header,
-                footer: margins.footer,
+                header: match running.and_then(|running| running.header_distance) {
+                    Some(distance) if !written("margins.header") => distance,
+                    _ => margins.header,
+                },
+                footer: match running.and_then(|running| running.footer_distance) {
+                    Some(distance) if !written("margins.footer") => distance,
+                    _ => margins.footer,
+                },
             },
             running: adoc_docx::Running {
-                header: slots(&settings.header),
-                footer: slots(&settings.footer),
-                odd_even: settings.odd_even,
+                // The look's headers and footers where `[docx]` wrote none; a theme without
+                // one shows none.
+                header: match running {
+                    Some(running) if !written("header") => {
+                        running.header.clone().unwrap_or_default()
+                    }
+                    _ => slots(&settings.header),
+                },
+                footer: match running {
+                    Some(running) if !written("footer") => {
+                        running.footer.clone().unwrap_or_default()
+                    }
+                    _ => slots(&settings.footer),
+                },
+                odd_even: match running {
+                    Some(_) if !written("odd_even") => true,
+                    _ => settings.odd_even,
+                },
                 logo: settings
                     .logo
                     .as_deref()
