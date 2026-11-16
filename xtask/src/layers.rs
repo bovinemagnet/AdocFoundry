@@ -29,6 +29,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("adoc-model", 2),
     ("adoc-git", 2),
     ("adoc-pdf", 2),
+    ("adoc-docx", 2),
     ("adoc-audit", 2),
     ("adoc-impact", 2),
     ("adoc-engine", 3),
@@ -45,6 +46,7 @@ pub const SAME_LAYER_ALLOWED: &[(&str, &str)] = &[
     ("adoc-lang", "adoc-index"),
     ("adoc-lang", "adoc-antora"),
     ("adoc-pdf", "adoc-render"),
+    ("adoc-docx", "adoc-render"),
 ];
 
 /// Crates whose logic the engine orchestrates: front ends reach them only through
@@ -442,6 +444,19 @@ fn lean_violations(packages: &BTreeSet<String>) -> Vec<String> {
         .collect()
 }
 
+/// What the DOCX writer must never compile: it writes Word documents from the view tree, never
+/// through the PDF exporter or Typst.
+const DOCX_EXCLUDED: &[&str] = &["adoc-pdf", "typst"];
+
+/// A violation for each crate of [`DOCX_EXCLUDED`] in the DOCX writer's build.
+fn docx_violations(packages: &BTreeSet<String>) -> Vec<String> {
+    DOCX_EXCLUDED
+        .iter()
+        .filter(|name| packages.contains(**name))
+        .map(|name| format!("adoc-docx builds {name}; DOCX export needs neither PDF nor Typst"))
+        .collect()
+}
+
 /// Runs every check over the workspace rooted at `root`.
 pub fn run(root: &Path) -> Result<Vec<String>, String> {
     let crates = root.join("crates");
@@ -471,6 +486,7 @@ pub fn run(root: &Path) -> Result<Vec<String>, String> {
         violations.extend(server_violations(package, &build_features(root, package)?));
     }
     violations.extend(lean_violations(&default_build_packages(root, "adoc-ls")?));
+    violations.extend(docx_violations(&default_build_packages(root, "adoc-docx")?));
     Ok(violations)
 }
 
@@ -743,6 +759,27 @@ libc = "=0.2.0"
             [
                 "adoc-ls builds typst by default; only its features may bring it",
                 "adoc-ls builds gix by default; only its features may bring it",
+            ]
+        );
+    }
+
+    /// The DOCX export PRD, §10 test 3: the DOCX writer compiles neither the PDF exporter nor
+    /// Typst.
+    #[test]
+    fn docx_builds_without_typst() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let packages = default_build_packages(&root, "adoc-docx").unwrap();
+        assert!(packages.contains("adoc-render"), "{packages:?}");
+        assert_eq!(docx_violations(&packages), Vec::<String>::new());
+
+        let with_pdf: BTreeSet<String> = ["adoc-render", "adoc-pdf", "typst"]
+            .map(str::to_owned)
+            .into();
+        assert_eq!(
+            docx_violations(&with_pdf),
+            [
+                "adoc-docx builds adoc-pdf; DOCX export needs neither PDF nor Typst",
+                "adoc-docx builds typst; DOCX export needs neither PDF nor Typst",
             ]
         );
     }

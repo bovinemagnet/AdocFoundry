@@ -443,6 +443,7 @@ L2  adoc-render     the view tree and HTML
     adoc-model      the visual editor's model
     adoc-git        Git, over gix
     adoc-pdf        PDF export
+    adoc-docx       DOCX export
     adoc-audit      the documentation quality audit
     adoc-impact     documentation impact analysis
 L1  adoc-parser     the line-oriented parser

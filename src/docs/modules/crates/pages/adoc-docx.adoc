@@ -1,0 +1,133 @@
+= adoc-docx
+Paul Snow
+:revnumber: 0.0.0
+:description: DOCX export: the view tree written as an editable Word package, in-house, with no PDF or Typst in between.
+
+`adoc-docx` turns a rendered view tree into a Microsoft Word document that can be edited.
+It is at layer L2, beside `adoc-render`, which it reads.
+It is the first work package (DOCX 1/8, issue https://github.com/bovinemagnet/AdocFoundry/issues/618[#618]) of the DOCX export epic https://github.com/bovinemagnet/AdocFoundry/issues/613[#613].
+The specification is `docs/prd/PRD-AdocFoundry_DOCX_Export.md` in the repository, which is not part of this site.
+The engine does not call the crate yet, and there is no CLI, app or MCP entry point for it.
+
+== What it does
+
+The crate is given a `DocxDocument` and `DocxOptions`, and writes a `.docx` package to any `Write` sink.
+It returns a `DocxReport` of diagnostics, or a `DocxError`.
+It knows nothing of the engine, the workspace or a UI framework.
+
+== Where it sits
+
+`adoc-docx` is headless.
+It depends on `adoc-render`, an allowed same-layer pair listed in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`, and on `adoc-dom`.
+It also uses `flate2` and `crc32fast`, which were already in the dependency tree.
+It must never build `adoc-pdf` or Typst.
+`DOCX_EXCLUDED` in `xtask/src/layers.rs` lists them, `cargo xtask layers` checks it, and so does the test `docx_builds_without_typst`.
+
+== The API
+
+`write_docx(&DocxDocument, &DocxOptions, sink: impl Write) -> Result<DocxReport, DocxError>` is the one entry point.
+
+[cols="1,3"]
+|===
+|Type |Meaning
+
+|`DocxDocument`
+|`Article(DocxPage)` or `Book(DocxBook)`.
+
+|`DocxPage`
+|A `key`, a `view` (the `ViewTree`) and a `depth`, which is how far the page's sections move down.
+
+|`DocxBook`
+|A `title`, an optional `subtitle`, `attributes` as a document header would set them, and `items`.
+
+|`BookItem`
+|`Part`, `Heading { title, depth }` or `Page`.
+
+|`DocxOptions`
+|A `paper`, `Paper::A4` by default or `Paper::Letter`.
+
+|`DocxReport`
+|`diagnostics`, each a `DocxDiagnostic` with a `DocxSeverity`, a `message` and an optional `source` span.
+
+|`DocxError`
+|`Io` when the sink refuses the bytes, and `TooLarge` past 65,535 parts or 4 GiB, since the ZIP is written without ZIP64.
+|===
+
+== The package
+
+The crate writes these parts, in a fixed order.
+
+* `[Content_Types].xml`
+* `_rels/.rels`
+* `word/document.xml`, with `word/_rels/document.xml.rels`
+* `word/styles.xml`
+* `docProps/core.xml`, holding the title, the creator (from `author` or `authors`), the description and the keywords, and no dates
+
+== The body
+
+The body is written as follows.
+
+* The title is in the Title style, and a book's subtitle is in Subtitle.
+* Sections and discrete headings use Word's built-in heading styles, `Heading1` to `Heading9`, named `heading 1` and so on, so that Word treats them as its own and gives them outline levels.
+* Paragraphs are editable text, with tabs as Word tabs and line breaks as breaks.
+* Thematic breaks are a bordered empty paragraph, and page breaks are page breaks.
+* In a book, a page's title becomes a heading at the page's depth, and its sections move down by that depth.
+* Where a book has parts, a part is Heading 1 on a new page, and everything else moves down one level.
+
+Every other block (lists, tables, code, images, diagrams, formulas, admonitions, quotes and the rest) is, for now, written as plain paragraphs of its text, with a warning that names what it is and where it was.
+Footnotes are written as text at the end of their page, with a warning.
+A table of contents block gives a warning.
+Later work packages (DOCX 3/8 to 6/8) replace these with Word structures.
+
+== Why it is written in-house
+
+The specification's open decision (§13) was whether to use the `docx-rs` crate.
+This package's spike settled it against, for two findings about `docx-rs` 0.4.22.
+
+* It numbers paragraphs, footnotes, bookmarks, headers and pictures from process-wide counters (`static AtomicUsize`), so a document's bytes would depend on what the process exported before.
+The specification (§9) requires the same input to give the same bytes.
+* It wrote control characters such as U+0001 straight into `word/document.xml`, which is then not well-formed XML.
+
+So the crate writes the package itself, and needed no new dependency.
+
+[cols="1,3"]
+|===
+|File |Responsibility
+
+|`xml.rs`
+|The one escaping writer every document string goes through.
+It escapes `&`, `<` and `>`, and `"` in attributes, writes carriage returns and attribute tabs and line feeds as character references, and replaces the characters XML 1.0 forbids with U+FFFD.
+
+|`zip.rs`
+|Writes the ZIP in order, with every entry dated 1 January 1980 and no seeking.
+
+|`package.rs`
+|Writes the content types and each part's relationships in a fixed order.
+
+|`parts.rs`, `body.rs`
+|The parts' fixed contents, and the body written from the view tree.
+|===
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-docx
+ADOC_DOCX_OUT=/tmp cargo test -p adoc-docx --test package -- --ignored
+----
+
+`tests/package.rs` reads the package back with its own ZIP reader.
+`docx_package_is_valid_opc` checks every CRC and size, that every part is well-formed and has a content type, that every relationship's target exists, that every `r:` id has a relationship and that every paragraph style used is defined.
+The same file holds `the_same_document_gives_the_same_bytes`, `a_book_s_pages_take_headings_at_their_depth` and `what_is_not_written_as_word_structure_yet_is_shown_as_text_and_reported`.
+`tests/escaping.rs` holds `docx_text_is_escaped`, `every_character_survives_or_is_replaced` (over every Unicode scalar value), `line_endings_become_breaks` and `empty_documents_are_written`.
+
+The `ADOC_DOCX_OUT` command writes `article.docx` and `escaping.docx` into the folder named, for opening by hand.
+LibreOffice 26 opened both and read the headings as headings.
+Microsoft Word has not been tried yet, and its manual checks come with DOCX 8/8.
+
+== Related
+
+* xref:adoc-render.adoc[adoc-render], which builds the view tree
+* xref:adoc-dom.adoc[adoc-dom], for source spans
+* xref:adoc-pdf.adoc[adoc-pdf], the other export, which this crate never builds
+* xref:index.adoc[Crates]
