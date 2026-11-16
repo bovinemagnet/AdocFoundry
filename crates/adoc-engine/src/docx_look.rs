@@ -113,6 +113,14 @@ mod resolve {
             }
         }
 
+        /// What the look gives the writer's styles, title page and covers.
+        pub(crate) fn word_look(&self) -> adoc_docx::WordLook {
+            match self {
+                Self::PdfTheme { theme, .. } => adoc_docx::WordLook::from_theme(theme),
+                Self::None | Self::Template { .. } => adoc_docx::WordLook::default(),
+            }
+        }
+
         /// The page the look gives: a PDF theme's, with the page's `pdf-page-size`,
         /// `pdf-page-layout` and `pdf-page-margin` over it, as PDF export reads them.
         pub(crate) fn page(&self, attributes: &BTreeMap<String, String>) -> Option<PageGeometry> {

@@ -713,12 +713,27 @@ What a look gives today:
 
 * A theme gives the page: its `page_size`, `page_layout` and `page_margin`.
 The page's `pdf-page-size`, `pdf-page-layout` and `pdf-page-margin` attributes win over the theme, as they do for PDF.
-The theme's styles, title page, headers and footers, and fonts come to Word in later releases.
+* A theme gives styles, which a reader can still change in Word:
+** The body: the document's defaults and Normal, from `base_font_family`, `base_font_size`, `base_font_color`, `base_line_height` and `base_text_align`.
+** Headings 1 to 6: the shared `heading_*` keys, with each level's `heading_h<n>_*` keys over them (font, size, colour, style, `text_transform: uppercase` as capitals, and `margin_top` and `margin_bottom` as space before and after).
+** Links: Hyperlink, from `link_font_color` and `link_text_decoration`.
+** Code: Source Code and Literal Block (font, size, colour, background and border), and Code Char for code spans (font, colour and background).
+** Captions: the `caption_*` keys, with `caption_text_align` (or `caption_align`).
+** Quotes: the `quote_*` keys, with the left bar from `quote_border_color` and `quote_border_left_width`.
+** Boxes: admonitions (the background, and the column rule as the left bar); sidebars and examples (background and border); and tables (border colour and width, background, header row background, font colour and bold, and stripes on every other body row).
+* A theme gives the title page: `title_page_text_align` (else `base_text_align`), the title, subtitle and author styles (`title_page_title_*`, `title_page_subtitle_*` and `title_page_authors_*`), and the logo (`title_page_logo_image` and `title_page_logo_align`).
+The page's own `title-logo-image` wins over the theme's logo.
+* A theme gives the covers: `cover_front_image` and `cover_back_image`, when the page names none.
+The page's `front-cover-image` and `back-cover-image` win.
+* A key that Word cannot express is ignored.
+* Still to come in a later release: the theme's headers and footers, and the theme's fonts embedded in the document.
+Until then, Word shows the theme's fonts only where they are installed.
 * A template is found and checked to exist, and the export reports it as the look used.
-Its styles, page, and headers and footers are applied in a later release.
+Its contents, meaning its styles, page, and headers and footers, are applied in a later release.
 
 A `[docx]` key written in either settings file applies over the look.
 A key that is not written takes the look's value, else the built-in default.
+This holds for `[docx.styles]` too: a written `heading_colour` replaces the theme's heading colour, and the rest stays the theme's.
 So `paper`, `orientation` and each `[docx.margins]` side, when written, win over the theme's page, and an export's or profile's own `paper` and `orientation` win over everything.
 
 [#docx-running]

@@ -16,11 +16,13 @@ use std::{
 
 use adoc_dom::SourceSpan;
 use adoc_render::ViewTree;
+pub use look::{Border, BoxLook, StyleLook, TitlePageLook, WordLook, MAPPED_KEYS};
 
 mod body;
 mod drawing;
 mod inline;
 mod labels;
+mod look;
 mod media;
 mod numbering;
 mod package;
@@ -203,6 +205,8 @@ pub struct StyleOverrides {
 /// How a document is exported.
 #[derive(Clone, Debug, Default)]
 pub struct DocxOptions {
+    /// A PDF theme's (or a template's) look, under `styles`.
+    pub look: WordLook,
     pub styles: StyleOverrides,
     pub paper: Paper,
     pub landscape: bool,
@@ -387,7 +391,7 @@ pub fn write_docx(
             package::Part {
                 name: "word/styles.xml".to_owned(),
                 content_type: parts::STYLES_TYPE,
-                data: parts::styles(writer.width, &options.styles),
+                data: parts::styles(writer.width, &options.styles, &options.look),
                 relationships: Vec::new(),
             },
             package::Part {

@@ -10,6 +10,7 @@ repository.workspace = true
 adoc-core.workspace = true
 adoc-dom.workspace = true
 adoc-render.workspace = true
+adoc-theme.workspace = true
 crc32fast.workspace = true
 flate2.workspace = true
 resvg.workspace = true

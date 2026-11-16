@@ -195,16 +195,29 @@ impl Writer<'_> {
         subtitle: Option<&str>,
         attributes: &std::collections::BTreeMap<String, String>,
     ) {
-        let align = self.align.replace("center");
-        if let Some(logo) = logo {
+        let look = &self.options.look.title_page;
+        let page_align = static_align(look.align.as_deref()).unwrap_or("center");
+        let logo_align = static_align(look.logo_align.as_deref()).unwrap_or(page_align);
+        // The page's logo, else the theme's.
+        let theme_logo = look.logo.clone().map(|path| ViewImage {
+            target: path.to_string_lossy().into_owned(),
+            path: Some(path),
+            url: None,
+            alt: String::new(),
+            width: None,
+            height: None,
+        });
+        let align = self.align.replace(logo_align);
+        if let Some(logo) = logo.cloned().or(theme_logo) {
             let logo = ViewImage {
                 alt: "Logo".to_owned(),
-                ..logo.clone()
+                ..logo
             };
             self.paragraph(Para::default(), |writer| {
                 writer.image(&logo, Format::default(), None);
             });
         }
+        self.align = Some(page_align);
         self.paragraph(
             Para {
                 style: Some("Title"),
@@ -507,4 +520,15 @@ fn slots_empty(slots: &Slots) -> bool {
     slots.odd.is_empty()
         && slots.even.as_ref().is_none_or(Line::is_empty)
         && slots.first.as_ref().is_none_or(Line::is_empty)
+}
+
+/// An alignment a look names, as the writer keeps it.
+fn static_align(align: Option<&str>) -> Option<&'static str> {
+    match align? {
+        "left" => Some("left"),
+        "center" => Some("center"),
+        "right" => Some("right"),
+        "both" => Some("both"),
+        _ => None,
+    }
 }

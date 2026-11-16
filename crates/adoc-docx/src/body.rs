@@ -209,10 +209,28 @@ impl<'a> Writer<'a> {
                 _ => None,
             }),
         };
+        // The page's images, else the look's covers.
+        let look_image = |path: &Option<PathBuf>, alt: &str| {
+            path.clone().map(|path| adoc_render::ViewImage {
+                target: path.to_string_lossy().into_owned(),
+                path: Some(path),
+                url: None,
+                alt: alt.to_owned(),
+                width: None,
+                height: None,
+            })
+        };
         let image = |name: &str| {
             first
                 .and_then(|view| view.attribute_images.get(name))
                 .cloned()
+                .or_else(|| match name {
+                    "front-cover-image" => {
+                        look_image(&self.options.look.front_cover, "Front cover")
+                    }
+                    "back-cover-image" => look_image(&self.options.look.back_cover, "Back cover"),
+                    _ => None,
+                })
         };
         let (front, back, logo) = (
             image("front-cover-image"),

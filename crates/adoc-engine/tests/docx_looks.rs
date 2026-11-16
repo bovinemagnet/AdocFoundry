@@ -239,3 +239,341 @@ fn docx_settings_apply_over_the_look() {
     let (_, document) = export(&mut engine, &root, None).unwrap();
     assert!(document.contains(LETTER));
 }
+
+/// A book of two pages in `brand`'s look, from `tests/fixtures/docx/themes`, with `settings`
+/// after the theme's own.
+fn brand_book(settings: &str) -> (tempfile::TempDir, PathBuf, Engine) {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_engine::normalize_path(directory.path());
+    let themes = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/docx/themes");
+    fs::create_dir_all(root.join("themes")).unwrap();
+    for entry in fs::read_dir(themes).unwrap() {
+        let entry = entry.unwrap();
+        fs::copy(entry.path(), root.join("themes").join(entry.file_name())).unwrap();
+    }
+    let pages = root.join("guide/modules/ROOT/pages");
+    fs::create_dir_all(&pages).unwrap();
+    fs::write(
+        root.join("guide/antora.yml"),
+        "name: guide\ntitle: The Guide\nversion: '1.0'\nnav:\n- modules/ROOT/nav.adoc\n\
+         asciidoc:\n  attributes:\n    author: Paul Snow\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("guide/modules/ROOT/nav.adoc"),
+        "* xref:index.adoc[]\n* xref:more.adoc[]\n",
+    )
+    .unwrap();
+    fs::write(pages.join("index.adoc"), "= Start\n\nThe start.\n").unwrap();
+    fs::write(
+        pages.join("more.adoc"),
+        "= More\n\n== A section\n\nSee https://example.com[a link] and `code`.\n\n\
+         .A listing\n[source,sh]\n----\necho hi\n----\n\n\
+         ____\nA quotation.\n____\n\nNOTE: A note.\n\n.A sidebar\n****\nAside.\n****\n\n\
+         .An example\n====\nExample.\n====\n\n.A table\n|===\n|Head |Head\n|a |b\n|c |d\n|===\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".adocfoundry.toml"),
+        format!("[pdf]\ntheme = \"brand\"\nthemes_dir = \"themes\"\n{settings}"),
+    )
+    .unwrap();
+    let mut settings = Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    (directory, root, engine)
+}
+
+/// Exports `brand_book`'s component and gives the package's parts.
+fn export_book(engine: &mut Engine, root: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let output = root.join("guide.docx");
+    let summary = engine
+        .export_docx_blocking(
+            DocxExportArgs {
+                target: ExportTarget::Component {
+                    name: "guide".to_owned(),
+                    version: Some("1.0".to_owned()),
+                },
+                output: output.clone(),
+                attributes: Vec::new(),
+                paper: None,
+                landscape: None,
+                look: None,
+            },
+            WAIT,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(look(&summary), (LookKind::PdfTheme, "brand".to_owned()));
+    adoc_docx::testing::assert_valid_package(&fs::read(&output).unwrap())
+}
+
+const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+/// The value of `attribute` on the first `element` inside the style `id` (or the document's
+/// defaults, for `id` empty), as `styles.xml` gives it.
+fn style_value(styles: &str, id: &str, element: &str, attribute: &str) -> Option<String> {
+    let xml = roxmltree::Document::parse(styles).unwrap();
+    let scope = if id.is_empty() {
+        xml.descendants()
+            .find(|node| node.has_tag_name((W, "docDefaults")))?
+    } else {
+        xml.descendants().find(|node| {
+            node.has_tag_name((W, "style")) && node.attribute((W, "styleId")) == Some(id)
+        })?
+    };
+    let found = scope
+        .descendants()
+        .find(|node| node.has_tag_name((W, element)))?;
+    Some(found.attribute((W, attribute)).unwrap_or("").to_owned())
+}
+
+/// The Word looks PRD, §9 test 4: a PDF theme's body, headings, links, code, captions,
+/// quotes and boxes become the Word styles they style, each still a style a reader can change.
+#[test]
+fn docx_pdf_theme_styles() {
+    let (_directory, root, mut engine) = brand_book("");
+    let entries = export_book(&mut engine, &root);
+    let styles = adoc_docx::testing::text(&entries, "word/styles.xml");
+    let value =
+        |id: &str, element: &str, attribute: &str| style_value(styles, id, element, attribute);
+    let has = |id: &str, element: &str| value(id, element, "val").is_some();
+
+    // The body: the document's defaults and Normal.
+    assert_eq!(value("", "rFonts", "ascii").as_deref(), Some("Noto Sans"));
+    assert_eq!(value("", "sz", "val").as_deref(), Some("20"));
+    assert_eq!(value("", "color", "val").as_deref(), Some("333333"));
+    assert_eq!(value("", "spacing", "line").as_deref(), Some("360"));
+    assert_eq!(value("Normal", "jc", "val").as_deref(), Some("both"));
+    // Headings: the shared keys, each level's own over them.
+    assert_eq!(
+        value("Heading2", "rFonts", "ascii").as_deref(),
+        Some("M+ 1mn")
+    );
+    assert_eq!(value("Heading2", "sz", "val").as_deref(), Some("40"));
+    assert_eq!(value("Heading2", "color", "val").as_deref(), Some("1F4E79"));
+    assert_eq!(value("Heading3", "color", "val").as_deref(), Some("7030A0"));
+    assert!(has("Heading2", "i") && has("Heading2", "caps"));
+    assert_eq!(
+        value("Heading2", "spacing", "before").as_deref(),
+        Some("240")
+    );
+    assert_eq!(
+        value("Heading2", "spacing", "after").as_deref(),
+        Some("120")
+    );
+    // Links, code and code spans.
+    assert_eq!(
+        value("Hyperlink", "color", "val").as_deref(),
+        Some("C00000")
+    );
+    assert_eq!(value("Hyperlink", "u", "val").as_deref(), Some("none"));
+    assert_eq!(
+        value("SourceCode", "rFonts", "ascii").as_deref(),
+        Some("M+ 1mn")
+    );
+    assert_eq!(value("SourceCode", "sz", "val").as_deref(), Some("18"));
+    assert_eq!(
+        value("SourceCode", "color", "val").as_deref(),
+        Some("006400")
+    );
+    assert_eq!(
+        value("SourceCode", "shd", "fill").as_deref(),
+        Some("FFFFE0")
+    );
+    assert_eq!(
+        value("SourceCode", "top", "color").as_deref(),
+        Some("999999")
+    );
+    assert_eq!(value("SourceCode", "top", "sz").as_deref(), Some("6"));
+    assert_eq!(value("CodeChar", "color", "val").as_deref(), Some("8B0000"));
+    assert_eq!(value("CodeChar", "shd", "fill").as_deref(), Some("EEEEEE"));
+    // Captions and quotes.
+    assert_eq!(value("Caption", "color", "val").as_deref(), Some("555555"));
+    assert_eq!(value("Caption", "jc", "val").as_deref(), Some("center"));
+    assert!(has("Caption", "b"));
+    assert_eq!(value("Quote", "color", "val").as_deref(), Some("444444"));
+    assert_eq!(value("Quote", "left", "color").as_deref(), Some("0070C0"));
+    assert_eq!(value("Quote", "left", "sz").as_deref(), Some("32"));
+    // Boxes.
+    assert_eq!(
+        value("AdocAdmonition", "left", "color").as_deref(),
+        Some("FF8C00")
+    );
+    assert_eq!(value("AdocAdmonition", "left", "sz").as_deref(), Some("16"));
+    assert_eq!(
+        value("AdocAdmonition", "shd", "fill").as_deref(),
+        Some("F0F8FF")
+    );
+    assert_eq!(
+        value("AdocSidebar", "top", "color").as_deref(),
+        Some("DB7093")
+    );
+    assert_eq!(
+        value("AdocSidebar", "shd", "fill").as_deref(),
+        Some("FFF0F5")
+    );
+    assert_eq!(
+        value("AdocExample", "top", "color").as_deref(),
+        Some("2E8B57")
+    );
+    assert_eq!(
+        value("AdocExample", "shd", "fill").as_deref(),
+        Some("F5FFFA")
+    );
+    assert_eq!(
+        value("AdocTable", "insideH", "color").as_deref(),
+        Some("00008B")
+    );
+    assert_eq!(value("AdocTable", "insideH", "sz").as_deref(), Some("8"));
+    let xml = roxmltree::Document::parse(styles).unwrap();
+    let table = xml
+        .descendants()
+        .find(|node| node.attribute((W, "styleId")) == Some("AdocTable"))
+        .unwrap();
+    let conditional = |kind: &str| {
+        table.descendants().find(|node| {
+            node.has_tag_name((W, "tblStylePr")) && node.attribute((W, "type")) == Some(kind)
+        })
+    };
+    let fill = |node: roxmltree::Node| {
+        node.descendants()
+            .find(|node| node.has_tag_name((W, "shd")))
+            .and_then(|node| node.attribute((W, "fill")))
+            .map(str::to_owned)
+    };
+    assert_eq!(
+        fill(conditional("firstRow").unwrap()).as_deref(),
+        Some("ADD8E6")
+    );
+    assert_eq!(
+        fill(conditional("band2Horz").unwrap()).as_deref(),
+        Some("F0F0F0")
+    );
+
+    // What `[docx.styles]` writes wins over the theme; the rest stays the theme's.
+    let (_directory, root, mut engine) =
+        brand_book("\n[docx.styles]\nheading_colour = \"112233\"\nbody_font = \"Georgia\"\n");
+    let entries = export_book(&mut engine, &root);
+    let styles = adoc_docx::testing::text(&entries, "word/styles.xml");
+    assert_eq!(
+        style_value(styles, "Heading2", "color", "val").as_deref(),
+        Some("112233")
+    );
+    assert_eq!(
+        style_value(styles, "", "rFonts", "ascii").as_deref(),
+        Some("Georgia")
+    );
+    assert_eq!(
+        style_value(styles, "Heading2", "sz", "val").as_deref(),
+        Some("40")
+    );
+}
+
+/// The Word looks PRD, §9 test 5: the theme's page, title page and covers.
+#[test]
+fn docx_pdf_theme_page_and_title_page() {
+    let (_directory, root, mut engine) = brand_book("");
+    let entries = export_book(&mut engine, &root);
+    let document = adoc_docx::testing::text(&entries, "word/document.xml");
+    // A5 landscape, three-quarters of an inch top and bottom, an inch at the sides.
+    assert!(
+        document.contains(r#"<w:pgSz w:w="11906" w:h="8391" w:orient="landscape"/>"#),
+        "{document}"
+    );
+    assert!(document.contains(r#"w:top="1080" w:right="1440" w:bottom="1080" w:left="1440""#));
+    // The front cover is the theme's, the title page left-aligned with its logo at the right.
+    assert!(
+        document.contains(r#"descr="Front cover""#),
+        "the theme's cover"
+    );
+    assert!(document.contains(r#"descr="Logo""#), "the theme's logo");
+    let paragraphs = adoc_docx::testing::paragraphs(document);
+    assert!(paragraphs
+        .iter()
+        .any(|(style, text)| style.as_deref() == Some("Title") && text == "The Guide"));
+    let xml = roxmltree::Document::parse(document).unwrap();
+    let alignment = |predicate: &dyn Fn(roxmltree::Node) -> bool| {
+        xml.descendants()
+            .filter(|node| node.has_tag_name((W, "p")))
+            .find(|node| predicate(*node))
+            .and_then(|node| node.descendants().find(|node| node.has_tag_name((W, "jc"))))
+            .and_then(|node| node.attribute((W, "val")))
+            .map(str::to_owned)
+    };
+    let styled = |id: &'static str| {
+        move |node: roxmltree::Node| {
+            node.descendants().any(|child| {
+                child.has_tag_name((W, "pStyle")) && child.attribute((W, "val")) == Some(id)
+            })
+        }
+    };
+    assert_eq!(alignment(&styled("Title")).as_deref(), Some("left"));
+    let logo = |node: roxmltree::Node| {
+        node.descendants().any(|child| {
+            child.tag_name().name() == "docPr" && child.attribute("descr") == Some("Logo")
+        })
+    };
+    assert_eq!(alignment(&logo).as_deref(), Some("right"));
+    let styles = adoc_docx::testing::text(&entries, "word/styles.xml");
+    assert_eq!(
+        style_value(styles, "Title", "sz", "val").as_deref(),
+        Some("60")
+    );
+    assert_eq!(
+        style_value(styles, "Title", "color", "val").as_deref(),
+        Some("8B008B")
+    );
+    assert_eq!(
+        style_value(styles, "TitlePageDetail", "color", "val").as_deref(),
+        Some("2F4F4F")
+    );
+}
+
+/// A theme's logo and covers are read as every picture is, through the engine's file access: a
+/// confined engine (the MCP server's) leaves out one the theme names outside the roots.
+#[test]
+fn theme_images_outside_the_roots_are_not_embedded() {
+    let directory = tempfile::tempdir().unwrap();
+    let outside = adoc_engine::normalize_path(directory.path());
+    let root = outside.join("docs");
+    fs::create_dir_all(root.join("themes")).unwrap();
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/docx/themes/brand-cover.png"),
+        outside.join("secret.png"),
+    )
+    .unwrap();
+    fs::write(
+        root.join("themes/leak-theme.yml"),
+        "extends: default\ncover:\n  front:\n    image: ../../secret.png\ntitle_page:\n  logo:\n    image: image:../../secret.png[]\n",
+    )
+    .unwrap();
+    fs::write(root.join("page.adoc"), "= Page\n:title-page:\n\nText.\n").unwrap();
+    fs::write(
+        root.join(".adocfoundry.toml"),
+        "[pdf]\ntheme = \"leak\"\nthemes_dir = \"themes\"\n",
+    )
+    .unwrap();
+    let mut settings = Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine.set_file_access(adoc_engine::FileAccess::within([root.clone()]));
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    let (summary, document) = export(&mut engine, &root, None).unwrap();
+    assert_eq!(look(&summary).0, LookKind::PdfTheme);
+    assert!(
+        !document.contains("<wp:inline"),
+        "nothing from outside is drawn: {document}"
+    );
+    assert!(
+        summary
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("outside")),
+        "{:?}",
+        summary.diagnostics
+    );
+}

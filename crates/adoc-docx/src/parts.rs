@@ -1,7 +1,11 @@
 //! The parts every document has: the main document around its body, the styles and the core
 //! properties.
 
-use crate::{xml::Xml, StyleOverrides};
+use crate::{
+    look::{BoxLook, StyleLook, WordLook},
+    xml::Xml,
+    StyleOverrides,
+};
 
 pub(crate) const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 pub(crate) const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -130,7 +134,232 @@ const ITALIC: [(&str, &[(&str, &str)]); 2] = [("w:i", &[]), ("w:iCs", &[])];
 /// A light border, on every side of a table and between its cells.
 const BORDERS: &str = "top left bottom right insideH insideV";
 
-fn style(xml: &mut Xml, style: &Style<'_>) {
+/// An element of a style's properties, with its attributes and any elements inside it.
+#[derive(Clone, Debug)]
+struct Prop {
+    name: String,
+    attributes: Vec<(String, String)>,
+    children: Vec<Prop>,
+}
+
+impl Prop {
+    fn new(name: &str, attributes: &[(&str, &str)]) -> Self {
+        Self {
+            name: name.to_owned(),
+            attributes: attributes
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+                .collect(),
+            children: Vec::new(),
+        }
+    }
+
+    fn write(&self, xml: &mut Xml) {
+        let attributes: Vec<(&str, &str)> = self
+            .attributes
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
+        if self.children.is_empty() {
+            xml.empty(&self.name, &attributes);
+        } else {
+            xml.open(&self.name, &attributes);
+            for child in &self.children {
+                child.write(xml);
+            }
+            xml.close(&self.name);
+        }
+    }
+}
+
+/// The order the schema gives a paragraph's and a run's properties: Word refuses a document
+/// whose properties are out of it.
+const PARAGRAPH_ORDER: &[&str] = &[
+    "w:pStyle",
+    "w:keepNext",
+    "w:keepLines",
+    "w:pageBreakBefore",
+    "w:framePr",
+    "w:widowControl",
+    "w:numPr",
+    "w:suppressLineNumbers",
+    "w:pBdr",
+    "w:shd",
+    "w:tabs",
+    "w:suppressAutoHyphens",
+    "w:spacing",
+    "w:ind",
+    "w:contextualSpacing",
+    "w:jc",
+    "w:textAlignment",
+    "w:outlineLvl",
+];
+const RUN_ORDER: &[&str] = &[
+    "w:rStyle",
+    "w:rFonts",
+    "w:b",
+    "w:bCs",
+    "w:i",
+    "w:iCs",
+    "w:caps",
+    "w:smallCaps",
+    "w:strike",
+    "w:color",
+    "w:spacing",
+    "w:position",
+    "w:sz",
+    "w:szCs",
+    "w:highlight",
+    "w:u",
+    "w:bdr",
+    "w:shd",
+    "w:vertAlign",
+];
+
+/// `props` in `order`, those it does not list last, as they came.
+fn ordered(mut props: Vec<Prop>, order: &[&str]) -> Vec<Prop> {
+    props.sort_by_key(|prop| {
+        order
+            .iter()
+            .position(|name| *name == prop.name)
+            .unwrap_or(order.len())
+    });
+    props
+}
+
+/// Puts `prop` in place of any property of its name.
+fn set(props: &mut Vec<Prop>, prop: Prop) {
+    props.retain(|known| known.name != prop.name);
+    props.push(prop);
+}
+
+/// Sets attribute `key` of the property `name`, adding the property if it is not there.
+fn set_attribute(props: &mut Vec<Prop>, name: &str, key: &str, value: &str) {
+    let prop = match props.iter_mut().position(|prop| prop.name == name) {
+        Some(index) => &mut props[index],
+        None => {
+            props.push(Prop::new(name, &[]));
+            props.last_mut().expect("just pushed")
+        }
+    };
+    prop.attributes.retain(|(known, _)| known != key);
+    prop.attributes.push((key.to_owned(), value.to_owned()));
+}
+
+/// A run's properties with `look` laid over them.
+fn run_props(props: &[Property<'_>], look: Option<&StyleLook>) -> Vec<Prop> {
+    let mut props: Vec<Prop> = props
+        .iter()
+        .map(|(name, attributes)| Prop::new(name, attributes))
+        .collect();
+    if let Some(look) = look {
+        if let Some(font) = &look.font {
+            let font = font.as_str();
+            set(
+                &mut props,
+                Prop::new(
+                    "w:rFonts",
+                    &[
+                        ("w:ascii", font),
+                        ("w:hAnsi", font),
+                        ("w:eastAsia", font),
+                        ("w:cs", font),
+                    ],
+                ),
+            );
+        }
+        let switch = |props: &mut Vec<Prop>, names: [&str; 2], on: Option<bool>| {
+            if let Some(on) = on {
+                for name in names {
+                    let attributes: &[(&str, &str)] = if on { &[] } else { &[("w:val", "0")] };
+                    set(props, Prop::new(name, attributes));
+                }
+            }
+        };
+        switch(&mut props, ["w:b", "w:bCs"], look.bold);
+        switch(&mut props, ["w:i", "w:iCs"], look.italic);
+        if let Some(caps) = look.caps {
+            let attributes: &[(&str, &str)] = if caps { &[] } else { &[("w:val", "0")] };
+            set(&mut props, Prop::new("w:caps", attributes));
+        }
+        if let Some(colour) = &look.colour {
+            set(&mut props, Prop::new("w:color", &[("w:val", colour)]));
+        }
+        if let Some(size) = look.size {
+            let size = size.to_string();
+            set(&mut props, Prop::new("w:sz", &[("w:val", &size)]));
+            set(&mut props, Prop::new("w:szCs", &[("w:val", &size)]));
+        }
+        if let Some(underline) = look.underline {
+            let value = if underline { "single" } else { "none" };
+            set(&mut props, Prop::new("w:u", &[("w:val", value)]));
+        }
+    }
+    ordered(props, RUN_ORDER)
+}
+
+/// The `w:shd` of a background.
+fn shading(fill: &str) -> Prop {
+    Prop::new(
+        "w:shd",
+        &[("w:val", "clear"), ("w:color", "auto"), ("w:fill", fill)],
+    )
+}
+
+/// A paragraph's properties with `look` laid over them.
+fn paragraph_props(props: &[Property<'_>], look: Option<&StyleLook>) -> Vec<Prop> {
+    let mut props: Vec<Prop> = props
+        .iter()
+        .map(|(name, attributes)| Prop::new(name, attributes))
+        .collect();
+    if let Some(look) = look {
+        if let Some(before) = look.before {
+            set_attribute(&mut props, "w:spacing", "w:before", &before.to_string());
+        }
+        if let Some(after) = look.after {
+            set_attribute(&mut props, "w:spacing", "w:after", &after.to_string());
+        }
+        if let Some(line) = look.line {
+            set_attribute(&mut props, "w:spacing", "w:line", &line.to_string());
+            set_attribute(&mut props, "w:spacing", "w:lineRule", "auto");
+        }
+        if let Some(align) = &look.align {
+            set(&mut props, Prop::new("w:jc", &[("w:val", align)]));
+        }
+        if let Some(fill) = &look.shading {
+            set(&mut props, shading(fill));
+        }
+        if let Some(border) = &look.border {
+            let width = border.width.to_string();
+            let sides: &[&str] = if border.left_only {
+                &["left"]
+            } else {
+                &["top", "left", "bottom", "right"]
+            };
+            let mut box_prop = Prop::new("w:pBdr", &[]);
+            for side in sides {
+                box_prop.children.push(Prop::new(
+                    &format!("w:{side}"),
+                    &[
+                        ("w:val", "single"),
+                        ("w:sz", &width),
+                        ("w:space", "4"),
+                        ("w:color", &border.colour),
+                    ],
+                ));
+            }
+            set(&mut props, box_prop);
+        }
+    }
+    ordered(props, PARAGRAPH_ORDER)
+}
+
+fn write_style(
+    xml: &mut Xml,
+    style: &Style<'_>,
+    look: Option<&StyleLook>,
+    boxed: Option<&BoxLook>,
+) {
     xml.open(
         "w:style",
         &[("w:type", style.kind), ("w:styleId", style.id)],
@@ -149,17 +378,34 @@ fn style(xml: &mut Xml, style: &Style<'_>) {
     } else {
         xml.empty("w:qFormat", &[]);
     }
-    for (element, properties) in [("w:pPr", style.paragraph), ("w:rPr", style.run)] {
+    // A character style's look is its run's: a background is the run's shading.
+    let paragraph = if style.kind == "character" {
+        Vec::new()
+    } else {
+        paragraph_props(style.paragraph, look)
+    };
+    let mut run = run_props(style.run, look);
+    if style.kind == "character" {
+        if let Some(fill) = look.and_then(|look| look.shading.as_ref()) {
+            set(&mut run, shading(fill));
+            run = ordered(run, RUN_ORDER);
+        }
+    }
+    for (element, properties) in [("w:pPr", &paragraph), ("w:rPr", &run)] {
         if !properties.is_empty() {
             xml.open(element, &[]);
-            for (name, attributes) in properties {
-                xml.empty(name, attributes);
+            for property in properties {
+                property.write(xml);
             }
             xml.close(element);
         }
     }
     if !style.table.is_empty() {
+        let boxed = boxed.cloned().unwrap_or_default();
         xml.open("w:tblPr", &[]);
+        if boxed.stripe.is_some() {
+            xml.empty("w:tblStyleRowBandSize", &[("w:val", "1")]);
+        }
         for borders in style.table {
             xml.open("w:tblBorders", &[]);
             for (index, side) in BORDERS.split(' ').enumerate() {
@@ -169,11 +415,19 @@ fn style(xml: &mut Xml, style: &Style<'_>) {
                     "left-bar" if side == "left" => ("single", "24", "7F7F7F"),
                     _ => ("nil", "0", "auto"),
                 };
+                let size = match (value, boxed.border_width) {
+                    ("single", Some(width)) => width.to_string(),
+                    _ => size.to_owned(),
+                };
+                let colour = match (value, &boxed.border_colour) {
+                    ("single", Some(colour)) => colour.as_str(),
+                    _ => colour,
+                };
                 xml.empty(
                     &format!("w:{side}"),
                     &[
                         ("w:val", value),
-                        ("w:sz", size),
+                        ("w:sz", &size),
                         ("w:space", "0"),
                         ("w:color", colour),
                     ],
@@ -192,8 +446,55 @@ fn style(xml: &mut Xml, style: &Style<'_>) {
         }
         xml.close("w:tblCellMar");
         xml.close("w:tblPr");
-    }
-    if !style.cell.is_empty() {
+        let mut cell: Vec<Prop> = style
+            .cell
+            .iter()
+            .map(|(name, attributes)| Prop::new(name, attributes))
+            .collect();
+        if let Some(fill) = &boxed.background {
+            set(&mut cell, shading(fill));
+        }
+        if !cell.is_empty() {
+            xml.open("w:tcPr", &[]);
+            for property in &cell {
+                property.write(xml);
+            }
+            xml.close("w:tcPr");
+        }
+        // The header row and the stripes, as Word's conditional formatting.
+        if boxed.head_background.is_some()
+            || boxed.head_colour.is_some()
+            || boxed.head_bold.is_some()
+        {
+            xml.open("w:tblStylePr", &[("w:type", "firstRow")]);
+            let head = StyleLook {
+                colour: boxed.head_colour.clone(),
+                bold: boxed.head_bold,
+                ..StyleLook::default()
+            };
+            let run = run_props(&[], Some(&head));
+            if !run.is_empty() {
+                xml.open("w:rPr", &[]);
+                for property in &run {
+                    property.write(xml);
+                }
+                xml.close("w:rPr");
+            }
+            if let Some(fill) = &boxed.head_background {
+                xml.open("w:tcPr", &[]);
+                shading(fill).write(xml);
+                xml.close("w:tcPr");
+            }
+            xml.close("w:tblStylePr");
+        }
+        if let Some(fill) = &boxed.stripe {
+            xml.open("w:tblStylePr", &[("w:type", "band2Horz")]);
+            xml.open("w:tcPr", &[]);
+            shading(fill).write(xml);
+            xml.close("w:tcPr");
+            xml.close("w:tblStylePr");
+        }
+    } else if !style.cell.is_empty() {
         xml.open("w:tcPr", &[]);
         for (name, attributes) in style.cell {
             xml.empty(name, attributes);
@@ -203,15 +504,56 @@ fn style(xml: &mut Xml, style: &Style<'_>) {
     xml.close("w:style");
 }
 
+/// The look written `[docx.styles]` keys give each style, laid over a theme's.
+fn written_look(overrides: &StyleOverrides, id: &str) -> StyleLook {
+    let heading = id == "Title"
+        || id == "Subtitle"
+        || id == "TOCHeading"
+        || id
+            .strip_prefix("Heading")
+            .is_some_and(|level| level.parse::<u8>().is_ok());
+    let code = matches!(id, "CodeChar" | "Keyboard" | "SourceCode" | "LiteralBlock");
+    StyleLook {
+        font: if heading {
+            overrides.heading_font.clone()
+        } else if code {
+            overrides.code_font.clone()
+        } else {
+            None
+        },
+        colour: if heading {
+            overrides.heading_colour.clone()
+        } else if id == "Hyperlink" {
+            overrides.link_colour.clone()
+        } else {
+            None
+        },
+        ..StyleLook::default()
+    }
+}
+
 /// `word/styles.xml`. Headings carry Word's built-in names (`heading 1`), so Word treats them
 /// as its own, outline levels and table of contents included; every other style the body uses
 /// is named for what it holds, so a reader can restyle it in Word. `width` is the text's, in
 /// twentieths of a point: headers and footers have their centre and right tab stops by it, and
 /// the table of contents its page numbers.
-pub(crate) fn styles(width: u32, overrides: &StyleOverrides) -> Vec<u8> {
-    let body_font = overrides.body_font.as_deref().unwrap_or("Calibri");
+pub(crate) fn styles(width: u32, overrides: &StyleOverrides, look: &WordLook) -> Vec<u8> {
+    // Each style's look: the theme's, then what `[docx.styles]` wrote.
+    let style = |xml: &mut Xml, style: &Style<'_>| {
+        let theme = look.style(style.id).cloned().unwrap_or_default();
+        let effective = theme.with(&written_look(overrides, style.id));
+        let effective = (!effective.is_empty()).then_some(effective);
+        write_style(xml, style, effective.as_ref(), look.boxes.get(style.id));
+    };
+    // The document's defaults: the theme's body, then what `[docx.styles]` wrote.
+    let defaults = look.defaults.with(&StyleLook {
+        font: overrides.body_font.clone(),
+        size: overrides.body_size,
+        ..StyleLook::default()
+    });
+    let body_font = defaults.font.as_deref().unwrap_or("Calibri");
     let code_font = overrides.code_font.as_deref().unwrap_or("Consolas");
-    let body_size = overrides.body_size.unwrap_or(22).to_string();
+    let body_size = defaults.size.unwrap_or(22).to_string();
     let code_fonts = [
         ("w:ascii", code_font),
         ("w:hAnsi", code_font),
@@ -246,17 +588,21 @@ pub(crate) fn styles(width: u32, overrides: &StyleOverrides) -> Vec<u8> {
             ("w:cs", body_font),
         ],
     );
+    if let Some(colour) = &defaults.colour {
+        xml.empty("w:color", &[("w:val", colour)]);
+    }
     xml.empty("w:sz", &[("w:val", &body_size)]);
     xml.empty("w:szCs", &[("w:val", &body_size)]);
     xml.close("w:rPr");
     xml.close("w:rPrDefault");
     xml.open("w:pPrDefault", &[]);
     xml.open("w:pPr", &[]);
+    let line = defaults.line.unwrap_or(259).to_string();
     xml.empty(
         "w:spacing",
         &[
             ("w:after", "160"),
-            ("w:line", "259"),
+            ("w:line", &line),
             ("w:lineRule", "auto"),
         ],
     );
@@ -274,6 +620,11 @@ pub(crate) fn styles(width: u32, overrides: &StyleOverrides) -> Vec<u8> {
     );
     xml.empty("w:name", &[("w:val", "Normal")]);
     xml.empty("w:qFormat", &[]);
+    if let Some(align) = &defaults.align {
+        xml.open("w:pPr", &[]);
+        xml.empty("w:jc", &[("w:val", align)]);
+        xml.close("w:pPr");
+    }
     xml.close("w:style");
     style(
         &mut xml,

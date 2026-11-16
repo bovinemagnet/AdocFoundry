@@ -1566,11 +1566,15 @@ impl Engine {
         let resolved = self.docx_look(&args, &attributes, sources.first().map(PathBuf::as_path));
         let (options, look) = match &resolved {
             Ok(resolved) => (
-                self.docx_options(&args, resolved.page(&attributes).as_ref()),
+                self.docx_options(
+                    &args,
+                    resolved.page(&attributes).as_ref(),
+                    resolved.word_look(),
+                ),
                 resolved.report(),
             ),
             Err(_) => (
-                self.docx_options(&args, None),
+                self.docx_options(&args, None, adoc_docx::WordLook::default()),
                 crate::docx_look::ResolvedLook::None.report(),
             ),
         };
@@ -1620,6 +1624,7 @@ impl Engine {
         &self,
         args: &DocxExportArgs,
         page: Option<&adoc_theme::PageGeometry>,
+        look: adoc_docx::WordLook,
     ) -> adoc_docx::DocxOptions {
         let settings = &self.settings.docx;
         let written = |key: &str| settings.written.contains(key);
@@ -1668,6 +1673,7 @@ impl Engine {
         };
         let root = self.roots.first();
         adoc_docx::DocxOptions {
+            look,
             paper,
             landscape,
             margins: adoc_docx::Margins {
