@@ -131,6 +131,9 @@ actions!(
         ExportPageHtml,
         ExportComponentPdf,
         ExportPdfProfile,
+        ExportPageDocx,
+        ExportComponentDocx,
+        ExportDocxProfile,
         ExportPagePdfWithTheme,
         ShowGraph,
         ShowLocalGraph,
@@ -288,6 +291,9 @@ fn binding_for(id: CommandId, keys: &str, cx: &App) -> Option<KeyBinding> {
         ids::DOCUMENT_RECOVER_UNSAVED => key_binding(keys, RecoverUnsaved, workspace, cx),
         ids::EXPORT_PDF_COMPONENT => key_binding(keys, ExportComponentPdf, workspace, cx),
         ids::EXPORT_PDF_PROFILE => key_binding(keys, ExportPdfProfile, workspace, cx),
+        ids::EXPORT_DOCX_PAGE => key_binding(keys, ExportPageDocx, workspace, cx),
+        ids::EXPORT_DOCX_COMPONENT => key_binding(keys, ExportComponentDocx, workspace, cx),
+        ids::EXPORT_DOCX_PROFILE => key_binding(keys, ExportDocxProfile, workspace, cx),
         ids::SETTINGS_OPEN => key_binding(keys, OpenSettings, workspace, cx),
         ids::APP_CHECK_FOR_UPDATES => key_binding(keys, CheckForUpdates, workspace, cx),
         ids::APP_DIAGNOSTICS => key_binding(keys, ShowDiagnostics, workspace, cx),
@@ -400,6 +406,9 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::DOCUMENT_RECOVER_UNSAVED => Box::new(RecoverUnsaved),
         ids::EXPORT_PDF_COMPONENT => Box::new(ExportComponentPdf),
         ids::EXPORT_PDF_PROFILE => Box::new(ExportPdfProfile),
+        ids::EXPORT_DOCX_PAGE => Box::new(ExportPageDocx),
+        ids::EXPORT_DOCX_COMPONENT => Box::new(ExportComponentDocx),
+        ids::EXPORT_DOCX_PROFILE => Box::new(ExportDocxProfile),
         ids::SETTINGS_OPEN => Box::new(OpenSettings),
         ids::APP_CHECK_FOR_UPDATES => Box::new(CheckForUpdates),
         ids::APP_DIAGNOSTICS => Box::new(ShowDiagnostics),
@@ -581,11 +590,6 @@ mod tests {
             ids::APPEARANCE_SAVE,
             // Saved by Select Font Set…, which is the app's own.
             ids::APPEARANCE_SAVE_FONT_SET,
-            // Word export: the app does not build the engine's `docx` feature until DOCX 7/8
-            // (#624) gives these actions, but a workspace build turns it on for every crate.
-            ids::EXPORT_DOCX_PAGE,
-            ids::EXPORT_DOCX_COMPONENT,
-            ids::EXPORT_DOCX_PROFILE,
         ];
         let engine = Engine::new(Settings::default());
         let missing: Vec<&str> = engine

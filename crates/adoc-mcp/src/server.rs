@@ -18,8 +18,8 @@ use std::{
 use adoc_core::{DiagnosticSeverity, LineIndex, SourceRange};
 use adoc_engine::{
     commands::ids, report::display_path, to_svg_laid_out, CommandArgs, CommandOutcome,
-    DefinitionTarget, Engine, EngineEvent, ExportArgs, ExportTarget, FileAccess, GraphFilter,
-    GraphScope, NavItem, SearchRequest, SvgStyle,
+    DefinitionTarget, DocxExportArgs, Engine, EngineEvent, ExportArgs, ExportTarget, FileAccess,
+    GraphFilter, GraphScope, NavItem, SearchRequest, SvgStyle,
 };
 use rmcp::{
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
@@ -44,11 +44,12 @@ use crate::{
 };
 
 /// The tools that change files, listed and callable only with `--allow-write`.
-const WRITE_TOOLS: [&str; 9] = [
+const WRITE_TOOLS: [&str; 10] = [
     "edit_page",
     "revert_page",
     "rename_page",
     "export_pdf",
+    "export_docx",
     "apply_changes",
     "create_page",
     "create_partial",
@@ -302,6 +303,19 @@ struct ExportPdfArgs {
     /// `pdf-a-1b`, `pdf-a-1a`, `pdf-a-2a`, `pdf-ua-1`.
     #[serde(default)]
     standards: Vec<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct ExportDocxArgs {
+    /// The page to export as an article.
+    path: Option<String>,
+    /// Or a component version to export as a book: `name` or `version@name`.
+    component: Option<String>,
+    /// Or a `[docx.profiles.<name>]` of the workspace's settings, exported as it says.
+    profile: Option<String>,
+    /// The `.docx` file to write, inside a root; with a profile, in place of the profile's.
+    /// A file there already is replaced only when it is a `.docx`.
+    output: Option<String>,
 }
 
 impl State {
@@ -1302,6 +1316,83 @@ impl Server {
         })
         .await
     }
+
+    #[tool(
+        description = "Export a page as an article, a component version as a book, or a `[docx.profiles]` publication, to an editable Word document (.docx). Nothing is opened and no external tool is run.",
+        output_schema = schemas::export_docx(),
+        annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn export_docx(&self, Parameters(args): Parameters<ExportDocxArgs>) -> Answer {
+        self.run(move |state| {
+            let mut export = match (&args.profile, &args.path, &args.component) {
+                (Some(profile), None, None) => state.engine.docx_profile_export_args(profile)?,
+                (None, Some(path), None) => {
+                    let path = state.confine(path)?;
+                    docx_args(ExportTarget::Page(state.open(&path)?.0))
+                }
+                (None, None, Some(component)) => {
+                    let (version, name) = match component.split_once('@') {
+                        Some((version, name)) => (Some(version.to_owned()), name.to_owned()),
+                        None => (None, component.clone()),
+                    };
+                    docx_args(ExportTarget::Component { name, version })
+                }
+                _ => {
+                    return Err(Failure::invalid(
+                        "give one of a `path`, a `component` or a `profile`",
+                    ))
+                }
+            };
+            export.output = match &args.output {
+                Some(output) => docx_output(state, Path::new(output), output)?,
+                None if args.profile.is_some() => {
+                    let shown = state.shown(&export.output);
+                    docx_output(state, &export.output, &shown)?
+                }
+                None => return Err(Failure::invalid("give the `output` to write")),
+            };
+            let summary = state.engine.export_docx_blocking(export, TIMEOUT)?;
+            Ok(json!({
+                "output": state.shown(&summary.output),
+                "pages": summary.pages,
+                "sources": summary.sources.iter().map(|path| state.shown(path)).collect::<Vec<_>>(),
+                "warnings": summary.diagnostics.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            }))
+        })
+        .await
+    }
+}
+
+/// A Word export of `target` with the settings' paper and orientation; the output is set after.
+fn docx_args(target: ExportTarget) -> DocxExportArgs {
+    DocxExportArgs {
+        target,
+        output: PathBuf::new(),
+        attributes: Vec::new(),
+        paper: None,
+        landscape: None,
+    }
+}
+
+/// `output` checked as a Word document to write: inside the roots (`shown` is how the client
+/// named it), not a link, and a `.docx` file that no page is.
+fn docx_output(state: &State, output: &Path, shown: &str) -> Result<PathBuf, Failure> {
+    let output = state.confine(&output.to_string_lossy())?;
+    // A link planted there is refused rather than written through, as `export_pdf` does.
+    if std::fs::symlink_metadata(&output).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return Err(Failure::invalid(format!(
+            "{shown} is a link, which is not written through"
+        )));
+    }
+    let docx = output
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("docx"));
+    if !docx || state.engine.workspace().index.file(&output).is_some() {
+        return Err(Failure::invalid(format!(
+            "{shown} is not a `.docx` file; export to one"
+        )));
+    }
+    Ok(output)
 }
 
 /// `file://` URI of `path`.

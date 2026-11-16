@@ -28,7 +28,7 @@ The write tools are offered only with `--allow-write`.
 `build_site` is offered only with `--allow-build`, which grants no write tools.
 
 The server also keeps every file it reads on a tool's behalf inside the roots, not only the paths a tool is given.
-This covers the files a page includes (nested includes, and includes through a symbolic link that leads outside the roots), the images, theme and fonts of a PDF export, and any other file the export asks for.
+This covers the files a page includes (nested includes, and includes through a symbolic link that leads outside the roots), the images, theme and fonts of a PDF export, the images of a Word export, and any other file the export asks for.
 A refused include is left out of the page.
 A refused image is shown as its alt text, and the export reports a warning such as "image is outside the workspace roots".
 A refused PDF theme, or a theme that `extends` one, fails the export with an error saying the file is outside the workspace roots.
@@ -825,12 +825,28 @@ Nothing in a page's text, and nothing in a client's request, can change this.
 |`path`, `new_name`
 |Moves the page and rewrites the xrefs, nav entries and includes that name it. Then it saves every file it changed. `new_name` is a file name or a path relative to the page's directory.
 
+|`export_docx`
+|`path`, `component` or `profile`, `output?`
+|Exports a page as an article, a component version as a book, or a `[docx.profiles]` publication, as an editable Word document. `output` is required unless a profile is given. It returns the output, the page count, the pages exported and any warnings. See below.
+
 |`export_pdf`
 |`path` or `component`, `output`, `theme?`, `standards?`
 |Exports a page as an article, or a component version as a book. A component is `name` or `version@name`. The standards are `pdf-a-1b`, `pdf-a-1a`, `pdf-a-2a` and `pdf-ua-1`. `output` must be a `.pdf` when a file is there already: an existing file that is not a PDF, or any indexed page, is refused with `invalid_argument`, so a page or `antora.yml` is never replaced. It returns the output, the page count and any warnings.
 |===
 
 See xref:pdf-export.adoc[Exporting to PDF] for themes and standards.
+
+`export_docx` exports to an editable Word document.
+Exactly one of `path`, `component` or `profile` is given.
+`path` exports a page as an article, `component` (`name` or `version@name`) exports a component version as a book in navigation order, and `profile` exports a `[docx.profiles]` publication; an unknown profile is `not_found`.
+`output` is required, except with a profile, where it replaces the profile's output.
+It must be inside a root, or the call fails with `outside_workspace`, and it must not be a link or a page, or the call fails with `invalid_argument`.
+It must be a `.docx` file name, and a `.docx` file there already is replaced.
+The paper, margins, headers and footers and styles come from the `[docx]` settings and never from `[pdf]`.
+It returns `output`, `pages` (the number of AsciiDoc pages exported), `sources` (those pages in the document's order, as workspace-relative paths) and `warnings`, which are strings.
+STEM formulas are typeset as pictures, with their source as the picture's alternative text.
+The tool never opens Word or runs an external tool.
+See xref:settings.adoc#docx-settings[Word export settings].
 
 === Creating pages and partials
 
@@ -971,7 +987,7 @@ Each tool carries MCP annotations.
 
 * The read-only tools have `readOnlyHint: true` and `openWorldHint: false`.
 * `edit_page`, `revert_page` and `rename_page` have `readOnlyHint: false` and `destructiveHint: true`.
-* `export_pdf` has the same, and `idempotentHint: true`, as has `revert_page`.
+* `export_pdf` and `export_docx` have the same, and `idempotentHint: true`, as has `revert_page`.
 
 Annotations are hints for clients.
 They never grant permission.

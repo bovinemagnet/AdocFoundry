@@ -317,6 +317,7 @@ fn write_tools_need_allow_write_over_http() {
         "create_project",
         "create_partial",
         "edit_page",
+        "export_docx",
         "export_pdf",
         "rename_page",
         "revert_page",

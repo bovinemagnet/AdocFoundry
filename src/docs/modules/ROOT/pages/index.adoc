@@ -56,6 +56,7 @@ It adds xref:pdf-export.adoc[PDF export]:
 * Running headers and footers with recto and verso columns, and an index built from index terms.
 * PDF/A-1b, PDF/A-1a, PDF/A-2a and PDF/UA-1 on request.
 * `adocfoundry-cli pdf`, and Export Page to PDF and Export Component to PDF in the command palette.
+* Word export too: `adocfoundry-cli docx`, Export Page to Word, Export Component to Word and Export DOCX Profile in the command palette, and the MCP `export_docx` tool (see xref:command-line.adoc#docx[the docx command]).
 
 == Phase 3 status
 

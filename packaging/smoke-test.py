@@ -116,6 +116,21 @@ def pdf_export(directory):
               f"adocfoundry-cli pdf writes a PDF {output.stderr.strip()}")
 
 
+def docx_export(directory):
+    """The binaries are built with Word export: a page becomes a .docx package (a ZIP)."""
+    with tempfile.TemporaryDirectory() as out:
+        docx = os.path.join(out, "article.docx")
+        page = os.path.join(FIXTURES, "pdf", "reference", "article.adoc")
+        output = subprocess.run(
+            [binary(directory, "adocfoundry-cli"), "docx", page, "--output", docx],
+            capture_output=True, text=True, timeout=TIMEOUT,
+        )
+        with open(docx, "rb") if os.path.isfile(docx) else open(os.devnull, "rb") as file:
+            head = file.read(4)
+        check(output.returncode == 0 and head == b"PK\x03\x04",
+              f"adocfoundry-cli docx writes a Word document {output.stderr.strip()}")
+
+
 def lsp_message(payload):
     body = json.dumps(payload).encode()
     return b"Content-Length: %d\r\n\r\n%s" % (len(body), body)
@@ -233,6 +248,7 @@ def main():
     notices(directory)
     versions(directory, expected)
     pdf_export(directory)
+    docx_export(directory)
     language_server(directory)
     mcp_server(directory)
     if "--no-app" not in sys.argv:

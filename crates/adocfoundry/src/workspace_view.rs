@@ -13,9 +13,9 @@ use std::{
 
 use adoc_core::{LineIndex, SourceRange};
 use adoc_engine::{
-    commands::ids, count_words, CommandArgs, CommandOutcome, DocumentId, EditPreview, EditorMode,
-    EngineEvent, ExportArgs, ExportSummary, ExportTarget, NavigationPosition, OpenDisposition,
-    ResourceFamily, SidebarPanel, TabItem, ThemePreference,
+    commands::ids, count_words, CommandArgs, CommandOutcome, DocumentId, DocxExportArgs,
+    EditPreview, EditorMode, EngineEvent, ExportArgs, ExportSummary, ExportTarget,
+    NavigationPosition, OpenDisposition, ResourceFamily, SidebarPanel, TabItem, ThemePreference,
 };
 use gpui::{
     div, prelude::FluentBuilder as _, px, App, AppContext as _, Context, Entity, FocusHandle,
@@ -462,10 +462,32 @@ fn export_args(target: ExportTarget, theme: Option<String>) -> ExportArgs {
     }
 }
 
+/// A Word export of `target` to `output`, with the settings' paper and orientation.
+fn docx_export(target: ExportTarget, output: PathBuf) -> CommandArgs {
+    CommandArgs::ExportDocx(DocxExportArgs {
+        target,
+        output,
+        attributes: Vec::new(),
+        paper: None,
+        landscape: None,
+    })
+}
+
+/// A PDF or HTML export of `target` in `theme` to `output`.
+fn pdf_export(target: ExportTarget, theme: Option<String>, output: PathBuf) -> CommandArgs {
+    CommandArgs::Export(ExportArgs {
+        output,
+        ..export_args(target, theme)
+    })
+}
+
 pub(crate) fn export_message(output: &Path, result: &Result<ExportSummary, String>) -> String {
-    let html = output
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("html"));
+    let is = |wanted: &str| {
+        output
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case(wanted))
+    };
+    let (html, docx) = (is("html"), is("docx"));
     match result {
         Ok(summary) => {
             let warnings = summary.diagnostics.len();
@@ -474,6 +496,10 @@ pub(crate) fn export_message(output: &Path, result: &Result<ExportSummary, Strin
                 .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
             let mut message = if html {
                 format!("Exported {name}")
+            } else if docx {
+                // Word lays out its own pages; these are the AsciiDoc pages it holds.
+                let plural = if summary.pages == 1 { "" } else { "s" };
+                format!("Exported {name} ({} AsciiDoc page{plural})", summary.pages)
             } else {
                 format!("Exported {name} ({} pages)", summary.pages)
             };
@@ -487,6 +513,7 @@ pub(crate) fn export_message(output: &Path, result: &Result<ExportSummary, Strin
             message
         }
         Err(error) if html => format!("HTML export failed: {error}"),
+        Err(error) if docx => format!("Word export failed: {error}"),
         Err(error) => format!("PDF export failed: {error}"),
     }
 }
@@ -3915,7 +3942,13 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.export_page(ids::EXPORT_PDF_PAGE, "pdf", None, window, cx);
+        self.export_page(
+            ids::EXPORT_PDF_PAGE,
+            "pdf",
+            |target, output| pdf_export(target, None, output),
+            window,
+            cx,
+        );
     }
 
     /// Asks where to write the active page as HTML, then exports it on the engine's workers.
@@ -3925,14 +3958,32 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.export_page(ids::EXPORT_HTML_PAGE, "html", None, window, cx);
+        self.export_page(
+            ids::EXPORT_HTML_PAGE,
+            "html",
+            |target, output| pdf_export(target, None, output),
+            window,
+            cx,
+        );
     }
 
+    /// Asks where to write the active page as a Word document, then exports it.
+    fn on_export_page_docx(
+        &mut self,
+        _: &ExportPageDocx,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.export_page(ids::EXPORT_DOCX_PAGE, "docx", docx_export, window, cx);
+    }
+
+    /// Asks where to write the active page, suggesting its name with `extension` beside it,
+    /// then runs `command` with the arguments `args` makes of the page and the path chosen.
     fn export_page(
         &mut self,
         command: adoc_engine::CommandId,
         extension: &str,
-        theme: Option<String>,
+        args: impl FnOnce(ExportTarget, PathBuf) -> CommandArgs + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3950,7 +4001,7 @@ impl WorkspaceView {
             .map(|stem| format!("{}.{extension}", stem.to_string_lossy()));
         self.export_to(
             command,
-            export_args(ExportTarget::Page(id), theme),
+            move |output| args(ExportTarget::Page(id), output),
             &directory,
             name,
             window,
@@ -3986,7 +4037,13 @@ impl WorkspaceView {
             cx,
             move |this, index, window, cx| {
                 let theme = themes[index].name.clone();
-                this.export_page(ids::EXPORT_PDF_PAGE, "pdf", Some(theme), window, cx);
+                this.export_page(
+                    ids::EXPORT_PDF_PAGE,
+                    "pdf",
+                    move |target, output| pdf_export(target, Some(theme), output),
+                    window,
+                    cx,
+                );
             },
         );
     }
@@ -3998,31 +4055,70 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let profiles: Vec<String> = self
-            .app
-            .read(cx)
-            .engine
-            .settings()
+        let settings = self.app.read(cx).engine.settings();
+        let profiles = settings
             .pdf
             .profiles
             .iter()
-            .map(|profile| profile.name.clone())
-            .collect();
+            .map(|profile| profile.name.clone());
+        let profiles: Vec<String> = profiles.collect();
+        self.export_profile(
+            ids::EXPORT_PDF_PROFILE,
+            profiles,
+            "No PDF profiles: add a [pdf.profiles.<name>] table to the workspace's .adocfoundry.toml.",
+            "Export a PDF profile…",
+            window,
+            cx,
+        );
+    }
+
+    /// Offers the workspace's Word publication profiles, then exports the one chosen.
+    fn on_export_docx_profile(
+        &mut self,
+        _: &ExportDocxProfile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let settings = self.app.read(cx).engine.settings();
+        let profiles = settings
+            .docx
+            .profiles
+            .iter()
+            .map(|profile| profile.name.clone());
+        let profiles: Vec<String> = profiles.collect();
+        self.export_profile(
+            ids::EXPORT_DOCX_PROFILE,
+            profiles,
+            "No DOCX profiles: add a [docx.profiles.<name>] table to the workspace's .adocfoundry.toml.",
+            "Export a DOCX profile…",
+            window,
+            cx,
+        );
+    }
+
+    /// Offers `profiles`, or says `none` when there are none, and runs `command` on the one
+    /// chosen.
+    fn export_profile(
+        &mut self,
+        command: adoc_engine::CommandId,
+        profiles: Vec<String>,
+        none: &'static str,
+        placeholder: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if profiles.is_empty() {
-            window.push_notification(
-                "No PDF profiles: add a [pdf.profiles.<name>] table to the workspace's .adocfoundry.toml.",
-                cx,
-            );
+            window.push_notification(none, cx);
             return;
         }
         self.pick(
-            "Export a PDF profile…",
+            placeholder,
             profiles.clone(),
             window,
             cx,
             move |this, index, window, cx| {
                 this.invoke(
-                    ids::EXPORT_PDF_PROFILE,
+                    command,
                     CommandArgs::Profile(profiles[index].clone()),
                     window,
                     cx,
@@ -4178,6 +4274,35 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.export_component(
+            ids::EXPORT_PDF_COMPONENT,
+            "pdf",
+            |target, output| pdf_export(target, None, output),
+            window,
+            cx,
+        );
+    }
+
+    /// Asks where to write the active page's component as a Word book, then exports it.
+    fn on_export_component_docx(
+        &mut self,
+        _: &ExportComponentDocx,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.export_component(ids::EXPORT_DOCX_COMPONENT, "docx", docx_export, window, cx);
+    }
+
+    /// Asks where to write the active page's component version (else the workspace's first),
+    /// suggesting its name with `extension`, then runs `command` with what `args` makes.
+    fn export_component(
+        &mut self,
+        command: adoc_engine::CommandId,
+        extension: &str,
+        args: impl FnOnce(ExportTarget, PathBuf) -> CommandArgs + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let engine = &self.app.read(cx).engine;
         let antora = &engine.workspace().antora;
         let active = engine
@@ -4195,10 +4320,11 @@ impl WorkspaceView {
             return;
         };
         let directory = engine.roots().first().cloned().unwrap_or_default();
-        let suggested = Some(format!("{name}.pdf"));
+        let suggested = Some(format!("{name}.{extension}"));
+        let target = ExportTarget::Component { name, version };
         self.export_to(
-            ids::EXPORT_PDF_COMPONENT,
-            export_args(ExportTarget::Component { name, version }, None),
+            command,
+            move |output| args(target, output),
             &directory,
             suggested,
             window,
@@ -4211,7 +4337,7 @@ impl WorkspaceView {
     fn export_to(
         &mut self,
         command: adoc_engine::CommandId,
-        export: ExportArgs,
+        export: impl FnOnce(PathBuf) -> CommandArgs + 'static,
         directory: &Path,
         suggested: Option<String>,
         window: &mut Window,
@@ -4221,12 +4347,7 @@ impl WorkspaceView {
         cx.spawn_in(window, async move |this, cx| {
             let output = chosen.await.ok()?.ok()??;
             this.update_in(cx, |this, window, cx| {
-                this.invoke(
-                    command,
-                    CommandArgs::Export(ExportArgs { output, ..export }),
-                    window,
-                    cx,
-                );
+                this.invoke(command, export(output), window, cx);
                 cx.notify();
             })
             .ok()
@@ -5862,6 +5983,9 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_export_page_html))
             .on_action(cx.listener(Self::on_export_component_pdf))
             .on_action(cx.listener(Self::on_export_pdf_profile))
+            .on_action(cx.listener(Self::on_export_page_docx))
+            .on_action(cx.listener(Self::on_export_component_docx))
+            .on_action(cx.listener(Self::on_export_docx_profile))
             .on_action(cx.listener(Self::on_export_page_pdf_with_theme))
             .on_action(cx.listener(Self::on_save_and_commit))
             .on_action(cx.listener(Self::on_open_settings))

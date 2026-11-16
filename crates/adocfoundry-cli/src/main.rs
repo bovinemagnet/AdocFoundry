@@ -13,6 +13,9 @@
 //!     [--fail-on none|warning|error]
 //! adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
 //!     [--fail-on none|warning|error]
+//! adocfoundry-cli docx <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
+//!     [--output <file.docx>] [--fail-on none|warning|error]
+//! adocfoundry-cli docx --profile <name> [<root>] [--output <file.docx>] [--fail-on none|warning|error]
 //! adocfoundry-cli git-status <root> [--format text|json]
 //! adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--ages]
 //!     [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
@@ -33,8 +36,8 @@ use adoc_engine::{
     commands::ids,
     pdf_standard,
     report::{display_path, severity_name, ChangedFile},
-    CommandArgs, CommandOutcome, Engine, EngineError, ExportArgs, ExportTarget, GraphFilter,
-    GraphScope, Settings, SvgStyle,
+    CommandArgs, CommandOutcome, DocxExportArgs, Engine, EngineError, ExportArgs, ExportSummary,
+    ExportTarget, GraphFilter, GraphScope, Settings, SvgStyle,
 };
 
 const USAGE: &str = "usage:
@@ -50,6 +53,9 @@ const USAGE: &str = "usage:
       [--fail-on none|warning|error]
   adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
       [--fail-on none|warning|error]
+  adocfoundry-cli docx <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
+      [--output <file.docx>] [--fail-on none|warning|error]
+  adocfoundry-cli docx --profile <name> [<root>] [--output <file.docx>] [--fail-on none|warning|error]
   adocfoundry-cli git-status <root> [--format text|json]
   adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--ages]
       [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
@@ -156,6 +162,7 @@ fn run(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         "follow" => follow(rest, out),
         "render" => render(rest, out),
         "pdf" => pdf(rest, out),
+        "docx" => docx(rest, out),
         "git-status" => git_status(rest, out),
         "graph" => graph(rest, out),
         "doctor" => doctor(rest, out),
@@ -1008,12 +1015,7 @@ fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
             "fail-on",
         ],
     )?;
-    let fail_on = match option(&options, "fail-on").unwrap_or("none") {
-        "none" => None,
-        "warning" => Some(DiagnosticSeverity::Warning),
-        "error" => Some(DiagnosticSeverity::Error),
-        other => return Err(format!("unknown --fail-on level `{other}`")),
-    };
+    let fail_on = fail_on(&options)?;
     let standards = options
         .iter()
         .filter(|(name, _)| *name == "standard")
@@ -1027,13 +1029,7 @@ fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         .collect::<Result<Vec<_>, _>>()?;
     if let Some(profile) = option(&options, "profile") {
         // A profile is exported as the app exports it; options given here win over it.
-        let root = match (positional.as_slice(), option(&options, "root")) {
-            ([], None) => PathBuf::from("."),
-            ([root], None) => PathBuf::from(root),
-            ([], Some(root)) => PathBuf::from(root),
-            _ => return Err(USAGE.to_owned()),
-        };
-        let root = adoc_index::normalize_path(&root);
+        let root = profile_root(&positional, &options)?;
         let mut engine = open_engine(&root, false)?;
         let mut args = engine
             .profile_export_args(profile)
@@ -1058,11 +1054,53 @@ fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let [target] = positional.as_slice() else {
         return Err(USAGE.to_owned());
     };
-    // A page's PDF goes beside it, named as the page was.
-    let beside = Path::new(target).with_extension("pdf");
+    let (mut engine, root, export_target, default_output) = open_target(target, &options, "pdf")?;
+    let output = option(&options, "output").map_or(default_output, PathBuf::from);
+    let args = ExportArgs {
+        target: export_target,
+        output,
+        theme: option(&options, "theme").map(str::to_owned),
+        standards,
+        fonts_dir: option(&options, "fonts-dir").map(PathBuf::from),
+        typst: option(&options, "typst").map(PathBuf::from),
+        attributes: Vec::new(),
+    };
+    report_export(&mut engine, args, &root, fail_on, out)
+}
+
+/// `--fail-on`: the least severe diagnostic that fails the run, or none.
+fn fail_on(options: &[(&str, &str)]) -> Result<Option<DiagnosticSeverity>, String> {
+    match option(options, "fail-on").unwrap_or("none") {
+        "none" => Ok(None),
+        "warning" => Ok(Some(DiagnosticSeverity::Warning)),
+        "error" => Ok(Some(DiagnosticSeverity::Error)),
+        other => Err(format!("unknown --fail-on level `{other}`")),
+    }
+}
+
+/// A profile's workspace root: the argument, `--root`, or else the current directory.
+fn profile_root(positional: &[&str], options: &[(&str, &str)]) -> Result<PathBuf, String> {
+    let root = match (positional, option(options, "root")) {
+        ([], None) => PathBuf::from("."),
+        ([root], None) => PathBuf::from(root),
+        ([], Some(root)) => PathBuf::from(root),
+        _ => return Err(USAGE.to_owned()),
+    };
+    Ok(adoc_index::normalize_path(&root))
+}
+
+/// The engine over the workspace holding `target` (a page, or a component folder), what to
+/// export, and the file it goes to by default: a page's beside it, named as the page was, a
+/// component's in the current folder, named after it; `extension` is the format's.
+fn open_target(
+    target: &str,
+    options: &[(&str, &str)],
+    extension: &str,
+) -> Result<(Engine, PathBuf, ExportTarget, PathBuf), String> {
+    let beside = Path::new(target).with_extension(extension);
     let target = absolute(target)?;
     let is_dir = target.is_dir();
-    let root = match option(&options, "root") {
+    let root = match option(options, "root") {
         Some(root) => absolute(root)?,
         // A component directory: its parent, so sibling components resolve.
         None if is_dir && target.join("antora.yml").is_file() => {
@@ -1074,7 +1112,7 @@ fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
 
     let mut engine = open_engine(&root, false)?;
     // The component version to export, `None` its version for one unversioned (`~`).
-    let component = match option(&options, "component") {
+    let component = match option(options, "component") {
         Some(spec) => Some(match spec.split_once('@') {
             Some((version, name)) => (name.to_owned(), Some(version.to_owned())),
             // No version: the latest, as Antora reads a coordinate without one.
@@ -1101,7 +1139,7 @@ fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     };
     let (export_target, default_output) = match component {
         Some((name, version)) => {
-            let output = PathBuf::from(pdf_file_name(&name));
+            let output = PathBuf::from(component_file_name(&name, extension));
             (ExportTarget::Component { name, version }, output)
         }
         None => {
@@ -1109,23 +1147,49 @@ fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
             (ExportTarget::Page(id), beside)
         }
     };
-    let output = option(&options, "output").map_or(default_output, PathBuf::from);
-    let args = ExportArgs {
-        target: export_target,
-        output,
-        theme: option(&options, "theme").map(str::to_owned),
-        standards,
-        fonts_dir: option(&options, "fonts-dir").map(PathBuf::from),
-        typst: option(&options, "typst").map(PathBuf::from),
-        attributes: Vec::new(),
+    Ok((engine, root, export_target, default_output))
+}
+
+/// Exports a page, or a component version as a book, to an editable Word document.
+fn docx(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+    let (positional, options) = parse_options(
+        arguments,
+        &["root", "component", "output", "profile", "fail-on"],
+    )?;
+    let fail_on = fail_on(&options)?;
+    if let Some(profile) = option(&options, "profile") {
+        let root = profile_root(&positional, &options)?;
+        let mut engine = open_engine(&root, false)?;
+        let mut args = engine
+            .docx_profile_export_args(profile)
+            .map_err(|error| error.to_string())?;
+        if let Some(output) = option(&options, "output") {
+            args.output = PathBuf::from(output);
+        }
+        let output = args.output.clone();
+        let result = engine.export_docx_blocking(args, INDEX_TIMEOUT);
+        return report(result, &output, &root, fail_on, out, true);
+    }
+    let [target] = positional.as_slice() else {
+        return Err(USAGE.to_owned());
     };
-    report_export(&mut engine, args, &root, fail_on, out)
+    let (mut engine, root, target, default_output) = open_target(target, &options, "docx")?;
+    let output = option(&options, "output").map_or(default_output, PathBuf::from);
+    let args = DocxExportArgs {
+        target,
+        output: output.clone(),
+        attributes: Vec::new(),
+        paper: None,
+        landscape: None,
+    };
+    let result = engine.export_docx_blocking(args, INDEX_TIMEOUT);
+    report(result, &output, &root, fail_on, out, true)
 }
 
 /// The file a component named `name` is exported to by default, in the current directory: the
 /// name's last part, with anything but letters, digits, `-`, `_` and `.` made `-`, so the
-/// workspace's content never decides where the file goes (#511).
-fn pdf_file_name(name: &str) -> String {
+/// workspace's content never decides where the file goes (#511). `extension` is the format's.
+fn component_file_name(name: &str, extension: &str) -> String {
     let last = name
         .rsplit(['/', '\\'])
         .find(|part| !part.is_empty())
@@ -1141,14 +1205,13 @@ fn pdf_file_name(name: &str) -> String {
         })
         .collect();
     if safe.chars().all(|character| character == '.') {
-        "component.pdf".to_owned()
+        format!("component.{extension}")
     } else {
-        format!("{safe}.pdf")
+        format!("{safe}.{extension}")
     }
 }
 
-/// Exports and waits, printing each diagnostic and then the output and its page count. Fails
-/// when a diagnostic is at least as severe as `fail_on`, though the PDF is written.
+/// Exports a PDF and waits: [`report`].
 fn report_export(
     engine: &mut Engine,
     args: ExportArgs,
@@ -1157,7 +1220,22 @@ fn report_export(
     out: &mut Out,
 ) -> Result<ExitCode, String> {
     let output = args.output.clone();
-    match engine.export_blocking(args, INDEX_TIMEOUT) {
+    let result = engine.export_blocking(args, INDEX_TIMEOUT);
+    report(result, &output, root, fail_on, out, false)
+}
+
+/// Prints each diagnostic and then the output and its page count: a PDF's pages, a Word
+/// document's AsciiDoc pages, since Word lays out its own. Fails when a diagnostic is at least
+/// as severe as `fail_on`, though the document is written.
+fn report(
+    result: Result<ExportSummary, EngineError>,
+    output: &Path,
+    root: &Path,
+    fail_on: Option<DiagnosticSeverity>,
+    out: &mut Out,
+    docx: bool,
+) -> Result<ExitCode, String> {
+    match result {
         Ok(summary) => {
             for diagnostic in &summary.diagnostics {
                 match &diagnostic.location {
@@ -1174,7 +1252,17 @@ fn report_export(
                     ),
                 }
             }
-            outln!(out, "{} ({} pages)", output.display(), summary.pages);
+            if docx {
+                let plural = if summary.pages == 1 { "" } else { "s" };
+                outln!(
+                    out,
+                    "{} ({} AsciiDoc page{plural})",
+                    output.display(),
+                    summary.pages
+                );
+            } else {
+                outln!(out, "{} ({} pages)", output.display(), summary.pages);
+            }
             let failed = fail_on.is_some_and(|threshold| {
                 summary.diagnostics.iter().any(|diagnostic| {
                     threshold == DiagnosticSeverity::Warning
@@ -1459,7 +1547,7 @@ mod tests {
             ("v1.0_beta-2", "v1.0_beta-2.pdf"),
             ("..", "component.pdf"),
         ] {
-            assert_eq!(pdf_file_name(name), file, "{name}");
+            assert_eq!(component_file_name(name, "pdf"), file, "{name}");
         }
     }
 }

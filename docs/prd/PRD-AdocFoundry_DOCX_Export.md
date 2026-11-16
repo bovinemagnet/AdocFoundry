@@ -420,6 +420,31 @@ The body is now written by `body.rs` (blocks), `inline.rs` (runs, links, footnot
     - an export through `export.docx_profile`, its document Letter landscape with the settings' margin, header and heading colour and the profile's author.
   - `adoc-docx`: `style_overrides_change_the_document_s_styles`.
 
+### D7 (#624): CLI, desktop and MCP entry points
+
+Each front end builds the engine's `docx` feature and calls only the engine; none names `adoc-docx`.
+
+- **Command line.**
+  - `adocfoundry-cli docx <file|component-dir> [--root] [--component [<version>@]<name>] [--output <file.docx>] [--fail-on none|warning|error]`, and `docx --profile <name> [<root>] [--output]`.
+  - The target selection, default outputs and reporting are `pdf`'s, now shared (`open_target`, `component_file_name`, `fail_on`, `profile_root`, `report`), so the two cannot drift.
+  - There are no PDF flags; an unknown option is refused as for any subcommand.
+  - The line printed counts AsciiDoc pages (`(8 AsciiDoc pages)`), since Word lays out its own pages and the count is not comparable with a PDF's.
+  - A diagnostic at or above `--fail-on` exits 1 with the document written, as `pdf` does.
+- **Desktop.**
+  - Export Page to Word…, Export Component to Word… and Export DOCX Profile… are actions in the File menu, after the PDF ones, and in the palette. None has a default key.
+  - They reuse the PDF commands' save dialog and component choice (`export_page`, `export_component` and `export_to`, which now take a function from the chosen path to `CommandArgs`), the profile picker (`export_profile`) and the completion notification. The notification counts AsciiDoc pages for a `.docx` and says "Word export failed" on an error.
+  - There is no preview pane; Open hands the file to the system only when clicked.
+- **MCP.**
+  - `export_docx` is a write tool, taking exactly one of `path`, `component` (`name` or `version@name`) or `profile`, plus `output` (required unless a profile gives one).
+  - The output is confined to the roots, refused when it is a link (inside or outside) and refused unless it is a `.docx` file no page is. A `.docx` there already is replaced, as `export_pdf` replaces a PDF.
+  - The answer is `{ output, pages, sources, warnings }`, with `sources` the pages in the document's order.
+- **Formulas.** Building the release CLI showed that the shared pipeline built every export's views with formulas left for a typesetter, which a PDF has and a Word document does not, so each formula was exported as its source with a warning. A Word job's views now ask for formulas as the images the STEM provider renders (`Request::draws_formulas`), awaited like diagrams; each is a picture with its source as alternative text. `formulas_are_typeset_as_pictures` covers it.
+- **Packaging.** The release smoke test (`packaging/smoke-test.py`) also exports a page with the downloaded `adocfoundry-cli docx`, so a build without Word export fails before it is published.
+- **Tests.**
+  - `docx_cli_exports_and_gates` (`crates/adocfoundry-cli/tests/cli.rs`): an article, a book and a profile (the same bytes as the engine's command), the `--fail-on` codes, PDF flags refused and a non-`.docx` output refused.
+  - `docx_mcp_export_is_write_gated` (`crates/adoc-mcp/tests/docx.rs`): unlisted and `permission_denied` without `--allow-write`; page, component and profile exports (the profile's bytes equal to the engine's); every refusal with its code and nothing written; links refused.
+  - `docx_app_exports_through_engine` and `export_docx_profile_offers_the_word_profiles` (`crates/adocfoundry/src/ui_tests.rs`): through the save dialog, the book the engine writes, byte for byte, in navigation order, with no tab opened.
+
 ## 15. References
 
 - Microsoft, [Structure of a WordprocessingML document](https://learn.microsoft.com/en-us/office/open-xml/word/structure-of-a-wordprocessingml-document)

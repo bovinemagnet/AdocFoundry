@@ -1313,3 +1313,154 @@ fn pdf_exports_the_component_folder_named_to_the_current_directory() {
     assert!(!directory.path().join("escaped.pdf").exists());
     assert!(!work.join("api").exists());
 }
+
+/// The DOCX export PRD, §10 test 15: an article, a book and a profile, with exit codes that
+/// follow `--fail-on`, and nothing of PDF's.
+#[test]
+fn docx_cli_exports_and_gates() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("book");
+    copy_tree(&repository_root().join("tests/fixtures/pdf/book"), &root);
+    std::fs::write(
+        root.join(".adocfoundry.toml"),
+        "[docx.profiles.manual]\nnav = [\"guide/modules/admin/nav.adoc\", \"guide/modules/ROOT/nav.adoc\"]\noutput = \"build/manual.docx\"\n",
+    )
+    .unwrap();
+    let run = |folder: &Path, arguments: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+            .current_dir(folder)
+            .args(arguments)
+            .output()
+            .unwrap()
+    };
+    let succeeded = |output: &Output| {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    let is_docx = |path: &Path| std::fs::read(path).unwrap().starts_with(b"PK\x03\x04");
+
+    // A page: beside it, named as it is.
+    let output = run(&root, &["docx", "guide/modules/ROOT/pages/install.adoc"]);
+    succeeded(&output);
+    assert!(is_docx(&root.join("guide/modules/ROOT/pages/install.docx")));
+    assert!(
+        stdout(&output).contains("install.docx (1 AsciiDoc page)"),
+        "{}",
+        stdout(&output)
+    );
+
+    // A component folder: its book, named after the component, in the current folder.
+    let output = run(directory.path(), &["docx", "book/guide"]);
+    succeeded(&output);
+    assert!(is_docx(&directory.path().join("guide.docx")));
+    assert!(
+        stdout(&output).contains("(8 AsciiDoc pages)"),
+        "{}",
+        stdout(&output)
+    );
+    let output = run(
+        directory.path(),
+        &[
+            "docx",
+            "book",
+            "--component",
+            "1.0@guide",
+            "--output",
+            "named.docx",
+        ],
+    );
+    succeeded(&output);
+    assert!(
+        stdout(&output).starts_with("named.docx ("),
+        "{}",
+        stdout(&output)
+    );
+
+    // A profile writes what the app's command writes.
+    let output = run(directory.path(), &["docx", "--profile", "manual", "book"]);
+    succeeded(&output);
+    let written = root.join("build/manual.docx");
+    let from_cli = std::fs::read(&written).unwrap();
+    std::fs::remove_file(&written).unwrap();
+    let mut settings = adoc_engine::Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = adoc_engine::Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    let wait = std::time::Duration::from_secs(120);
+    assert!(engine.wait_for_workers(wait));
+    engine
+        .invoke(
+            adoc_engine::commands::ids::EXPORT_DOCX_PROFILE,
+            adoc_engine::CommandArgs::Profile("manual".to_owned()),
+        )
+        .unwrap();
+    while engine.is_exporting() {
+        assert!(engine.wait_for_workers(wait));
+    }
+    assert!(
+        std::fs::read(&written).unwrap() == from_cli,
+        "the app's document differs from the command line's"
+    );
+    let output = run(directory.path(), &["docx", "--profile", "missing", "book"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no DOCX profile `missing`"));
+
+    // `--fail-on`: a reference that leads nowhere is a warning; the document is written all
+    // the same.
+    std::fs::write(
+        root.join("guide/modules/ROOT/pages/broken.adoc"),
+        "= Broken\n\nSee xref:missing.adoc[nowhere].\n",
+    )
+    .unwrap();
+    let page = [
+        "docx",
+        "guide/modules/ROOT/pages/broken.adoc",
+        "--output",
+        "broken.docx",
+    ];
+    let output = run(&root, &page);
+    succeeded(&output);
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("broken.adoc:3: warning: the cross reference missing.adoc leads to nothing"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = run(&root, &[&page[..], &["--fail-on", "warning"]].concat());
+    assert_eq!(output.status.code(), Some(1));
+    assert!(is_docx(&root.join("broken.docx")));
+    succeeded(&run(&root, &[&page[..], &["--fail-on", "error"]].concat()));
+    assert!(
+        !run(&root, &[&page[..], &["--fail-on", "sometimes"]].concat())
+            .status
+            .success()
+    );
+
+    // Nothing of PDF's: its flags are refused, and so is an output that is not a `.docx` file.
+    for extra in [
+        ["--theme", "default"],
+        ["--standard", "pdf-ua-1"],
+        ["--typst", "x.typ"],
+    ] {
+        assert!(
+            !run(&root, &[&page[..], &extra[..]].concat())
+                .status
+                .success(),
+            "{extra:?}"
+        );
+    }
+    let output = run(
+        &root,
+        &[
+            "docx",
+            "guide/modules/ROOT/pages/install.adoc",
+            "--output",
+            "install.pdf",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(!root.join("install.pdf").exists());
+}

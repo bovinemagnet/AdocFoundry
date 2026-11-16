@@ -9,7 +9,7 @@ repository.workspace = true
 [dependencies]
 adoc-core.workspace = true
 adoc-dom = { workspace = true, features = ["comparison"] }
-adoc-engine = { workspace = true, features = ["typst", "git"] }
+adoc-engine = { workspace = true, features = ["typst", "git", "docx"] }
 adoc-index.workspace = true
 adoc-render.workspace = true
 serde_json.workspace = true
