@@ -459,6 +459,7 @@ As with the other application tests, `ime_composition_commits_once` is not evide
 
 `crates/adoc-engine/tests/export.rs` drives the export service headlessly: `exports_one_page`, `exports_a_component_in_nav_order`, `nav_depth_shifts_section_levels`, `xrefs_between_book_pages_are_internal`, `xrefs_out_of_the_book_use_the_site_url`, `diagrams_render_before_compiling`, `export_runs_off_the_engine_thread`, `unsaved_buffers_are_exported` and `theme_setting_selects_the_theme`.
 `crates/adocfoundry-cli/tests/cli.rs` adds `pdf_exports_a_page`, `pdf_exports_a_component` and `pdf_reports_theme_errors`.
+The Word export's entry points have `docx_cli_exports_and_gates` in the same file, `docx_mcp_export_is_write_gated` in `crates/adoc-mcp/tests/docx.rs` and `docx_app_exports_through_engine` in the application's tests.
 
 The fixtures are in `tests/fixtures/pdf/`: `reference/`, `book/` and `themes/`.
 The reference article includes an unsized 400×100 PNG (`images/wide.png`).
@@ -679,7 +680,7 @@ The tests are:
 `crates/adoc-mcp/tests/creation.rs` drives `create_page` and `create_partial` over stdio.
 The tests are:
 
-* `mcp_write_denied_by_default`, where every mutating tool (`apply_changes`, `create_module`, `create_page`, `create_partial`, `edit_page`, `export_pdf`, `rename_page` and `revert_page`) is unlisted and refused with `permission_denied` without `--allow-write`, and no file beneath the root is made, changed or removed. All are offered with it.
+* `mcp_write_denied_by_default`, where every mutating tool (`apply_changes`, `create_module`, `create_page`, `create_partial`, `edit_page`, `export_pdf`, `export_docx`, `rename_page` and `revert_page`) is unlisted and refused with `permission_denied` without `--allow-write`, and no file beneath the root is made, changed or removed. All are offered with it.
 * `create_page_resolves_and_is_listed_in_its_navigation`, which checks the resource id, the entry in the navigation file, and that `get_page_context` finds the page in navigation once the engine has applied it. Collisions, ambiguous versions, bad names and a mismatched `expected_nav_hash` are refused.
 * `create_page_writes_its_body_after_the_title`
 * `create_partial_gives_the_include_that_names_it`

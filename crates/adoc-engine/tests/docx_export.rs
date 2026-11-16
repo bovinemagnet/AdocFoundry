@@ -53,10 +53,14 @@ fn book_workspace_with(workspace_settings: &str) -> (tempfile::TempDir, PathBuf,
     let mut settings = Settings::load(None, Some(&root)).unwrap();
     settings.git.enabled = false;
     let mut engine = Engine::new(settings);
-    engine.set_diagrams(adoc_diagrams::Diagrams::with_providers(
+    // Mermaid, and formulas as a default engine renders them.
+    let diagrams = adoc_diagrams::Diagrams::with_providers(
         adoc_diagrams::DiagramCache::new(directory.path().join("cache")),
         vec![Box::new(adoc_diagrams::MermaidProvider::default())],
-    ));
+    );
+    #[cfg(feature = "typst")]
+    let diagrams = diagrams.with_provider(Box::new(adoc_engine::StemProvider));
+    engine.set_diagrams(diagrams);
     engine.open_workspace(vec![root.clone()]).unwrap();
     assert!(engine.wait_for_workers(WAIT));
     (directory, root, engine)
@@ -689,4 +693,41 @@ fn a_pdf_profile_of_the_same_name_is_its_own() {
         engine.profile_export_args("article"),
         Err(EngineError::NotFound(_))
     ));
+}
+
+/// A Word document cannot typeset maths, so the export renders its formulas as images, as the
+/// preview does, rather than leaving them for a typesetter as a PDF does.
+#[cfg(feature = "typst")]
+#[test]
+fn formulas_are_typeset_as_pictures() {
+    let (directory, root, mut engine) = book_workspace();
+    let page = root.join("guide/modules/ROOT/pages/maths.adoc");
+    fs::write(
+        &page,
+        "= Maths\n:stem:\n\nThe area is stem:[A = pi r^2].\n\n[stem]\n++++\nsum_(i=1)^n i\n++++\n",
+    )
+    .unwrap();
+    let id = engine.open(&page).unwrap();
+    let output = directory.path().join("maths.docx");
+    let summary = engine
+        .export_docx_blocking(docx(ExportTarget::Page(id), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        summary
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("formula")),
+        "{:?}",
+        summary.diagnostics
+    );
+    let document = document_xml(&output);
+    assert_eq!(document.matches("<wp:inline").count(), 2, "{document}");
+    // Each source is its picture's description, for a screen reader, and not text of its own.
+    for source in ["A = pi r^2", "sum_(i=1)^n i"] {
+        assert!(
+            document.contains(&format!("descr=\"{source}\"")),
+            "{document}"
+        );
+        assert!(!document.contains(&format!(">{source}<")), "{document}");
+    }
 }

@@ -1571,6 +1571,127 @@ fn export_component_exports_the_active_page_s_component_with_unsaved_edits(
     assert!(!std::fs::read_to_string(&page).unwrap().contains("unsaved"));
 }
 
+/// The DOCX export PRD, §10 test 17: Export Component to Word… writes, through the save
+/// dialog, the navigation-ordered book the engine writes, and opens no preview of it.
+#[gpui::test]
+fn docx_app_exports_through_engine(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("book"));
+    copy_dir(&fixture("pdf/book"), &root);
+    let page = root.join("guide/modules/ROOT/pages/use.adoc");
+    let mut settings = Settings::default();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    let events = engine.subscribe();
+    let app = app_with(engine, cx);
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx.new(|cx| {
+            WorkspaceView::new(
+                app.clone(),
+                Some(root.clone()),
+                vec![page.clone()],
+                window,
+                cx,
+            )
+        });
+        Root::new(view, window, cx)
+    });
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| {
+            app.read(cx).engine.active().is_some() && !app.read(cx).engine.is_indexing()
+        })
+    }));
+    let tabs = cx.update(|_, cx| app.read(cx).engine.tab_order().len());
+
+    cx.dispatch_action(crate::editor::bindings::ExportComponentDocx);
+    let output = directory.path().join("guide.docx");
+    let summary =
+        finish_export(&app, &events, &output, &mut cx).unwrap_or_else(|error| panic!("{error}"));
+    let from_app = std::fs::read(&output).unwrap();
+    assert!(from_app.starts_with(b"PK\x03\x04"));
+    // The page belongs to `guide`, exported as a book in its navigation's order.
+    assert!(summary.sources.len() >= 8, "{:?}", summary.sources);
+    assert_eq!(
+        summary.sources[0],
+        root.join("guide/modules/ROOT/pages/index.adoc")
+    );
+    let message = crate::workspace_view::export_message(&output, &Ok(summary.clone()));
+    assert!(
+        message.starts_with(&format!(
+            "Exported guide.docx ({} AsciiDoc pages)",
+            summary.pages
+        )),
+        "{message}"
+    );
+    assert_eq!(
+        crate::workspace_view::export_message(&output, &Err("no space".to_owned())),
+        "Word export failed: no space"
+    );
+
+    // What the engine writes for the same component, and no tab or preview opened for it.
+    let from_engine = directory.path().join("engine.docx");
+    cx.update(|_, cx| {
+        app.update(cx, |app, _| {
+            let (name, version) = ("guide".to_owned(), Some("1.0".to_owned()));
+            app.engine
+                .export_docx_blocking(
+                    adoc_engine::DocxExportArgs {
+                        target: adoc_engine::ExportTarget::Component { name, version },
+                        output: from_engine.clone(),
+                        attributes: Vec::new(),
+                        paper: None,
+                        landscape: None,
+                    },
+                    std::time::Duration::from_secs(120),
+                )
+                .unwrap();
+        })
+    });
+    assert!(
+        std::fs::read(&from_engine).unwrap() == from_app,
+        "the app's document differs from the engine's"
+    );
+    assert_eq!(
+        cx.update(|_, cx| app.read(cx).engine.tab_order().len()),
+        tabs
+    );
+}
+
+#[gpui::test]
+fn export_docx_profile_offers_the_word_profiles(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let (root, app, events, mut cx) = profile_workspace(
+        directory.path(),
+        "[docx.profiles.install]\npage = \"guide/modules/ROOT/pages/install.adoc\"\noutput = \"build/install.docx\"\n\n[pdf.profiles.pdf-only]\npage = \"guide/modules/ROOT/pages/use.adoc\"\n",
+        "guide/modules/ROOT/pages/use.adoc",
+        cx,
+    );
+    cx.dispatch_action(crate::editor::bindings::ExportDocxProfile);
+    cx.run_until_parked();
+    cx.simulate_input("install");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    let mut finished = None;
+    assert!(drain_until(&app, &mut cx, |_| {
+        finished = finished.take().or_else(|| {
+            events.try_iter().find_map(|event| match event {
+                adoc_engine::EngineEvent::ExportFinished { output, result } => {
+                    Some((output, result))
+                }
+                _ => None,
+            })
+        });
+        finished.is_some()
+    }));
+    let (written, result) = finished.unwrap();
+    assert_eq!(written, root.join("build/install.docx"));
+    assert!(result.is_ok(), "{result:?}");
+    assert!(std::fs::read(&written).unwrap().starts_with(b"PK\x03\x04"));
+}
+
 #[gpui::test]
 fn export_errors_name_the_file_and_line(cx: &mut TestAppContext) {
     init(cx);

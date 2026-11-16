@@ -209,6 +209,18 @@ enum Request {
     Docx(DocxExportArgs),
 }
 
+impl Request {
+    /// Whether the views exported need formulas rendered as images: a Word document's do.
+    fn draws_formulas(&self) -> bool {
+        match self {
+            #[cfg(feature = "typst")]
+            Self::Pdf(_) => false,
+            #[cfg(feature = "docx")]
+            Self::Docx(_) => true,
+        }
+    }
+}
+
 #[cfg(feature = "export")]
 impl Request {
     fn target(&self) -> &ExportTarget {
@@ -1054,10 +1066,17 @@ impl Engine {
             .get_mut(&job)
             .map(|state| std::mem::take(&mut state.doms))
             .unwrap_or_default();
+        // A PDF typesets its own formulas; a Word document shows them as the images rendered
+        // for the preview, waited for like diagrams.
+        let formulas = self
+            .export
+            .jobs
+            .get(&job)
+            .is_some_and(|state| state.request.draws_formulas());
         let mut views = Vec::new();
         let mut waiting = BTreeSet::new();
         for (path, dom) in &doms {
-            let (view, wanted) = self.view_of(path, dom, false);
+            let (view, wanted) = self.view_of(path, dom, formulas);
             waiting.extend(wanted);
             views.push((path.clone(), view));
         }

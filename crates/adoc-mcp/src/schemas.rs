@@ -266,6 +266,24 @@ pub fn export_pdf() -> Arc<JsonObject> {
     )
 }
 
+pub fn export_docx() -> Arc<JsonObject> {
+    object(
+        json!({
+            "output": { "type": "string" },
+            "pages": {
+                "type": "integer",
+                "description": "The AsciiDoc pages exported; Word lays out its own pages.",
+            },
+            "sources": list(json!({
+                "type": "string",
+                "description": "A page exported, in the document's order.",
+            })),
+            "warnings": list(json!({ "type": "string" })),
+        }),
+        &["output", "pages", "sources", "warnings"],
+    )
+}
+
 fn byte_range() -> Value {
     json!({
         "type": "object",
