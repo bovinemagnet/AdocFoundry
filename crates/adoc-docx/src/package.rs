@@ -15,8 +15,10 @@ pub(crate) const RELATIONSHIPS_TYPE: &str =
 pub(crate) struct Relationship {
     pub(crate) id: String,
     pub(crate) kind: &'static str,
-    /// The target, relative to the folder of the part the relationship is from.
+    /// The target, relative to the folder of the part the relationship is from, or an
+    /// address outside the package.
     pub(crate) target: String,
+    pub(crate) external: bool,
 }
 
 /// A part: its name in the package (no leading `/`), content type, bytes and relationships.
@@ -39,14 +41,15 @@ fn relationships_part(relationships: &[Relationship]) -> Vec<u8> {
     let mut xml = Xml::part();
     xml.open("Relationships", &[("xmlns", RELATIONSHIPS)]);
     for relationship in relationships {
-        xml.empty(
-            "Relationship",
-            &[
-                ("Id", &relationship.id),
-                ("Type", relationship.kind),
-                ("Target", &relationship.target),
-            ],
-        );
+        let mut attributes = vec![
+            ("Id", relationship.id.as_str()),
+            ("Type", relationship.kind),
+            ("Target", relationship.target.as_str()),
+        ];
+        if relationship.external {
+            attributes.push(("TargetMode", "External"));
+        }
+        xml.empty("Relationship", &attributes);
     }
     xml.close("Relationships");
     xml.into_bytes()

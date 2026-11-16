@@ -101,6 +101,17 @@ impl Xml {
     pub(crate) fn into_bytes(self) -> Vec<u8> {
         self.out.into_bytes()
     }
+
+    /// How much has been written.
+    pub(crate) fn len(&self) -> usize {
+        self.out.len()
+    }
+}
+
+impl Default for Xml {
+    fn default() -> Self {
+        Self::fragment()
+    }
 }
 
 #[cfg(test)]

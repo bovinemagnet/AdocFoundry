@@ -41,9 +41,15 @@ fn copy_tree(from: &Path, to: &Path) {
 
 /// The book fixture copied to a temporary directory and indexed.
 fn book_workspace() -> (tempfile::TempDir, PathBuf, Engine) {
+    book_workspace_with("")
+}
+
+/// The book fixture with `workspace_settings` as its `.adocfoundry.toml`.
+fn book_workspace_with(workspace_settings: &str) -> (tempfile::TempDir, PathBuf, Engine) {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("book");
     copy_tree(&fixture("pdf/book"), &root);
+    fs::write(root.join(".adocfoundry.toml"), workspace_settings).unwrap();
     let mut settings = Settings::load(None, Some(&root)).unwrap();
     settings.git.enabled = false;
     let mut engine = Engine::new(settings);
@@ -69,6 +75,11 @@ fn book() -> ExportTarget {
 
 /// The package's `word/document.xml`, read through its ZIP central directory.
 fn document_xml(path: &Path) -> String {
+    part(path, "word/document.xml")
+}
+
+/// A part of the package at `path`, read through its ZIP central directory.
+fn part(path: &Path, wanted: &str) -> String {
     let bytes = fs::read(path).unwrap();
     let end = bytes.len() - 22;
     assert_eq!(&bytes[end..end + 4], b"PK\x05\x06");
@@ -80,7 +91,7 @@ fn document_xml(path: &Path) -> String {
         let local = read32(at + 42);
         let name = &bytes[at + 46..at + 46 + name_length];
         at += 46 + name_length + read16(at + 30) + read16(at + 32);
-        if name == b"word/document.xml" {
+        if name == wanted.as_bytes() {
             let start = local + 30 + read16(local + 26) + read16(local + 28);
             let mut text = String::new();
             flate2::read::DeflateDecoder::new(&bytes[start..start + compressed])
@@ -89,7 +100,7 @@ fn document_xml(path: &Path) -> String {
             return text;
         }
     }
-    panic!("no word/document.xml in {}", path.display());
+    panic!("no {wanted} in {}", path.display());
 }
 
 /// The document's paragraphs: each one's style and text.
@@ -412,4 +423,49 @@ fn the_command_reports_when_the_document_is_written() {
     let result = finished.remove(&output).expect("the export finished");
     assert_eq!(result.unwrap().sources.len(), 1);
     assert!(fs::read(&output).unwrap().starts_with(b"PK\x03\x04"));
+}
+
+#[test]
+fn references_out_of_the_book_use_the_site_address() {
+    let (directory, _root, mut engine) =
+        book_workspace_with("[pdf]\nsite_url = \"https://docs.example.com/\"\n");
+    let output = directory.path().join("site.docx");
+    let summary = engine
+        .export_docx_blocking(docx(book(), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let relationships = part(&output, "word/_rels/document.xml.rels");
+    assert!(
+        relationships.contains(
+            r#"Target="https://docs.example.com/other/index.html" TargetMode="External""#
+        ),
+        "{relationships}"
+    );
+    // A reference between the book's pages is a link inside the document.
+    let document = document_xml(&output);
+    assert!(
+        document.contains(r#"<w:hyperlink w:anchor="_a"#),
+        "{document}"
+    );
+    let outside: Vec<&str> = summary
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .filter(|message| message.contains("outside the document"))
+        .collect();
+    assert_eq!(outside, Vec::<&str>::new());
+
+    // Without a site, the reference is text, and reported.
+    let (directory, _root, mut engine) = book_workspace();
+    let output = directory.path().join("no-site.docx");
+    let summary = engine
+        .export_docx_blocking(docx(book(), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(!part(&output, "word/_rels/document.xml.rels").contains("other/index.html"));
+    assert!(document_xml(&output).contains("other component"));
+    assert!(
+        summary.diagnostics.iter().any(|diagnostic| diagnostic.message
+            == "the cross reference other::index.adoc leads outside the document and is exported as text"),
+        "{:?}",
+        summary.diagnostics
+    );
 }

@@ -1417,6 +1417,14 @@ impl Engine {
         } = written;
         let failed = failed_diagrams(&arranged);
         let document = to_docx(arranged);
+        // A reference out of the document leads to its page on the site, as the PDF's do.
+        let options = adoc_docx::DocxOptions {
+            page_urls: self
+                .site_url()
+                .map(|site| self.page_urls(&site))
+                .unwrap_or_default(),
+            ..adoc_docx::DocxOptions::default()
+        };
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
         let crashed = move |error| WorkerMessage::ExportFinished {
@@ -1424,7 +1432,7 @@ impl Engine {
             result: Err(format!("writing the document crashed: {error}")),
         };
         crate::worker::spawn(sender, crashed, move |sender| {
-            let result = write_docx_file(&document, &args.output).map(|report| {
+            let result = write_docx_file(&document, &options, &args.output).map(|report| {
                 let mut diagnostics: Vec<ExportDiagnostic> = report
                     .diagnostics
                     .into_iter()
@@ -1458,6 +1466,7 @@ impl Engine {
 #[cfg(feature = "docx")]
 fn write_docx_file(
     document: &adoc_docx::DocxDocument,
+    options: &adoc_docx::DocxOptions,
     output: &Path,
 ) -> Result<adoc_docx::DocxReport, String> {
     let failed = |error: &dyn std::fmt::Display| format!("{}: {error}", output.display());
@@ -1476,8 +1485,8 @@ fn write_docx_file(
     };
     let file = tempfile::NamedTempFile::new_in(folder).map_err(|error| failed(&error))?;
     let mut sink = std::io::BufWriter::new(file);
-    let report = adoc_docx::write_docx(document, &adoc_docx::DocxOptions::default(), &mut sink)
-        .map_err(|error| failed(&error))?;
+    let report =
+        adoc_docx::write_docx(document, options, &mut sink).map_err(|error| failed(&error))?;
     let file = sink
         .into_inner()
         .map_err(|error| failed(&error.into_error()))?;

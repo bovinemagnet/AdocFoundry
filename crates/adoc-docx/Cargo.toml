@@ -13,7 +13,9 @@ crc32fast.workspace = true
 flate2.workspace = true
 
 [dev-dependencies]
+adoc-core.workspace = true
 roxmltree.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true
