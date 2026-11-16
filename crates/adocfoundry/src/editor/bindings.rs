@@ -585,6 +585,7 @@ mod tests {
             // (#624) gives these actions, but a workspace build turns it on for every crate.
             ids::EXPORT_DOCX_PAGE,
             ids::EXPORT_DOCX_COMPONENT,
+            ids::EXPORT_DOCX_PROFILE,
         ];
         let engine = Engine::new(Settings::default());
         let missing: Vec<&str> = engine

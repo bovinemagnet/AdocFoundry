@@ -158,6 +158,9 @@ They are also applied to a book's own attributes.
 A document's metadata comes from attributes, so a profile sets it with `pdf-title` (a book's title on its title page and in the metadata), `author`, `description` and `keywords`.
 
 A profile that has none of `page`, `component` and `nav`, has more than one of them, has an empty `nav`, or has an unknown key is left out.
+
+Word publications have their own `[docx.profiles]`, which do not read these profiles and are not read by them.
+See xref:settings.adoc#docx-profiles[Word profiles].
 A settings warning names `pdf.profiles.<name>`.
 
 To run a profile in the application, choose File › Export PDF Profile… (`export.pdf_profile`), which is also in the command palette.

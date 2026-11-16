@@ -6,7 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::{Engine, EngineError, ExportArgs, ExportTarget, FileAccess, PdfStandard};
+use crate::{
+    DocxExportArgs, Engine, EngineError, ExportArgs, ExportTarget, FileAccess, PdfStandard,
+};
 
 /// A saved publication.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -70,17 +72,48 @@ pub(crate) fn parse_profile(name: &str, table: &toml::Table) -> Result<PdfProfil
     {
         return Err(format!("unknown key `{unknown}`"));
     }
-    let text = |key: &str| -> Result<Option<String>, String> {
-        table
-            .get(key)
-            .map(|value| {
-                value
-                    .as_str()
-                    .map(str::to_owned)
-                    .ok_or_else(|| format!("`{key}`: expected a string"))
+    let text = |key: &str| profile_text(table, key);
+    let content = profile_content(table)?;
+    let standards = match table.get("standards") {
+        None => Vec::new(),
+        Some(value) => value
+            .as_array()
+            .and_then(|items| {
+                items
+                    .iter()
+                    .map(|item| item.as_str().and_then(crate::settings::pdf_standard))
+                    .collect::<Option<Vec<_>>>()
             })
-            .transpose()
+            .ok_or_else(|| "`standards`: expected an array of standard names".to_owned())?,
     };
+    let attributes = profile_attributes(table)?;
+    Ok(PdfProfile {
+        name: name.to_owned(),
+        content,
+        output: text("output")?,
+        theme: text("theme")?,
+        fonts_dir: text("fonts_dir")?,
+        standards,
+        attributes,
+    })
+}
+
+/// A profile's string `key`, when it has one.
+pub(crate) fn profile_text(table: &toml::Table, key: &str) -> Result<Option<String>, String> {
+    table
+        .get(key)
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("`{key}`: expected a string"))
+        })
+        .transpose()
+}
+
+/// What a profile publishes: exactly one of `page`, `component` and `nav`.
+pub(crate) fn profile_content(table: &toml::Table) -> Result<ProfileContent, String> {
+    let text = |key: &str| profile_text(table, key);
     let nav = table
         .get("nav")
         .map(|value| {
@@ -96,25 +129,17 @@ pub(crate) fn parse_profile(name: &str, table: &toml::Table) -> Result<PdfProfil
         })
         .transpose()?
         .filter(|files| !files.is_empty());
-    let content = match (text("page")?, text("component")?, nav) {
-        (Some(page), None, None) => ProfileContent::Page(page),
-        (None, Some(component), None) => ProfileContent::Component(component),
-        (None, None, Some(files)) => ProfileContent::Navigation(files),
-        _ => return Err("expected one of `page`, `component` or `nav`".to_owned()),
-    };
-    let standards = match table.get("standards") {
-        None => Vec::new(),
-        Some(value) => value
-            .as_array()
-            .and_then(|items| {
-                items
-                    .iter()
-                    .map(|item| item.as_str().and_then(crate::settings::pdf_standard))
-                    .collect::<Option<Vec<_>>>()
-            })
-            .ok_or_else(|| "`standards`: expected an array of standard names".to_owned())?,
-    };
-    let attributes = match table.get("attributes") {
+    match (text("page")?, text("component")?, nav) {
+        (Some(page), None, None) => Ok(ProfileContent::Page(page)),
+        (None, Some(component), None) => Ok(ProfileContent::Component(component)),
+        (None, None, Some(files)) => Ok(ProfileContent::Navigation(files)),
+        _ => Err("expected one of `page`, `component` or `nav`".to_owned()),
+    }
+}
+
+/// A profile's `attributes`: strings, numbers, or `true` for an empty value.
+pub(crate) fn profile_attributes(table: &toml::Table) -> Result<Vec<(String, String)>, String> {
+    Ok(match table.get("attributes") {
         None => Vec::new(),
         Some(value) => value
             .as_table()
@@ -134,15 +159,6 @@ pub(crate) fn parse_profile(name: &str, table: &toml::Table) -> Result<PdfProfil
             .ok_or_else(|| {
                 "`attributes`: expected a table of strings, numbers or `true`".to_owned()
             })?,
-    };
-    Ok(PdfProfile {
-        name: name.to_owned(),
-        content,
-        output: text("output")?,
-        theme: text("theme")?,
-        fonts_dir: text("fonts_dir")?,
-        standards,
-        attributes,
     })
 }
 
@@ -161,19 +177,7 @@ impl Engine {
             .first()
             .ok_or_else(|| EngineError::Refused("no workspace is open".to_owned()))?;
         let resolve = |path: &str| crate::normalize_path(&root.join(path));
-        let target = match &profile.content {
-            ProfileContent::Page(page) => ExportTarget::File(resolve(page)),
-            ProfileContent::Component(spec) => {
-                let (name, version) = match spec.split_once('@') {
-                    Some((version, name)) => (name.to_owned(), Some(version.to_owned())),
-                    None => (spec.clone(), None),
-                };
-                ExportTarget::Component { name, version }
-            }
-            ProfileContent::Navigation(files) => {
-                ExportTarget::Navigation(files.iter().map(|file| resolve(file)).collect())
-            }
-        };
+        let target = profile_target(&profile.content, root);
         let output = resolve(
             profile
                 .output
@@ -217,8 +221,74 @@ impl Engine {
             Ok(args) => args,
             Err(error) => return vec![error.to_string()],
         };
+        let mut problems = self.target_problems(&args.target);
+        if let Some(theme) = &args.theme {
+            let file = theme.ends_with(".yml") || theme.ends_with(".yaml");
+            let known = if file {
+                Path::new(theme).is_file()
+            } else {
+                self.pdf_themes().iter().any(|choice| choice.name == *theme)
+            };
+            if !known {
+                problems.push(format!("its theme `{theme}` is not found"));
+            }
+        }
+        problems
+    }
+
+    /// The Word export a `[docx.profiles.<name>]` profile describes, every path resolved
+    /// against the first workspace root, its output inside the workspace.
+    pub fn docx_profile_export_args(&self, name: &str) -> Result<DocxExportArgs, EngineError> {
+        let profile = self
+            .settings
+            .docx
+            .profiles
+            .iter()
+            .find(|profile| profile.name == name)
+            .ok_or_else(|| EngineError::NotFound(format!("no DOCX profile `{name}`")))?;
+        let root = self
+            .roots
+            .first()
+            .ok_or_else(|| EngineError::Refused("no workspace is open".to_owned()))?;
+        let output = crate::normalize_path(
+            &root.join(
+                profile
+                    .output
+                    .as_deref()
+                    .unwrap_or(&format!("{}.docx", profile.name)),
+            ),
+        );
+        // As a PDF profile's: the workspace's own files write only inside the workspace.
+        if !FileAccess::within(vec![root.clone()]).permits(&output) {
+            return Err(EngineError::Refused(format!(
+                "DOCX profile `{name}` writes {}, which is outside the workspace",
+                output.display()
+            )));
+        }
+        Ok(DocxExportArgs {
+            target: profile_target(&profile.content, root),
+            output,
+            attributes: profile.attributes.clone(),
+            paper: profile.paper,
+            landscape: profile.landscape,
+        })
+    }
+
+    /// What would stop the Word profile `name` from exporting, found without exporting: an
+    /// unknown profile, an output outside the workspace, or content that is not in it.
+    #[must_use]
+    pub fn docx_profile_problems(&self, name: &str) -> Vec<String> {
+        match self.docx_profile_export_args(name) {
+            Ok(args) => self.target_problems(&args.target),
+            Err(error) => vec![error.to_string()],
+        }
+    }
+
+    /// What is missing of what a profile publishes: a page not indexed, a component version not
+    /// in the catalog, a navigation file not there.
+    pub(crate) fn target_problems(&self, target: &ExportTarget) -> Vec<String> {
         let mut problems = Vec::new();
-        match &args.target {
+        match target {
             ExportTarget::File(path) => {
                 if self.workspace.index.file(path).is_none() {
                     problems.push(format!(
@@ -254,17 +324,6 @@ impl Engine {
                 }
             }
             ExportTarget::Page(_) => {}
-        }
-        if let Some(theme) = &args.theme {
-            let file = theme.ends_with(".yml") || theme.ends_with(".yaml");
-            let known = if file {
-                Path::new(theme).is_file()
-            } else {
-                self.pdf_themes().iter().any(|choice| choice.name == *theme)
-            };
-            if !known {
-                problems.push(format!("its theme `{theme}` is not found"));
-            }
         }
         problems
     }
@@ -305,6 +364,24 @@ impl Engine {
         found.sort_by(|left, right| left.name.cmp(&right.name));
         themes.extend(found);
         themes
+    }
+}
+
+/// What `content` names, its paths resolved against `root`.
+pub(crate) fn profile_target(content: &ProfileContent, root: &Path) -> ExportTarget {
+    let resolve = |path: &str| crate::normalize_path(&root.join(path));
+    match content {
+        ProfileContent::Page(page) => ExportTarget::File(resolve(page)),
+        ProfileContent::Component(spec) => {
+            let (name, version) = match spec.split_once('@') {
+                Some((version, name)) => (name.to_owned(), Some(version.to_owned())),
+                None => (spec.clone(), None),
+            };
+            ExportTarget::Component { name, version }
+        }
+        ProfileContent::Navigation(files) => {
+            ExportTarget::Navigation(files.iter().map(|file| resolve(file)).collect())
+        }
     }
 }
 

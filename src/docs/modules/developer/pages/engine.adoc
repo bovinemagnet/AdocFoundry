@@ -346,6 +346,9 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `Peek`, `E
 |`export.docx_page`, `export.docx_component`
 |Export the active page, or a component version, as an editable Word document (DOCX); see <<the-export-service>>. They are registered only with the `docx` feature.
 
+|`export.docx_profile`
+|Export a `[docx.profiles.<name>]` Word profile, with `CommandArgs::Profile`; see <<the-export-service>>.
+
 |`export.html_page`
 |Export the active page as standalone HTML, with local images, diagrams and formula images embedded as `data:` URIs. It does not need the `typst` feature.
 
@@ -564,6 +567,14 @@ The package is written to a temporary file beside the output, with its folders c
 A failure therefore leaves whatever was there before and no temporary file.
 The page's `pdf-title` applies to PDF only; a DOCX book takes the component version's title.
 Formulas have no artwork without Typst.
+
+`[docx]` is read by `docx_settings.rs` (its module documentation is the schema) and becomes the `DocxOptions` of each export through `Engine::docx_options`: the paper, orientation, margins, running content, logo and style overrides.
+Nothing of `[pdf]` is read for Word and nothing of `[docx]` for PDF.
+`[docx.profiles.<name>]` is a Word publication.
+`Engine::docx_profile_export_args` resolves one against the first root, as `profile_export_args` does for PDF: its output is `<name>.docx` by default and is refused when outside the workspace.
+`docx_profile_problems` says what would stop it exporting, without exporting.
+`export.docx_profile` runs one with `CommandArgs::Profile`.
+The two formats share the helpers in `profiles.rs` that read a profile's content (`page`, `component` or `nav`) and attributes and resolve its target, but no profile: a PDF profile and a Word profile of the same name are independent.
 
 `export.html_page` takes the same `CommandArgs::Export` with an `ExportTarget::Page` and an output path (the PDF options are ignored), returns at once and reports with `EngineEvent::ExportFinished` (an `ExportSummary` with one page, no diagnostics and no `sources`).
 It is implemented in `html_export.rs`: `Engine::render_now` starts the page's render, and the crate-private `finished_preview` tells when it is complete, diagrams included.

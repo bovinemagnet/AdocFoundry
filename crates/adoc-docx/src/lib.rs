@@ -176,9 +176,26 @@ impl Default for Running {
     }
 }
 
+/// Changes to the built-in styles. A font is a family name Word looks up on the reader's
+/// machine; a colour is six hexadecimal digits (`1F3864`); the size is in half-points (22 is
+/// 11 pt). Whoever fills these checks them; the writer only escapes them.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct StyleOverrides {
+    /// Body text, and every style based on it.
+    pub body_font: Option<String>,
+    /// The title, subtitle, headings and the table of contents' heading.
+    pub heading_font: Option<String>,
+    /// Code, keys, source and literal blocks.
+    pub code_font: Option<String>,
+    pub body_size: Option<u32>,
+    pub heading_colour: Option<String>,
+    pub link_colour: Option<String>,
+}
+
 /// How a document is exported.
 #[derive(Clone, Debug, Default)]
 pub struct DocxOptions {
+    pub styles: StyleOverrides,
     pub paper: Paper,
     pub landscape: bool,
     pub margins: Margins,
@@ -362,7 +379,7 @@ pub fn write_docx(
             package::Part {
                 name: "word/styles.xml".to_owned(),
                 content_type: parts::STYLES_TYPE,
-                data: parts::styles(writer.width),
+                data: parts::styles(writer.width, &options.styles),
                 relationships: Vec::new(),
             },
             package::Part {

@@ -97,6 +97,17 @@ standards = ["pdf-a-2a"]         # pdf-a-1b | pdf-a-1a | pdf-a-2a | pdf-ua-1
 page = "docs/modules/ROOT/pages/quick-start.adoc"
 output = "build/quick-start.pdf"
 
+[docx]                           # Word export; nothing here is read for PDF
+paper = "a4"                     # a4 | letter
+orientation = "portrait"         # portrait | landscape
+
+[docx.styles]
+heading_colour = "1F3864"
+
+[docx.profiles.quick-start]      # a named Word document, run by name
+page = "docs/modules/ROOT/pages/quick-start.adoc"
+output = "build/quick-start.docx"
+
 [spelling]
 enabled = true                   # underline misspelt words in prose
 language = "en_GB"               # for pages with no lang attribute
@@ -417,6 +428,11 @@ These settings never affect PDF export (`pdf.theme`), HTML or the Antora site.
 |none
 |A named publication profile: exactly one of `page`, `component` or `nav`, and optionally `output`, `theme`, `fonts_dir`, `standards` and `attributes`. A workspace profile replaces a user profile of the same name. A profile that is not valid is left out with a warning. See xref:pdf-export.adoc#publication-profiles[Publication profiles].
 
+|`docx.*`
+|tables
+|see <<docx-settings>>
+|How Word documents are laid out and styled, and named Word publication profiles in `[docx.profiles.<name>]`. See <<docx-settings>>.
+
 |`history.enabled`
 |boolean
 |`true`
@@ -540,9 +556,213 @@ These settings never affect PDF export (`pdf.theme`), HTML or the Antora site.
 
 See xref:pdf-export.adoc[Exporting to PDF].
 
+[#docx-settings]
+== Word export settings
+
+The `[docx]` table sets how the Word documents the engine writes are laid out and styled, and `[docx.profiles.<name>]` saves Word publications under a name.
+Exporting to Word from the app, the command line and the MCP server arrives in a later release; these settings are what that export reads.
+
+Both settings files may set `[docx]`.
+A key the workspace file sets replaces the user file's.
+A `[docx.header]` or `[docx.footer]` table replaces that one's lines whole, so a workspace that sets `[docx.footer]` does not keep the user file's even-page footer.
+A workspace profile replaces a user profile of the same name.
+An unknown key, or a value that cannot be used, warns and leaves the default.
+
+Word export and PDF export are set apart.
+Nothing in `[pdf]`, its theme, fonts or standards, is read for Word, and nothing in `[docx]` is read for PDF.
+
+[cols="2,2,2,4"]
+|===
+|Key |Type |Default |Meaning
+
+|`docx.paper`
+|string
+|`"a4"`
+|The paper size: `"a4"` or `"letter"`.
+
+|`docx.orientation`
+|string
+|`"portrait"`
+|`"portrait"` or `"landscape"`.
+
+|`docx.logo`
+|string
+|none
+|The image that `\{logo}` shows in a header or footer, relative to the first workspace root.
+
+|`docx.odd_even`
+|boolean
+|`true`
+|Give odd and even pages their own headers and footers.
+When `false`, the odd page's lines are used on every page.
+
+|`docx.margins.top`, `right`, `bottom` and `left`
+|length
+|`"1in"`
+|The page margins.
+
+|`docx.margins.header` and `footer`
+|length
+|about 1.25 cm
+|How far the header and the footer are from the edge of the page.
+The default is 708 twentieths of a point.
+
+|`docx.header` and `docx.footer`
+|tables
+|no header; the page number in the footer
+|The running content.
+Each table has `left`, `centre` (or `center`) and `right` slots, and the tables `.even` and `.first` take the same slots for even pages and for the body's first page.
+See <<docx-running>>.
+
+|`docx.styles.body_font`, `heading_font` and `code_font`
+|string
+|Word's own
+|A font family of 1 to 31 characters for the body, for headings (the title, subtitle, headings and the table of contents' heading) and for code.
+
+|`docx.styles.body_size`
+|number
+|Word's own
+|The body text's size in points, from 6 to 72.
+
+|`docx.styles.heading_colour` and `link_colour`
+|string
+|Word's own
+|Six hexadecimal digits, such as `"1F3864"`; a leading `#` is allowed.
+`heading_color` and `link_color` are accepted too.
+
+|`docx.profiles.<name>`
+|table
+|none
+|A named Word publication.
+See <<docx-profiles>>.
+|===
+
+A length is a string with a unit, `"25mm"`, `"2.5cm"`, `"1in"` or `"72pt"`, or a number of points.
+No length may be more than 10 inches.
+
+[source,toml]
+----
+[docx]
+paper = "letter"
+orientation = "portrait"
+logo = "images/logo.png"
+odd_even = true
+
+[docx.margins]
+top = "25mm"
+header = "12mm"
+
+[docx.header]
+left = "{document-title}"
+right = "{logo}"
+
+[docx.footer]
+left = "{chapter-title}"
+right = "{page-number} of {page-count}"
+
+[docx.styles]
+body_font = "Calibri"
+heading_font = "Calibri Light"
+code_font = "Consolas"
+body_size = 11
+heading_colour = "1F3864"
+link_colour = "0563C1"
+----
+
+By default the page is A4, portrait, with a margin of an inch on every side, no header, and the page number in the footer: at the right of odd pages and at the left of even ones.
+
+[#docx-running]
+=== Headers and footers
+
+Each slot holds text and these placeholders.
+An unknown placeholder stays as written.
+
+[cols="1,3"]
+|===
+|Placeholder |Shows
+
+|`\{page-number}`
+|The page's number, as a field that Word keeps current.
+
+|`\{page-count}`
+|The number of pages in the document, covers included.
+
+|`\{document-title}`
+|The document's title.
+
+|`\{chapter-title}`
+|The title of the chapter the page is in, as Word and LibreOffice find it.
+
+|`\{logo}`
+|The image `docx.logo` names, drawn small enough for a line of text.
+|===
+
+With `odd_even` on, an even page uses its `.even` table; when there is none, it uses the odd page's lines with left and right swapped.
+A `.first` table, in either the header or the footer, gives the body's first page headers and footers of its own, empty where none is given.
+Covers and the title page show no running content.
+
+[#docx-profiles]
+=== Word profiles
+
+A Word profile names a Word document you produce again and again, as a PDF profile does.
+It is a table `[docx.profiles.<name>]` in either settings file.
+
+[cols="1,4"]
+|===
+|Key |Meaning
+
+|`page`, `component` or `nav`
+|Exactly one of them, as for xref:pdf-export.adoc#publication-profiles[a PDF profile]: a page's path, a component version (`name` or `version@name`), or an array of navigation file paths, relative to the first workspace folder.
+
+|`output`
+|Where to write the document, relative to the first workspace folder.
+The default is `<name>.docx` there.
+It must be a `.docx` file name and inside the workspace folder; a profile whose output would be written outside it is refused when it is run.
+
+|`paper` and `orientation`
+|This document's own, in place of the value in `[docx]`.
+
+|`attributes`
+|A table of attribute names to strings, numbers or `true`, applied to every page before its own header.
+|===
+
+A profile that has none of `page`, `component` and `nav`, or more than one of them, that has an `output` which is not a `.docx` file name, a bad `paper` or `orientation`, or an unknown key is left out with a warning.
+A key that only PDF profiles have, such as `theme`, is an unknown key here.
+
+A profile declares its own content in each format, and a PDF profile and a Word profile of the same name are independent.
+A book published in both formats therefore repeats its one line of content, and neither profile can change the other.
+
+This example publishes one Antora book as both a PDF and a Word document, with output paths and style settings of their own.
+
+[source,toml]
+----
+[pdf.profiles.admin-guide]
+component = "2.0@admin"
+output = "build/admin-guide.pdf"
+theme = "acme"
+
+[docx.profiles.admin-guide]
+component = "2.0@admin"
+output = "build/admin-guide.docx"
+orientation = "portrait"
+
+[docx]
+paper = "a4"
+
+[docx.styles]
+heading_font = "Calibri Light"
+heading_colour = "1F3864"
+
+[docx.footer]
+left = "{chapter-title}"
+right = "{page-number} of {page-count}"
+----
+
+The PDF profile's `theme` is not read for Word, and the Word profile's `orientation` is not read for PDF.
+
 == What a workspace file may set
 
-A workspace file may override `editor.*`, `templates.dir`, `sidebar.navigation.default_expansion`, `sidebar.modules.default_expansion`, `sidebar.follow_active`, `workspace.ignore`, `pdf.*`, `graph.*`, `quality.*`, `spelling.enabled` and `spelling.language`.
+A workspace file may override `editor.*`, `templates.dir`, `sidebar.navigation.default_expansion`, `sidebar.modules.default_expansion`, `sidebar.follow_active`, `workspace.ignore`, `pdf.*`, `docx.*`, `graph.*`, `quality.*`, `spelling.enabled` and `spelling.language`.
 The two depths override separately.
 Both files may set `[quality]`: a rule's severity from the workspace file wins, and the exclusions and the providers of both files apply.
 `tools.*` is accepted only in the user file, so a repository cannot point the editor at an executable of its choosing.

@@ -1,7 +1,7 @@
 //! The parts every document has: the main document around its body, the styles and the core
 //! properties.
 
-use crate::xml::Xml;
+use crate::{xml::Xml, StyleOverrides};
 
 pub(crate) const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 pub(crate) const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -101,14 +101,30 @@ impl Default for Style<'_> {
     }
 }
 
-const MONO: (&str, &[(&str, &str)]) = (
-    "w:rFonts",
-    &[
-        ("w:ascii", "Consolas"),
-        ("w:hAnsi", "Consolas"),
-        ("w:cs", "Consolas"),
-    ],
-);
+/// A run property: its element and attributes.
+type Property<'a> = (&'a str, &'a [(&'a str, &'a str)]);
+
+/// A heading's run properties in the schema's order: its font, bold, its colour, its size.
+fn heading_run<'a>(
+    fonts: Option<&'a [(&'a str, &'a str)]>,
+    bold: bool,
+    colour: Option<&'a [(&'a str, &'a str)]>,
+    size: &'a [(&'a str, &'a str)],
+) -> Vec<Property<'a>> {
+    let mut run = Vec::new();
+    if let Some(fonts) = fonts {
+        run.push(("w:rFonts", fonts));
+    }
+    if bold {
+        run.extend(BOLD);
+    }
+    if let Some(colour) = colour {
+        run.push(("w:color", colour));
+    }
+    run.push(("w:sz", size));
+    run.push(("w:szCs", size));
+    run
+}
 const BOLD: [(&str, &[(&str, &str)]); 2] = [("w:b", &[]), ("w:bCs", &[])];
 const ITALIC: [(&str, &[(&str, &str)]); 2] = [("w:i", &[]), ("w:iCs", &[])];
 /// A light border, on every side of a table and between its cells.
@@ -192,7 +208,30 @@ fn style(xml: &mut Xml, style: &Style<'_>) {
 /// is named for what it holds, so a reader can restyle it in Word. `width` is the text's, in
 /// twentieths of a point: headers and footers have their centre and right tab stops by it, and
 /// the table of contents its page numbers.
-pub(crate) fn styles(width: u32) -> Vec<u8> {
+pub(crate) fn styles(width: u32, overrides: &StyleOverrides) -> Vec<u8> {
+    let body_font = overrides.body_font.as_deref().unwrap_or("Calibri");
+    let code_font = overrides.code_font.as_deref().unwrap_or("Consolas");
+    let body_size = overrides.body_size.unwrap_or(22).to_string();
+    let code_fonts = [
+        ("w:ascii", code_font),
+        ("w:hAnsi", code_font),
+        ("w:cs", code_font),
+    ];
+    let mono: Property = ("w:rFonts", &code_fonts);
+    let heading_fonts = overrides
+        .heading_font
+        .as_deref()
+        .map(|font| [("w:ascii", font), ("w:hAnsi", font), ("w:cs", font)]);
+    let heading_fonts = heading_fonts.as_ref().map(|fonts| &fonts[..]);
+    let heading_colour = overrides
+        .heading_colour
+        .as_deref()
+        .map(|colour| [("w:val", colour)]);
+    let heading_colour = heading_colour.as_ref().map(|colour| &colour[..]);
+    let link_colour = [(
+        "w:val",
+        overrides.link_colour.as_deref().unwrap_or("0563C1"),
+    )];
     let mut xml = Xml::part();
     xml.open("w:styles", &[("xmlns:w", W)]);
     xml.open("w:docDefaults", &[]);
@@ -201,14 +240,14 @@ pub(crate) fn styles(width: u32) -> Vec<u8> {
     xml.empty(
         "w:rFonts",
         &[
-            ("w:ascii", "Calibri"),
-            ("w:hAnsi", "Calibri"),
-            ("w:eastAsia", "Calibri"),
-            ("w:cs", "Calibri"),
+            ("w:ascii", body_font),
+            ("w:hAnsi", body_font),
+            ("w:eastAsia", body_font),
+            ("w:cs", body_font),
         ],
     );
-    xml.empty("w:sz", &[("w:val", "22")]);
-    xml.empty("w:szCs", &[("w:val", "22")]);
+    xml.empty("w:sz", &[("w:val", &body_size)]);
+    xml.empty("w:szCs", &[("w:val", &body_size)]);
     xml.close("w:rPr");
     xml.close("w:rPrDefault");
     xml.open("w:pPrDefault", &[]);
@@ -272,7 +311,7 @@ pub(crate) fn styles(width: u32) -> Vec<u8> {
             name: "Title",
             next: Some("Normal"),
             paragraph: &[("w:spacing", &[("w:before", "0"), ("w:after", "120")])],
-            run: &[("w:sz", &[("w:val", "56")]), ("w:szCs", &[("w:val", "56")])],
+            run: &heading_run(heading_fonts, false, heading_colour, &[("w:val", "56")]),
             ..Style::default()
         },
     );
@@ -283,7 +322,7 @@ pub(crate) fn styles(width: u32) -> Vec<u8> {
             name: "Subtitle",
             next: Some("Normal"),
             paragraph: &[("w:spacing", &[("w:before", "0"), ("w:after", "240")])],
-            run: &[("w:sz", &[("w:val", "30")]), ("w:szCs", &[("w:val", "30")])],
+            run: &heading_run(heading_fonts, false, heading_colour, &[("w:val", "30")]),
             ..Style::default()
         },
     );
@@ -303,12 +342,7 @@ pub(crate) fn styles(width: u32) -> Vec<u8> {
                     ("w:spacing", &[("w:before", "240"), ("w:after", "80")]),
                     ("w:outlineLvl", &[("w:val", &outline)]),
                 ],
-                run: &[
-                    BOLD[0],
-                    BOLD[1],
-                    ("w:sz", &[("w:val", size)]),
-                    ("w:szCs", &[("w:val", size)]),
-                ],
+                run: &heading_run(heading_fonts, true, heading_colour, &[("w:val", size)]),
                 ..Style::default()
             },
         );
@@ -371,7 +405,7 @@ pub(crate) fn styles(width: u32) -> Vec<u8> {
         ("w:spacing", &[("w:line", "240"), ("w:lineRule", "auto")]),
     ];
     let code_run: [(&str, &[(&str, &str)]); 3] = [
-        MONO,
+        mono,
         ("w:sz", &[("w:val", "19")]),
         ("w:szCs", &[("w:val", "19")]),
     ];
@@ -465,12 +499,7 @@ pub(crate) fn styles(width: u32) -> Vec<u8> {
                 keep_next,
                 ("w:spacing", &[("w:before", "240"), ("w:after", "120")]),
             ],
-            run: &[
-                BOLD[0],
-                BOLD[1],
-                ("w:sz", &[("w:val", "32")]),
-                ("w:szCs", &[("w:val", "32")]),
-            ],
+            run: &heading_run(heading_fonts, true, heading_colour, &[("w:val", "32")]),
             ..Style::default()
         },
     );
@@ -532,12 +561,12 @@ pub(crate) fn styles(width: u32) -> Vec<u8> {
         },
     );
     for (id, name, run) in [
-        ("CodeChar", "Code", &[MONO][..]),
+        ("CodeChar", "Code", &[mono][..]),
         (
             "Keyboard",
             "Keyboard",
             &[
-                MONO,
+                mono,
                 (
                     "w:bdr",
                     &[
@@ -553,7 +582,7 @@ pub(crate) fn styles(width: u32) -> Vec<u8> {
             "Hyperlink",
             "Hyperlink",
             &[
-                ("w:color", &[("w:val", "0563C1")][..]),
+                ("w:color", &link_colour[..]),
                 ("w:u", &[("w:val", "single")][..]),
             ][..],
         ),
