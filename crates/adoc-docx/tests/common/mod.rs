@@ -199,8 +199,8 @@ pub fn assert_valid_package(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
         assert!(names.contains(required), "{required} is missing: {names:?}");
     }
 
-    // Every part is well-formed XML.
-    for name in &names {
+    // Every part but the pictures is well-formed XML.
+    for name in names.iter().filter(|name| !name.starts_with("word/media/")) {
         roxmltree::Document::parse(text(&entries, name))
             .unwrap_or_else(|error| panic!("{name} is not well formed: {error}"));
     }

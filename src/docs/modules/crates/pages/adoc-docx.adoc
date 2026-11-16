@@ -19,7 +19,8 @@ It knows nothing of the engine, the workspace or a UI framework.
 
 `adoc-docx` is headless.
 It depends on `adoc-render`, an allowed same-layer pair listed in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`, and on `adoc-dom`.
-It also uses `flate2` and `crc32fast`, which were already in the dependency tree.
+It depends on `adoc-core` for `FileAccess`, through which it reads pictures.
+It also uses `flate2` and `crc32fast`, and `resvg` at the workspace's version, which draws SVG; all were already in the dependency tree.
 It must never build `adoc-pdf` or Typst.
 `DOCX_EXCLUDED` in `xtask/src/layers.rs` lists them, `cargo xtask layers` checks it, and so does the test `docx_builds_without_typst`.
 
@@ -45,6 +46,7 @@ It must never build `adoc-pdf` or Typst.
 
 |`DocxOptions`
 |A `paper`, `Paper::A4` by default or `Paper::Letter`, and `page_urls`, the published address of each page, which a cross reference to a page outside the document uses.
+It also has `access`, the `FileAccess` that pictures are read through.
 
 |`DocxReport`
 |`diagnostics`, each a `DocxDiagnostic` with a `DocxSeverity`, a `message` and an optional `source` span.
@@ -64,6 +66,7 @@ The crate writes these parts, in a fixed order.
 * `word/settings.xml`, always, holding compatibility mode 15 and, when there are footnotes, their separators
 * `word/numbering.xml`, when there are lists
 * `word/footnotes.xml`, when there are footnotes, with its separators first and its own relationships for links in footnotes
+* `word/media/image<n>.png`, `.jpeg` or `.gif`, one for each distinct picture, each with its content type, and image relationships from the part that shows it (the document or the footnotes)
 * `docProps/core.xml`, holding the title, the creator (from `author` or `authors`), the description and the keywords, and no dates
 
 An external hyperlink is a relationship with `TargetMode="External"` of the part it is in.
@@ -151,14 +154,49 @@ Word has no second reference to one footnote, so the field shows the same number
 Its cached result is that number, so it reads correctly before any field update.
 * A reference to a footnote the page does not have shows its number and is reported.
 
+=== Pictures
+
+Images, diagrams and formulas are embedded as inline DrawingML pictures.
+`media.rs` reads, checks and keeps them, and `drawing.rs` writes them.
+
+* A picture's format is told by its bytes, never by its extension.
+PNG, JPEG and GIF are recognised, and so is SVG, by its root element past any declaration, comments and doctype.
+* PNG, JPEG and GIF are embedded as they are, and identical bytes are one part however often the picture is shown.
+Nothing in the package names the source files, so removing them changes nothing.
+* An SVG, whether a file, a rendered diagram or a typeset formula, is drawn with `resvg` as a PNG at twice its own size, with its transparency kept.
+Nothing is loaded from outside the file, and the system's fonts are read once per export, on the first SVG.
+Only the PNG is written, because Word's SVG support (with a PNG fallback) is not shared by every reader, and a second copy would be needed.
+* Pictures are read through `DocxOptions::access`, so an export for the MCP server reads only inside its roots.
+* Each picture is checked whole, and its size is read from its headers without decoding it.
+A file may be at most 64 MB, and a picture at most 10,000 pixels on a side and 40 million in all.
+* Any other image is written as its alternative text, with a warning at its source that says why:
+** it is missing, refused by the file access or unreadable;
+** its format is not PNG, JPEG, GIF or SVG, which includes WebP, HEIC, BMP and TIFF, since Word may refuse them and converting them would need a decoder;
+** it is cut short or damaged;
+** it is too large.
+* A remote image is never fetched.
+It is written as a link to its address, when the address is a safe one, with a warning.
+* The size comes from `width` and `height`, in pixels (`120` or `120px`) or as a share of the text width (`50%`).
+When only one is given the other keeps the picture's proportions, and when neither is the picture has its own size at 96 pixels to the inch.
+A picture is never wider than the text, or than its cell in a table.
+* A block image, diagram or formula is a paragraph aligned by the block's `align`, with formulas centred by default.
+Its title is the caption below it, aligned with it, as Asciidoctor places a figure's title.
+* A block image's `link` makes the picture a hyperlink.
+* Each picture's description in Word is its alt text: the image's alt, a diagram's `alt` attribute or its `diagram` name, or a formula's source.
+* With the `typst` feature, block formulas arrive as rendered SVG and inline ones with their measures, and an inline formula is lowered to sit on the baseline of its line.
+Without Typst, or where typesetting failed, a formula is its source, in `CodeChar` (inline) or `LiteralBlock` (block), with a warning.
+Editable Word equations are not written.
+* A diagram still rendering is its source with a warning.
+A diagram that failed is its source too, and the engine reports the failure as it does for PDF.
+
 === Still written as text
 
 These are written as text (alt text, source or address) and each is reported with its source span.
 
-* Images, diagrams and formulas, until DOCX 4/8.
-* Media, passthrough blocks and unsupported blocks.
+* Media (video and audio), passthrough blocks and unsupported blocks.
 
 A table of contents block only gives a warning, until DOCX 5/8.
+Cover and logo images come with DOCX 5/8.
 
 === Styles
 
@@ -215,19 +253,24 @@ It escapes `&`, `<` and `>`, and `"` in attributes, writes carriage returns and 
 cargo test -p adoc-docx
 ADOC_DOCX_OUT=/tmp cargo test -p adoc-docx --test package -- --ignored
 ADOC_DOCX_OUT=/tmp cargo test -p adoc-docx --test content -- --ignored
+ADOC_DOCX_OUT=/tmp cargo test -p adoc-docx --test media -- --ignored
 ----
 
 `tests/package.rs` reads the package back with its own ZIP reader.
 `docx_package_is_valid_opc` checks every CRC and size, that every part is well-formed and has a content type, that every relationship's target exists, that every `r:` id has a relationship and that every paragraph style used is defined.
 These checks are shared in `tests/common`, and they also cover every part's relationships, the styles used, numbering, footnotes and bookmarks.
-The same file holds `the_same_document_gives_the_same_bytes`, `a_book_s_pages_take_headings_at_their_depth` and `what_is_not_written_as_word_structure_yet_is_shown_as_text_and_reported`, which now covers images and formulas.
+The same file holds `the_same_document_gives_the_same_bytes`, `a_book_s_pages_take_headings_at_their_depth` and `what_is_not_written_as_word_structure_yet_is_shown_as_text_and_reported`, which covers a missing image and a formula written as text.
 `tests/content.rs` holds `docx_rich_content_uses_word_structures`, `docx_internal_links_reach_bookmarks`, `docx_unsupported_nodes_warn` and `a_link_that_is_not_a_web_or_mail_address_is_text`.
+`tests/media.rs` holds `docx_media_is_embedded`, which embeds a PNG, a JPEG, a GIF, an SVG file, a diagram and inline and block formulas, and checks their sizes and content types, that one file shown twice is one part, that the SVG is drawn at twice its size and that nothing in the package names the source folder.
+It also holds `docx_bad_images_are_reported`, in which each bad case is warned at its line and nothing is embedded, and a remote image is a link.
+The engine's `diagrams_are_rendered_and_embedded` and `an_image_outside_the_roots_is_not_embedded` in `crates/adoc-engine/tests/docx_export.rs` cover the same through the export command.
 `tests/escaping.rs` holds `docx_text_is_escaped`, `every_character_survives_or_is_replaced` (over every Unicode scalar value), `line_endings_become_breaks` and `empty_documents_are_written`.
 
 The `ADOC_DOCX_OUT` command writes `article.docx` and `escaping.docx` (the `package` test) into the folder named, for opening by hand.
-The `content` command writes `rich.docx` as well.
+The `content` command writes `rich.docx` as well, and the `media` command writes `media.docx`.
 LibreOffice 26 opened both and read the headings as headings.
 In `rich.docx` it kept the table's spans, the nested lists, the footnote and the containers.
+LibreOffice 26 rendered `media.docx` offline with every picture shown.
 Microsoft Word has not been tried yet, and its manual checks come with DOCX 8/8.
 
 == Related

@@ -18,8 +18,10 @@ use adoc_dom::SourceSpan;
 use adoc_render::ViewTree;
 
 mod body;
+mod drawing;
 mod inline;
 mod labels;
+mod media;
 mod numbering;
 mod package;
 mod parts;
@@ -82,6 +84,8 @@ pub struct DocxOptions {
     /// The address of each page a reference out of the document may lead to; a reference to
     /// any other page outside the document is left as text.
     pub page_urls: HashMap<PathBuf, String>,
+    /// Which files the export may read: images, diagrams and formulas.
+    pub access: adoc_core::FileAccess,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -156,16 +160,32 @@ pub fn write_docx(
         target: target.to_owned(),
         external: false,
     };
-    let links = |links: &[body::Hyperlink]| {
-        links
-            .iter()
-            .map(|link| package::Relationship {
-                id: link.id.clone(),
-                kind: parts::HYPERLINK,
-                target: link.url.clone(),
-                external: true,
-            })
-            .collect::<Vec<_>>()
+    // A part's hyperlinks and pictures: relationships of that part.
+    let media = std::mem::take(&mut writer.media.parts);
+    let links = |part: body::Part| {
+        let hyperlinks =
+            writer.hyperlinks[part as usize]
+                .iter()
+                .map(|link| package::Relationship {
+                    id: link.id.clone(),
+                    kind: parts::HYPERLINK,
+                    target: link.url.clone(),
+                    external: true,
+                });
+        let pictures =
+            writer.pictures[part as usize]
+                .iter()
+                .map(|(id, index)| package::Relationship {
+                    id: id.clone(),
+                    kind: parts::IMAGE,
+                    target: media[*index]
+                        .name
+                        .strip_prefix("word/")
+                        .unwrap_or(&media[*index].name)
+                        .to_owned(),
+                    external: false,
+                });
+        hyperlinks.chain(pictures).collect::<Vec<_>>()
     };
     let mut document_relationships = vec![
         relationship("rId1", parts::STYLES, "styles.xml"),
@@ -188,10 +208,16 @@ pub fn write_docx(
             name: "word/footnotes.xml".to_owned(),
             content_type: parts::FOOTNOTES_TYPE,
             data: inline::footnotes_part(std::mem::take(&mut writer.footnotes)),
-            relationships: links(&writer.hyperlinks[body::Part::Footnotes as usize]),
+            relationships: links(body::Part::Footnotes),
         });
     }
-    document_relationships.extend(links(&writer.hyperlinks[body::Part::Document as usize]));
+    document_relationships.extend(links(body::Part::Document));
+    parts.extend(media.into_iter().map(|part| package::Part {
+        name: part.name,
+        content_type: part.content_type,
+        data: part.data,
+        relationships: Vec::new(),
+    }));
     let body = std::mem::take(&mut writer.xml);
     parts.splice(
         0..0,

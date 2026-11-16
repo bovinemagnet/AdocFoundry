@@ -21,7 +21,7 @@ enum Destination {
 
 /// Whether `url` may be a hyperlink: a web, mail, file transfer or telephone address, or a
 /// relative one. Anything else (`javascript:`, `data:`, `file:` and the rest) stays text.
-fn safe_url(url: &str) -> bool {
+pub(crate) fn safe_url(url: &str) -> bool {
     let url = url.trim();
     if url.is_empty() || url.len() > 2000 || url.chars().any(char::is_control) {
         return false;
@@ -199,18 +199,7 @@ impl Writer<'_> {
                     self.bookmark(&name);
                 }
             }
-            ViewInline::Image(image) => {
-                let text = if image.alt.is_empty() {
-                    &image.target
-                } else {
-                    &image.alt
-                };
-                self.text(&format!("[{text}]"), format);
-                self.warn(
-                    None,
-                    "an inline image is exported as its alternative text".to_owned(),
-                );
-            }
+            ViewInline::Image(image) => self.image(image, format, None),
             ViewInline::Icon(name) => self.text(&format!("[{name}]"), format),
             ViewInline::FootnoteRef { number, repeat, .. } => self.footnote(*number, *repeat),
             ViewInline::LineBreak => {
@@ -246,21 +235,14 @@ impl Writer<'_> {
                     ..format
                 },
             ),
-            ViewInline::Stem { source, .. } => {
-                self.text(
-                    source,
-                    Format {
-                        style: Some("CodeChar"),
-                        ..format
-                    },
-                );
-                self.warn(None, "a formula is exported as its source".to_owned());
-            }
+            ViewInline::Stem {
+                source, rendered, ..
+            } => self.inline_formula(source, rendered.as_ref(), format),
         }
     }
 
     /// The relationship id of a hyperlink to `url` from the part being written.
-    fn hyperlink(&mut self, url: &str) -> String {
+    pub(crate) fn hyperlink(&mut self, url: &str) -> String {
         let links = &mut self.hyperlinks[self.part as usize];
         let url = url.trim().replace(' ', "%20");
         if let Some(link) = links.iter().find(|link| link.url == url) {
@@ -274,7 +256,7 @@ impl Writer<'_> {
         id
     }
 
-    fn external_link(&mut self, url: &str, content: &[ViewInline], format: Format) {
+    pub(crate) fn external_link(&mut self, url: &str, content: &[ViewInline], format: Format) {
         let id = self.hyperlink(url);
         self.xml
             .open("w:hyperlink", &[("r:id", &id), ("w:history", "1")]);
@@ -464,10 +446,7 @@ impl Writer<'_> {
 /// The footnotes part around the footnotes written: the separators Word expects first.
 pub(crate) fn footnotes_part(footnotes: Xml) -> Vec<u8> {
     let mut xml = Xml::part();
-    xml.open(
-        "w:footnotes",
-        &[("xmlns:w", crate::parts::W), ("xmlns:r", crate::parts::R)],
-    );
+    xml.open("w:footnotes", &crate::parts::NAMESPACES);
     for (kind, id, mark) in [
         ("separator", "-1", "w:separator"),
         ("continuationSeparator", "0", "w:continuationSeparator"),

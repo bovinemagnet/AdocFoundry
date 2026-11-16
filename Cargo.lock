@@ -184,6 +184,7 @@ dependencies = [
  "adoc-render",
  "crc32fast",
  "flate2",
+ "resvg 0.46.0",
  "roxmltree 0.21.2",
  "tempfile",
 ]

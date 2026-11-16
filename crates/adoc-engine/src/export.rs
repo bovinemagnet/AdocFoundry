@@ -1423,6 +1423,8 @@ impl Engine {
                 .site_url()
                 .map(|site| self.page_urls(&site))
                 .unwrap_or_default(),
+            // Images, diagrams and formulas are read as the PDF's are.
+            access: self.file_access.clone(),
             ..adoc_docx::DocxOptions::default()
         };
         let sender = self.worker_sender.clone();

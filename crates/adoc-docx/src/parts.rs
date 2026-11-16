@@ -32,6 +32,27 @@ pub(crate) const FOOTNOTES: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes";
 pub(crate) const HYPERLINK: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+pub(crate) const IMAGE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+
+/// The namespaces of a part holding body content: WordprocessingML, relationships, and the
+/// DrawingML its pictures are written in.
+pub(crate) const NAMESPACES: [(&str, &str); 5] = [
+    ("xmlns:w", W),
+    ("xmlns:r", R),
+    (
+        "xmlns:wp",
+        "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+    ),
+    (
+        "xmlns:a",
+        "http://schemas.openxmlformats.org/drawingml/2006/main",
+    ),
+    (
+        "xmlns:pic",
+        "http://schemas.openxmlformats.org/drawingml/2006/picture",
+    ),
+];
 
 /// The deepest heading style: Word has nine.
 pub(crate) const DEEPEST_HEADING: u8 = 9;
@@ -44,7 +65,7 @@ pub(crate) fn document(body: Xml, paper: Paper) -> Vec<u8> {
         Paper::Letter => ("12240", "15840"),
     };
     let mut xml = Xml::part();
-    xml.open("w:document", &[("xmlns:w", W), ("xmlns:r", R)]);
+    xml.open("w:document", &NAMESPACES);
     xml.open("w:body", &[]);
     xml.append(body);
     xml.open("w:sectPr", &[]);

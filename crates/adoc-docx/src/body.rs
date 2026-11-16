@@ -15,6 +15,7 @@ use adoc_render::{
 
 use crate::{
     labels::Labels,
+    media::Media,
     numbering::{self, ListStyle, Numbering, DEEPEST_LEVEL},
     parts::DEEPEST_HEADING,
     xml::Xml,
@@ -82,6 +83,11 @@ pub(crate) struct Writer<'a> {
     pub(crate) footnotes: Xml,
     pub(crate) footnote_count: u32,
     pub(crate) hyperlinks: [Vec<Hyperlink>; 2],
+    /// The pictures, and each part's relationships to them: id and media index.
+    pub(crate) media: Media,
+    pub(crate) pictures: [Vec<(String, usize)>; 2],
+    /// The drawings written, for their ids, which are unique in the document.
+    pub(crate) drawings: u32,
     pub(crate) numbering: Numbering,
     pub(crate) bookmark_count: u32,
     /// Bookmarks written, so each is written once.
@@ -153,6 +159,9 @@ impl<'a> Writer<'a> {
             footnotes: Xml::fragment(),
             footnote_count: 0,
             hyperlinks: [Vec::new(), Vec::new()],
+            media: Media::default(),
+            pictures: [Vec::new(), Vec::new()],
+            drawings: 0,
             numbering: Numbering::default(),
             bookmark_count: 0,
             placed: HashSet::new(),
@@ -542,37 +551,98 @@ impl<'a> Writer<'a> {
                     format!("an unsupported block ({name}) is exported as its source"),
                 );
             }
-            kind @ (ViewKind::Image(_)
-            | ViewKind::Diagram(_)
-            | ViewKind::Stem { .. }
-            | ViewKind::Passthrough(_)) => {
-                self.title(block);
-                match kind {
-                    ViewKind::Image(image) => {
-                        let text = if image.alt.is_empty() {
-                            &image.target
-                        } else {
-                            &image.alt
-                        };
-                        self.text_paragraph(None, &format!("[{text}]"));
+            ViewKind::Image(image) => {
+                let link = block.attributes.get("link").cloned();
+                self.figure(block, "left", |writer| {
+                    writer.image(image, Format::default(), link.as_deref());
+                });
+            }
+            ViewKind::Diagram(diagram) => {
+                let alt = block
+                    .attributes
+                    .get("alt")
+                    .cloned()
+                    .unwrap_or_else(|| "diagram".to_owned());
+                let size = (
+                    block.attributes.get("width").cloned(),
+                    block.attributes.get("height").cloned(),
+                );
+                let drawn = self.rendered(
+                    diagram,
+                    (size.0.as_deref(), size.1.as_deref()),
+                    "a diagram's",
+                );
+                if let Some(drawn) = &drawn {
+                    self.figure(block, "left", |writer| writer.picture(drawn, &alt));
+                } else {
+                    if let adoc_render::DiagramView::Pending { source, .. }
+                    | adoc_render::DiagramView::Failed { source, .. } = diagram
+                    {
+                        self.preformatted("LiteralBlock", source);
                     }
-                    ViewKind::Diagram(adoc_render::DiagramView::Svg(_)) => {
-                        self.text_paragraph(None, "[diagram]");
+                    // A diagram that failed is reported by whoever rendered it.
+                    if let adoc_render::DiagramView::Pending { .. } = diagram {
+                        self.warn(
+                            Some(&block.span),
+                            "a diagram that is not rendered yet is exported as its source"
+                                .to_owned(),
+                        );
                     }
-                    ViewKind::Diagram(
-                        adoc_render::DiagramView::Pending { source, .. }
-                        | adoc_render::DiagramView::Failed { source, .. },
-                    )
-                    | ViewKind::Stem { source, .. } => self.preformatted("LiteralBlock", source),
-                    ViewKind::Passthrough(text) => self.preformatted("LiteralBlock", text),
-                    _ => {}
                 }
+            }
+            ViewKind::Stem {
+                source, rendered, ..
+            } => {
+                let drawn = self.rendered(rendered, (None, None), "a formula's");
+                if let Some(drawn) = &drawn {
+                    self.figure(block, "center", |writer| writer.picture(drawn, source));
+                } else {
+                    self.preformatted("LiteralBlock", source);
+                    if !matches!(rendered, adoc_render::DiagramView::Svg(_)) {
+                        self.warn(
+                            Some(&block.span),
+                            "a formula that could not be typeset is exported as its source"
+                                .to_owned(),
+                        );
+                    }
+                }
+            }
+            kind @ ViewKind::Passthrough(text) => {
+                self.title(block);
+                self.preformatted("LiteralBlock", text);
                 self.warn(
                     Some(&block.span),
                     format!("{} is exported as text", describe(kind)),
                 );
             }
         }
+    }
+
+    /// A figure: a paragraph aligned as the block's `align` says (else `default`), holding what
+    /// `content` writes, then the block's title below it, as Asciidoctor places a figure's
+    /// caption.
+    fn figure(
+        &mut self,
+        block: &ViewBlock,
+        default: &'static str,
+        content: impl FnOnce(&mut Self),
+    ) {
+        let align = match block
+            .attributes
+            .get("align")
+            .map(String::as_str)
+            .unwrap_or(default)
+        {
+            "center" | "centre" => Some("center"),
+            "right" => Some("right"),
+            _ => None,
+        };
+        let align = align.or(self.align);
+        let outer = std::mem::replace(&mut self.align, align);
+        self.paragraph(Para::default(), content);
+        // The caption is aligned with its picture.
+        self.title(block);
+        self.align = outer;
     }
 
     /// `blocks` indented by `by` beyond the current indent.

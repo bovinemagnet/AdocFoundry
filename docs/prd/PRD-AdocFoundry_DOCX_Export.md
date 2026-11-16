@@ -209,8 +209,8 @@ Each is settled before work starts on the package it affects, and the outcome is
 
 - **OOXML library (D1).** `docx-rs` is a candidate, not a mandate. The spike checks complex tables, footnotes, the table of contents, sections, field codes, image relationships in headers and footers, build size and licences. The alternative is narrowly scoped in-house WordprocessingML; `quick-xml` is already in the dependency tree, a ZIP writer is not. *Settled in D1: in-house (§14).*
 - **Request shape (D2).** Format-specific DOCX arguments, command ids and events, or one common request typed by format with no PDF-only field reachable from DOCX. *Settled in D2: format-specific arguments and command ids, one shared event (§14).*
-- **Where SVG is rasterised (D4).** The app's `image_decode::svg_to_png` is at L4 and cannot be called from `adoc-docx`. Either `adoc-docx` rasterises (`resvg` at the version already in the tree), or the engine hands it prepared rasters.
-- **Formulas without Typst (D4).** The STEM provider is part of the engine's `typst` feature. A build with `docx` and without `typst` has no formula artwork; decide between the formula's source as text with a diagnostic, and a narrower feature that provides the artwork alone.
+- **Where SVG is rasterised (D4).** The app's `image_decode::svg_to_png` is at L4 and cannot be called from `adoc-docx`. Either `adoc-docx` rasterises (`resvg` at the version already in the tree), or the engine hands it prepared rasters. *Settled in D4: `adoc-docx` rasterises with `resvg` (§14).*
+- **Formulas without Typst (D4).** The STEM provider is part of the engine's `typst` feature. A build with `docx` and without `typst` has no formula artwork; decide between the formula's source as text with a diagnostic, and a narrower feature that provides the artwork alone. *Settled in D4: the source as text, with a warning (§14).*
 - **Repeated footnote references (D3).** A real Word footnote per reference, or one footnote and cross-references to it. *Settled in D3: one footnote, and `NOTEREF` fields to it (§14).*
 - **Table of contents (D5).** A `TOC` field alone, refreshed on opening, or a field with entries written in advance so the document reads correctly before any refresh.
 - **Chapter titles in running content (D5).** `STYLEREF` fields, or static text per section.
@@ -296,6 +296,44 @@ The body is now written by `body.rs` (blocks), `inline.rs` (runs, links, footnot
 - **Breaks.** In a book, parts and chapters (pages and headings at depth 1) start a page, except right after a part.
 - **Still text, reported.** Images, diagrams and formulas (D4), media, passthrough blocks and unsupported blocks are written as text: alt text, source or address. Each is reported with its source span. A table of contents block only warns (D5).
 - **Checked by hand.** LibreOffice 26 converted the rich test page (`ADOC_DOCX_OUT=<dir> cargo test -p adoc-docx --test content -- --ignored`) to HTML. It kept the table's column span and row span, the nested bullet and numbered lists, the footnote and the containers.
+
+### D4 (#621): pictures embedded
+
+`media.rs` reads, checks and keeps the pictures; `drawing.rs` writes them as inline DrawingML (`wp:inline`, `pic:pic`, `a:blip r:embed`), each a relationship of the part it is in (the document or the footnotes) to its part in `word/media/`. Document and footnote parts declare the DrawingML namespaces.
+
+- **SVG: drawn by `adoc-docx` with `resvg`.**
+  - `adoc-docx` depends on `resvg` at the workspace's version (0.46.0, the app's, with text and system fonts), already in the tree; the engine's DOCX-only build still compiles no Typst.
+  - An SVG, an SVG image file, a rendered diagram or a typeset formula is drawn as a PNG at twice its own size (at most 10,000 pixels on a side and 40 million in all), with transparency kept. The system's fonts are read once per export, on the first SVG, and nothing is loaded from outside the file, as the app's image viewer does.
+  - Word since 2016 can show SVG with a PNG fallback (`asvg:svgBlip`). Writing only the PNG keeps every Word and LibreOffice alike, and needs no second copy.
+- **Formulas without Typst: the source, and a warning.**
+  - With the `typst` feature, block formulas arrive as rendered SVGs and inline ones as `FormulaImage`s with their measures in points. Both are embedded, and an inline formula's run is lowered (`w:position`) by its depth, so it sits on the line's baseline.
+  - Without Typst, or where typesetting failed, the formula's source is written in `CodeChar` (inline) or `LiteralBlock` (block) with a warning at its source. A narrower feature for the artwork alone was not worth its cost.
+  - Editable OMML equations remain out of scope (§3).
+- **Reading and checking.**
+  - Pictures are read through `DocxOptions::access`, the engine's `FileAccess`, so an MCP export reads only inside its roots. They are recognised by their bytes, never their extension: PNG, JPEG, GIF, or an SVG root element past any declaration, comments and doctype.
+  - Each is checked whole: a PNG's header chunk and end chunk, a JPEG's frame and end marker, a GIF's trailer. The size is read from those headers without decoding.
+  - Limits: files of at most 64 MB, and at most 10,000 pixels on a side and 40 million in all.
+  - Anything else is written as its alternative text with a warning saying why:
+    - missing;
+    - refused by the file access;
+    - unreadable;
+    - not PNG, JPEG, GIF or SVG (WebP, HEIC, BMP and TIFF included; Word may refuse them, and converting them would need a decoder);
+    - cut short or damaged;
+    - too large.
+  - A remote image is never fetched: it is written as a link to its address (when the address is a safe one) with a warning.
+- **Media.**
+  - Each picture is one part, `word/media/image<n>.<png|jpeg|gif>`, with its content type, kept once however often it is shown (identical bytes are one part).
+  - The JPEG, PNG and GIF bytes are the files' own. Nothing in the package names the source files, so removing them changes nothing.
+- **Sizes.**
+  - In EMUs: `width` and `height` in pixels (`120`, `120px`) or as a share of the text width (`50%`), the other kept in proportion when only one is given, else the picture's own size at 96 pixels to the inch.
+  - Never wider than the text: inside a table cell, the cell's width.
+- **Figures.**
+  - A block image, diagram or formula is a paragraph aligned by the block's `align` (formulas centred by default), its title the caption below it, aligned with it, as Asciidoctor places a figure's title.
+  - A block image's `link` makes the picture a hyperlink (`a:hlinkClick`).
+  - Each picture's `docPr` carries its alternative text as `descr`: the image's alt, a diagram's `alt` attribute or `diagram`, or a formula's source. Its id is unique in the document.
+- **Diagrams.** A diagram still rendering is written as its source with a warning. One that failed is written as its source, the engine reporting the failure as it does for PDF.
+- **Not yet.** Cover and logo images, and header and footer pictures, come with D5, through the same per-part relationships.
+- **Checked by hand.** LibreOffice 26 rendered the sample (`ADOC_DOCX_OUT=<dir> cargo test -p adoc-docx --test media -- --ignored`), offline. It showed a PNG at its asked width, a centred JPEG with its caption, a GIF in a line, an SVG with its transparency and an inline formula on its line.
 
 ## 15. References
 
