@@ -7,14 +7,23 @@
 //! never break a part's markup, and the same input always gives the same bytes, with no
 //! timestamps and no process-wide counters (PRD §9; the choice is recorded in the PRD's §14).
 
-use std::{collections::BTreeMap, fmt, io::Write};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt,
+    io::Write,
+    path::PathBuf,
+};
 
 use adoc_dom::SourceSpan;
 use adoc_render::ViewTree;
 
 mod body;
+mod inline;
+mod labels;
+mod numbering;
 mod package;
 mod parts;
+mod table;
 mod xml;
 mod zip;
 
@@ -70,6 +79,9 @@ pub enum Paper {
 #[derive(Clone, Debug, Default)]
 pub struct DocxOptions {
     pub paper: Paper,
+    /// The address of each page a reference out of the document may lead to; a reference to
+    /// any other page outside the document is left as text.
+    pub page_urls: HashMap<PathBuf, String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -136,50 +148,91 @@ pub fn write_docx(
     options: &DocxOptions,
     sink: impl Write,
 ) -> Result<DocxReport, DocxError> {
-    let mut body = body::Body::new();
-    body.document(document);
-    let diagnostics = std::mem::take(&mut body.diagnostics);
-    let parts = [
-        package::Part {
-            name: "word/document.xml".to_owned(),
-            content_type: parts::DOCUMENT_TYPE,
-            data: parts::document(body.into_xml(), options.paper),
-            relationships: vec![package::Relationship {
-                id: "rId1".to_owned(),
-                kind: parts::STYLES,
-                target: "styles.xml".to_owned(),
-            }],
-        },
-        package::Part {
-            name: "word/styles.xml".to_owned(),
-            content_type: parts::STYLES_TYPE,
-            data: parts::styles(),
-            relationships: Vec::new(),
-        },
-        package::Part {
-            name: "docProps/core.xml".to_owned(),
-            content_type: parts::CORE_TYPE,
-            data: parts::core(&facts(document)),
-            relationships: Vec::new(),
-        },
+    let mut writer = body::Writer::new(document, options);
+    writer.document(document);
+    let relationship = |id: &str, kind, target: &str| package::Relationship {
+        id: id.to_owned(),
+        kind,
+        target: target.to_owned(),
+        external: false,
+    };
+    let links = |links: &[body::Hyperlink]| {
+        links
+            .iter()
+            .map(|link| package::Relationship {
+                id: link.id.clone(),
+                kind: parts::HYPERLINK,
+                target: link.url.clone(),
+                external: true,
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut document_relationships = vec![
+        relationship("rId1", parts::STYLES, "styles.xml"),
+        relationship("rId2", parts::SETTINGS, "settings.xml"),
     ];
+    let mut parts = Vec::new();
+    let footnotes = writer.footnote_count > 0;
+    if let Some(numbering) = writer.numbering.part() {
+        document_relationships.push(relationship("rId3", parts::NUMBERING, "numbering.xml"));
+        parts.push(package::Part {
+            name: "word/numbering.xml".to_owned(),
+            content_type: parts::NUMBERING_TYPE,
+            data: numbering,
+            relationships: Vec::new(),
+        });
+    }
+    if footnotes {
+        document_relationships.push(relationship("rId4", parts::FOOTNOTES, "footnotes.xml"));
+        parts.push(package::Part {
+            name: "word/footnotes.xml".to_owned(),
+            content_type: parts::FOOTNOTES_TYPE,
+            data: inline::footnotes_part(std::mem::take(&mut writer.footnotes)),
+            relationships: links(&writer.hyperlinks[body::Part::Footnotes as usize]),
+        });
+    }
+    document_relationships.extend(links(&writer.hyperlinks[body::Part::Document as usize]));
+    let body = std::mem::take(&mut writer.xml);
+    parts.splice(
+        0..0,
+        [
+            package::Part {
+                name: "word/document.xml".to_owned(),
+                content_type: parts::DOCUMENT_TYPE,
+                data: parts::document(body, options.paper),
+                relationships: document_relationships,
+            },
+            package::Part {
+                name: "word/styles.xml".to_owned(),
+                content_type: parts::STYLES_TYPE,
+                data: parts::styles(),
+                relationships: Vec::new(),
+            },
+            package::Part {
+                name: "word/settings.xml".to_owned(),
+                content_type: parts::SETTINGS_TYPE,
+                data: parts::settings(footnotes),
+                relationships: Vec::new(),
+            },
+        ],
+    );
+    parts.push(package::Part {
+        name: "docProps/core.xml".to_owned(),
+        content_type: parts::CORE_TYPE,
+        data: parts::core(&facts(document)),
+        relationships: Vec::new(),
+    });
     package::write(
         &[
-            package::Relationship {
-                id: "rId1".to_owned(),
-                kind: parts::OFFICE_DOCUMENT,
-                target: "word/document.xml".to_owned(),
-            },
-            package::Relationship {
-                id: "rId2".to_owned(),
-                kind: parts::CORE_PROPERTIES,
-                target: "docProps/core.xml".to_owned(),
-            },
+            relationship("rId1", parts::OFFICE_DOCUMENT, "word/document.xml"),
+            relationship("rId2", parts::CORE_PROPERTIES, "docProps/core.xml"),
         ],
         &parts,
         sink,
     )?;
-    Ok(DocxReport { diagnostics })
+    Ok(DocxReport {
+        diagnostics: writer.diagnostics,
+    })
 }
 
 /// The document's title, author, description and keywords, for its core properties.

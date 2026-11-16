@@ -44,7 +44,7 @@ It must never build `adoc-pdf` or Typst.
 |`Part`, `Heading { title, depth }` or `Page`.
 
 |`DocxOptions`
-|A `paper`, `Paper::A4` by default or `Paper::Letter`.
+|A `paper`, `Paper::A4` by default or `Paper::Letter`, and `page_urls`, the published address of each page, which a cross reference to a page outside the document uses.
 
 |`DocxReport`
 |`diagnostics`, each a `DocxDiagnostic` with a `DocxSeverity`, a `message` and an optional `source` span.
@@ -61,11 +61,18 @@ The crate writes these parts, in a fixed order.
 * `_rels/.rels`
 * `word/document.xml`, with `word/_rels/document.xml.rels`
 * `word/styles.xml`
+* `word/settings.xml`, always, holding compatibility mode 15 and, when there are footnotes, their separators
+* `word/numbering.xml`, when there are lists
+* `word/footnotes.xml`, when there are footnotes, with its separators first and its own relationships for links in footnotes
 * `docProps/core.xml`, holding the title, the creator (from `author` or `authors`), the description and the keywords, and no dates
+
+An external hyperlink is a relationship with `TargetMode="External"` of the part it is in.
 
 == The body
 
-The body is written as follows.
+Everything the crate writes comes from the view tree, by way of `body.rs` (blocks), `inline.rs` (runs, links and footnotes), `table.rs`, `numbering.rs` and `labels.rs`.
+
+=== Headings, text and breaks
 
 * The title is in the Title style, and a book's subtitle is in Subtitle.
 * Sections and discrete headings use Word's built-in heading styles, `Heading1` to `Heading9`, named `heading 1` and so on, so that Word treats them as its own and gives them outline levels.
@@ -73,11 +80,104 @@ The body is written as follows.
 * Thematic breaks are a bordered empty paragraph, and page breaks are page breaks.
 * In a book, a page's title becomes a heading at the page's depth, and its sections move down by that depth.
 * Where a book has parts, a part is Heading 1 on a new page, and everything else moves down one level.
+* In a book, parts and chapters (pages and headings at depth 1) start a new page, except right after a part.
 
-Every other block (lists, tables, code, images, diagrams, formulas, admonitions, quotes and the rest) is, for now, written as plain paragraphs of its text, with a warning that names what it is and where it was.
-Footnotes are written as text at the end of their page, with a warning.
-A table of contents block gives a warning.
-Later work packages (DOCX 3/8 to 6/8) replace these with Word structures.
+=== Inlines
+
+* Strong, emphasis, mark (a yellow highlight), superscript and subscript are run properties.
+* The `underline` and `line-through` roles are run properties too.
+* Code is the character style `CodeChar`, and keys are `Keyboard`.
+* Buttons and menus are bold.
+* Hard line breaks are Word breaks, and tabs are Word tabs.
+
+=== Lists
+
+* Bullets and each ordered style (`arabic`, `loweralpha`, `upperalpha`, `lowerroman` and `upperroman`) have an abstract numbering of nine levels in `word/numbering.xml`.
+* Each list is an instance of its own, and an ordered one overrides its level's start, so that it starts again at its `start`.
+* The level is the list's nesting, up to Word's ninth, and an item's other blocks are indented under it.
+* In a checklist only the items written with a box show one (a ballot box, ticked or not, then a tab), as in Asciidoctor.
+The other items are bullets.
+* A `reversed` list is numbered upwards, with a warning.
+* A description list is its term in `DescriptionTerm` (bold), with the description indented below it.
+* A callout list is `(n)` and a tab, and the listing shows ` (n)` at the end of its lines.
+
+=== Code, quotes and captions
+
+* Source and literal blocks are one paragraph each, in `SourceCode` and `LiteralBlock` (Consolas, shaded), with whitespace kept and lines as breaks.
+There is no token colouring yet.
+* Quotes are `Quote` paragraphs with a `QuoteAttribution`, and verses keep their lines in `Verse`.
+* A block title is a `Caption` paragraph above its block, with the numbered caption.
+
+=== Tables
+
+* An AsciiDoc table is a Word table in the `AdocTable` style at full width, with its grid sized from `cols`.
+* Header rows are repeated on each page (`tblHeader`).
+* A column span is `gridSpan`.
+A row span is `vMerge`, with its continuations placed on the grid below it, so that every row fills the grid.
+* Cells take their alignment and their style: header and strong cells are bold, emphasis is italic, and monospace and literal cells use `CodeChar`.
+* A short row is filled with empty cells.
+Cells past the grid are left out, with a warning.
+* Blocks in cells are written as anywhere else, nested tables included.
+* Every cell ends with a paragraph, as Word requires.
+* Two tables are kept apart by a `TableSpacer` paragraph, since Word would otherwise join them.
+* The `frame`, `grid` and `stripes` options are not applied.
+
+=== Admonitions, sidebars and examples
+
+These are tables of one row, so that the blocks inside them stay editable in place.
+
+* An admonition is `AdocAdmonition`, with a bar at the left and its label in a cell of its own.
+The label comes from `note-caption` and the like.
+* A sidebar is `AdocSidebar`, shaded.
+* An example is `AdocExample`, boxed.
+
+=== Links and bookmarks
+
+* Every place a link can lead is named before anything is written, so a link may lead forward.
+These are a page's start, every section and block id, and every inline anchor, as the PDF exporter's labels.
+* Bookmarks are named `_a1`, `_a2` and so on, in document order.
+Such a name is valid whatever the id, is at most 40 characters, and is hidden from Word's bookmark list by the underscore.
+* A cross reference is decided as the PDF exporter decides it.
+It leads to a bookmark of the document, else to the target page's published address (`DocxOptions::page_urls`, which the engine fills from `[pdf] site_url` or the playbook), else it stays text with a warning at its source.
+* An external link is a hyperlink relationship with `TargetMode="External"` of the part it is in, so a link in a footnote is a relationship of `footnotes.xml`.
+* Only `http`, `https`, `mailto`, `ftp`, `ftps`, `tel` and relative addresses are links.
+Anything else stays text, with a warning.
+
+=== Footnotes
+
+* A footnote is a Word footnote, written in `word/footnotes.xml`, with a bookmark (`_f<n>`) around its mark.
+* A later reference to the same footnote is a `NOTEREF _f<n> \f \h` field.
+Word has no second reference to one footnote, so the field shows the same number in the footnote reference style and links to the footnote.
+Its cached result is that number, so it reads correctly before any field update.
+* A reference to a footnote the page does not have shows its number and is reported.
+
+=== Still written as text
+
+These are written as text (alt text, source or address) and each is reported with its source span.
+
+* Images, diagrams and formulas, until DOCX 4/8.
+* Media, passthrough blocks and unsupported blocks.
+
+A table of contents block only gives a warning, until DOCX 5/8.
+
+=== Styles
+
+The body uses these styles, which the package defines.
+A reader can restyle any of them in Word, and the document follows.
+
+[cols="1,3"]
+|===
+|Kind |Styles
+
+|Paragraph
+|`Title`, `Subtitle`, `Heading1` to `Heading9`, `Caption`, `Quote`, `QuoteAttribution`, `Verse`, `SourceCode`, `LiteralBlock`, `DescriptionTerm`, `FootnoteText` and `TableSpacer`
+
+|Character
+|`CodeChar`, `Keyboard`, `Hyperlink` and `FootnoteReference`
+
+|Table
+|`AdocTable`, `AdocAdmonition`, `AdocSidebar` and `AdocExample`
+|===
 
 == Why it is written in-house
 
@@ -114,15 +214,20 @@ It escapes `&`, `<` and `>`, and `"` in attributes, writes carriage returns and 
 ----
 cargo test -p adoc-docx
 ADOC_DOCX_OUT=/tmp cargo test -p adoc-docx --test package -- --ignored
+ADOC_DOCX_OUT=/tmp cargo test -p adoc-docx --test content -- --ignored
 ----
 
 `tests/package.rs` reads the package back with its own ZIP reader.
 `docx_package_is_valid_opc` checks every CRC and size, that every part is well-formed and has a content type, that every relationship's target exists, that every `r:` id has a relationship and that every paragraph style used is defined.
-The same file holds `the_same_document_gives_the_same_bytes`, `a_book_s_pages_take_headings_at_their_depth` and `what_is_not_written_as_word_structure_yet_is_shown_as_text_and_reported`.
+These checks are shared in `tests/common`, and they also cover every part's relationships, the styles used, numbering, footnotes and bookmarks.
+The same file holds `the_same_document_gives_the_same_bytes`, `a_book_s_pages_take_headings_at_their_depth` and `what_is_not_written_as_word_structure_yet_is_shown_as_text_and_reported`, which now covers images and formulas.
+`tests/content.rs` holds `docx_rich_content_uses_word_structures`, `docx_internal_links_reach_bookmarks`, `docx_unsupported_nodes_warn` and `a_link_that_is_not_a_web_or_mail_address_is_text`.
 `tests/escaping.rs` holds `docx_text_is_escaped`, `every_character_survives_or_is_replaced` (over every Unicode scalar value), `line_endings_become_breaks` and `empty_documents_are_written`.
 
-The `ADOC_DOCX_OUT` command writes `article.docx` and `escaping.docx` into the folder named, for opening by hand.
+The `ADOC_DOCX_OUT` command writes `article.docx` and `escaping.docx` (the `package` test) into the folder named, for opening by hand.
+The `content` command writes `rich.docx` as well.
 LibreOffice 26 opened both and read the headings as headings.
+In `rich.docx` it kept the table's spans, the nested lists, the footnote and the containers.
 Microsoft Word has not been tried yet, and its manual checks come with DOCX 8/8.
 
 == Related

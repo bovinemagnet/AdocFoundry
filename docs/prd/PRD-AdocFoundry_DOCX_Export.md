@@ -211,7 +211,7 @@ Each is settled before work starts on the package it affects, and the outcome is
 - **Request shape (D2).** Format-specific DOCX arguments, command ids and events, or one common request typed by format with no PDF-only field reachable from DOCX. *Settled in D2: format-specific arguments and command ids, one shared event (§14).*
 - **Where SVG is rasterised (D4).** The app's `image_decode::svg_to_png` is at L4 and cannot be called from `adoc-docx`. Either `adoc-docx` rasterises (`resvg` at the version already in the tree), or the engine hands it prepared rasters.
 - **Formulas without Typst (D4).** The STEM provider is part of the engine's `typst` feature. A build with `docx` and without `typst` has no formula artwork; decide between the formula's source as text with a diagnostic, and a narrower feature that provides the artwork alone.
-- **Repeated footnote references (D3).** A real Word footnote per reference, or one footnote and cross-references to it.
+- **Repeated footnote references (D3).** A real Word footnote per reference, or one footnote and cross-references to it. *Settled in D3: one footnote, and `NOTEREF` fields to it (§14).*
 - **Table of contents (D5).** A `TOC` field alone, refreshed on opening, or a field with entries written in advance so the document reads correctly before any refresh.
 - **Chapter titles in running content (D5).** `STYLEREF` fields, or static text per section.
 - **Profile sharing (D6).** Whether a publication's content selection is declared once and named by both `[pdf.profiles]` and `[docx.profiles]`, or repeated in each.
@@ -262,6 +262,40 @@ Each work package records here where the implementation departs from this docume
   - `docx_and_pdf_select_the_same_pages`: an open page with unsaved text, the component version, a file and two navigation files in the order given, each exported to both formats; the `sources` agree, and the DOCX holds the unsaved text and the pages in that order.
   - `docx_failed_export_keeps_existing_output`: an unknown component, a non-`.docx` output, a folder, a link and a folder that refuses the write, each leaving what was there.
   - An article, a book and the command's `ExportFinished`.
+
+### D3 (#620): rich content as Word structures
+
+The body is now written by `body.rs` (blocks), `inline.rs` (runs, links, footnotes), `table.rs`, `numbering.rs` and `labels.rs`, with the parts `numbering.xml`, `footnotes.xml` (its separators first) and `settings.xml` (compatibility mode 15, the footnotes' separators).
+
+- **Repeated footnotes: one footnote, and fields to it.** A footnote's first reference is a Word footnote, with a bookmark (`_f<n>`) around its mark. A later reference to it (`ViewInline::FootnoteRef { repeat: true }`) is a `NOTEREF _f<n> \f \h` field, which Word shows as the same number in the footnote reference style, linked to the footnote. Its cached result is that number, so it reads correctly before any field update. A reference to a footnote the page does not have shows its number and is reported.
+- **Bookmarks and links.**
+  - Every place a link can lead is named before anything is written (`labels.rs`), so a link may lead forward: a page's start, every section and block id, and every inline anchor, as the PDF exporter's labels. Names are `_a1`, `_a2` and so on in document order: valid whatever the id, at most 40 characters, and hidden from Word's bookmark list by the underscore.
+  - A cross reference is decided as the PDF exporter decides it. It leads to a bookmark of the document, else to the target page's published address (`DocxOptions::page_urls`, which the engine fills from `[pdf] site_url` or the playbook, as for PDF), else it stays text with a warning at its source.
+  - An external link is a hyperlink relationship (`TargetMode="External"`) of the part it is in, so a link in a footnote is a relationship of `footnotes.xml`. Only `http`, `https`, `mailto`, `ftp`, `ftps`, `tel` and relative addresses are links. Anything else stays text with a warning, though the parser reads neither `javascript:` nor `file:` as a link anyway.
+- **Inlines.**
+  - Strong, emphasis, mark (yellow highlight), superscript and subscript are run properties.
+  - The `underline` and `line-through` roles are run properties too.
+  - Code is the character style `CodeChar` and keys `Keyboard`; buttons and menus are bold.
+  - Hard line breaks are `w:br`, tabs `w:tab`.
+- **Lists.**
+  - Bullets and each ordered style (`arabic`, `loweralpha`, `upperalpha`, `lowerroman`, `upperroman`) have an abstract numbering of nine levels. Each list is an instance of its own, ordered ones overriding their level's start, so a list starts again at its `start`.
+  - The level is the list's nesting, up to Word's ninth. An item's other blocks are indented under it.
+  - In a checklist only the items written with a box show one (☐ or ☑, then a tab), as in Asciidoctor; the others are bullets.
+  - `reversed` is numbered upwards, with a warning.
+- **Other lists and blocks.**
+  - A description list is its term in `DescriptionTerm` (bold) with the description indented below it. A callout list is `(n)` and a tab, the listing showing ` (n)` at its lines' ends.
+  - Source and literal blocks are one paragraph each (`SourceCode`, `LiteralBlock`: Consolas, shaded), whitespace kept, lines as breaks. There is no token colouring yet.
+  - Quotes are `Quote` paragraphs with a `QuoteAttribution`; verses keep their lines.
+  - Block titles are `Caption` paragraphs above their block, with the numbered caption.
+- **Tables and containers.**
+  - An AsciiDoc table is a Word table (`AdocTable`, full width), its grid sized from `cols` and its header rows repeated (`tblHeader`).
+  - A column span is `gridSpan`. A row span is `vMerge`, its continuations placed on the grid below it, so every row fills the grid. Cells take their alignment and their style (header and strong bold, emphasis italic, monospace and literal `CodeChar`); a short row is filled with empty cells, and cells past the grid are left out with a warning.
+  - Blocks in cells are written as anywhere else, nested tables included. Every cell ends with a paragraph, and two tables are kept apart by a `TableSpacer` paragraph, since Word would join them.
+  - `frame`, `grid` and `stripes` are not applied.
+  - Admonitions (`AdocAdmonition`: a bar at the left, the label in a cell of its own, from `note-caption` and the like), sidebars (`AdocSidebar`, shaded) and examples (`AdocExample`, boxed) are tables of one row, so their blocks stay editable in place.
+- **Breaks.** In a book, parts and chapters (pages and headings at depth 1) start a page, except right after a part.
+- **Still text, reported.** Images, diagrams and formulas (D4), media, passthrough blocks and unsupported blocks are written as text: alt text, source or address. Each is reported with its source span. A table of contents block only warns (D5).
+- **Checked by hand.** LibreOffice 26 converted the rich test page (`ADOC_DOCX_OUT=<dir> cargo test -p adoc-docx --test content -- --ignored`) to HTML. It kept the table's column span and row span, the nested bullet and numbered lists, the footnote and the containers.
 
 ## 15. References
 
