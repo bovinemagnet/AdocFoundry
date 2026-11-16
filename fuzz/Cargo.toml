@@ -34,6 +34,7 @@ members = ["."]
 # acdc-parser depends on evalexpr 13, which is AGPL-3.0-only; see vendor/README.md.
 evalexpr = { path = "../vendor/evalexpr" }
 comemo = { path = "../vendor/comemo" }
+notify = { path = "../vendor/notify" }
 
 [profile.release]
 debug = 1

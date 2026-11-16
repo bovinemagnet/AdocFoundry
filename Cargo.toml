@@ -179,4 +179,7 @@ url = "=2.5.8"
 evalexpr = { path = "vendor/evalexpr" }
 # comemo keeps the memory of the caches it evicts, gigabytes after a book; see vendor/README.md.
 comemo = { path = "vendor/comemo" }
+# notify 8.2.1's Windows watcher could rearm a read on a closed, reused handle and deadlock
+# (#391); upstream's fix is backported. See vendor/README.md.
+notify = { path = "vendor/notify" }
 

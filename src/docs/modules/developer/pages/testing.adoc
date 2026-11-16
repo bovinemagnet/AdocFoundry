@@ -774,7 +774,7 @@ In CI the application crate is built, and its tests are run only where the platf
 
 `fuzz/` is a cargo-fuzz project with its own workspace, excluded from the main one (`exclude` in the root `Cargo.toml`).
 It is built with nightly Rust and cargo-fuzz 0.13.2.
-It repeats the main workspace's `[patch.crates-io]` entries (`vendor/evalexpr` and `vendor/comemo`), since patches apply only to the workspace that names them.
+It repeats the main workspace's `[patch.crates-io]` entries (`vendor/evalexpr`, `vendor/comemo` and `vendor/notify`), since patches apply only to the workspace that names them.
 Nothing in it is needed to build or test the app.
 
 [source,sh]

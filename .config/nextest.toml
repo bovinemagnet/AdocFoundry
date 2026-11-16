@@ -1,5 +1,7 @@
-# cargo-nextest, which CI's Windows tests run through (#391): there, `cargo test` has hung in a
-# different test each time until the job's time limit, naming none of them.
+# cargo-nextest, which CI's Windows tests run through (#391): there, `cargo test` hung in a
+# different test each time until the job's time limit, naming none of them. The cause was
+# notify's Windows watcher (see vendor/README.md); nextest still stops and names any test that
+# hangs.
 
 [profile.ci]
 # Every test runs even when one fails, as `cargo test --no-fail-fast` does.

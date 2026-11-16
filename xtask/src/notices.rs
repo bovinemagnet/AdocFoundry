@@ -753,6 +753,7 @@ mod tests {
             "spellbook",
             "evalexpr",
             "comemo",
+            "notify",
             "tree-sitter-asciidoc",
             "STIX Two Math",
             "SCOWL English dictionaries (en_GB, en_US)",

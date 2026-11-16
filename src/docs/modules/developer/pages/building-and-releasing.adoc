@@ -424,7 +424,7 @@ The release workflow runs `cargo xtask notices target/THIRD-PARTY-NOTICES.txt` a
 The generator runs `cargo metadata --format-version 1 --locked --features adoc-ls/typst,adoc-ls/git`.
 It is deliberately not `--offline`: metadata needs every package of the graph, other platforms' too, so it may download them.
 It walks normal and build dependencies, not dev dependencies, from the four release binaries on every platform, and lists each package outside the workspace.
-The vendored `evalexpr` and `comemo` and the `tree-sitter-asciidoc` grammar crates are therefore included.
+The vendored `evalexpr`, `comemo` and `notify` and the `tree-sitter-asciidoc` grammar crates are therefore included.
 
 A crate's texts are the licence files it ships: names containing `licen`, or starting `copying`, `copyright` or `notice`.
 A path dependency without one looks in its parent folder, where the grammar keeps its `LICENSE`.
