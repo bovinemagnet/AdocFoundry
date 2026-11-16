@@ -364,6 +364,10 @@ Moving the toolchain means changing both URLs and both checksums, which `packagi
 The release workflow's `flatpak` job builds it from the checked-out commit rather than the tag, on any `v*` tag or a run on demand.
 It runs in the `flathub-infra/flatpak-github-actions` freedesktop-26.08 image, pinned to its digest, which is the manifest's runtime.
 It writes `cargo-sources.json` with `flatpak-cargo-generator.py` from flatpak-builder-tools at a pinned commit, checked against its SHA-256, with `aiohttp` and `tomlkit` at pinned versions.
+Before building, the job copies `/var/lib/flatpak` into the container's own writable layer (the "Make the runtimes writable" step).
+The image's runtimes lie in its lower, read-only layer, whose folders flatpak cannot move.
+flatpak-builder updates the SDK and runtimes to Flathub's newest builds first, and once Flathub had published builds newer than the image's, that update failed with "Invalid cross-device link" and flatpak-builder crashed, as v0.11.0's `flatpak` job did.
+`packaging/test_workflows.py` checks that the copy comes before the build (`test_the_flatpak_runtimes_are_writable_before_the_build`).
 It then builds with `flatpak/flatpak-github-actions/flatpak-builder` v6.8 and keeps `AdocFoundry.flatpak` with the run.
 The bundle is not published, and `publish` does not wait for that job.
 
