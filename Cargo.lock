@@ -180,6 +180,7 @@ name = "adoc-docx"
 version = "0.11.0"
 dependencies = [
  "adoc-core",
+ "adoc-docx",
  "adoc-dom",
  "adoc-render",
  "crc32fast",

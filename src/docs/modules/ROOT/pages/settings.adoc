@@ -561,6 +561,7 @@ See xref:pdf-export.adoc[Exporting to PDF].
 
 The `[docx]` table sets how the Word documents the engine writes are laid out and styled, and `[docx.profiles.<name>]` saves Word publications under a name.
 These settings are what Export Page to Word…, Export Component to Word…, Export DOCX Profile…, `adocfoundry-cli docx` (see xref:command-line.adoc#docx[docx]) and the MCP `export_docx` tool read.
+See xref:word-export.adoc[Exporting to Word] for the export itself.
 
 Both settings files may set `[docx]`.
 A key the workspace file sets replaces the user file's.

@@ -1,0 +1,9 @@
+name: manual
+title: The Manual
+version: '2.0'
+nav:
+- modules/ROOT/nav.adoc
+- modules/admin/nav.adoc
+asciidoc:
+  attributes:
+    author: Paul Snow

@@ -1,0 +1,3 @@
+The steps come from a partial.
+
+include::partial$nested/warning.adoc[]

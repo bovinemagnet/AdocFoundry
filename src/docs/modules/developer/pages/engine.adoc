@@ -563,6 +563,9 @@ The result arrives as `EngineEvent::ExportFinished`, with an `ExportSummary` (th
 For DOCX, the page count is the number of AsciiDoc pages, since Word lays out its own pages.
 The entry points are the app's three Word commands (`export.docx_page`, `export.docx_component` and `export.docx_profile`), `adocfoundry-cli docx` through `export_docx_blocking`, and the MCP `export_docx` tool; their acceptance tests are `docx_cli_exports_and_gates` (`crates/adocfoundry-cli/tests/cli.rs`), `docx_mcp_export_is_write_gated` (`crates/adoc-mcp/tests/docx.rs`) and `docx_app_exports_through_engine` (`crates/adocfoundry/src/ui_tests.rs`).
 
+A blocking export that times out abandons its job through a per-job commit lock (`Commit`), which each writer takes to rename its file over the output.
+A timed-out export therefore never replaces the output afterwards, and one whose file was already in place reports success.
+
 A DOCX output must be a `.docx` file name; a folder or a link there is refused before anything is read, and again when writing.
 The package is written to a temporary file beside the output, with its folders created as for PDF, and renamed over the output only once it is complete.
 A failure therefore leaves whatever was there before and no temporary file.

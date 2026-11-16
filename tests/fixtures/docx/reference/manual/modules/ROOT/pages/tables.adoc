@@ -1,0 +1,11 @@
+= Tables
+
+.Supported platforms
+[cols="1,1,1",options="header"]
+|===
+|Platform |Architecture |Status
+
+.2+|Linux |x86_64 |Supported
+|aarch64 |Supported
+2+|Windows |Supported
+|===

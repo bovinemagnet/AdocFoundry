@@ -1,0 +1,5 @@
+name: manual
+title: The Manual
+version: '1.0'
+nav:
+- modules/ROOT/nav.adoc

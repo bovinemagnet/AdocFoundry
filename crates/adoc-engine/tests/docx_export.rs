@@ -731,3 +731,402 @@ fn formulas_are_typeset_as_pictures() {
         assert!(!document.contains(&format!(">{source}<")), "{document}");
     }
 }
+
+/// A copy of the reference book (`tests/fixtures/docx/reference`), its settings included, at
+/// `folder`, opened as the CLI opens a workspace.
+fn reference_workspace(folder: &Path) -> (PathBuf, Engine) {
+    let root = folder.join("reference");
+    copy_tree(&fixture("docx/reference"), &root);
+    let mut settings = Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    (root, engine)
+}
+
+fn manual() -> ExportTarget {
+    ExportTarget::Component {
+        name: "manual".to_owned(),
+        version: Some("2.0".to_owned()),
+    }
+}
+
+/// The DOCX export PRD, §10 test 18: a book of two components and two versions, with nested
+/// partials and every construct the export writes, passes every structural check, holds what
+/// its pages hold and nothing else, and is the same bytes wherever and however often it is
+/// exported.
+#[test]
+fn docx_reference_book_is_complete() {
+    let directory = tempfile::tempdir().unwrap();
+    let (root, mut engine) = reference_workspace(&directory.path().join("a"));
+    let output = directory.path().join("manual.docx");
+    let summary = engine
+        .export_docx_blocking(docx(manual(), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let bytes = fs::read(&output).unwrap();
+    let entries = adoc_docx::testing::assert_valid_package(&bytes);
+    let text = |name: &str| adoc_docx::testing::text(&entries, name).to_owned();
+    let document = text("word/document.xml");
+
+    // Version 2.0's pages, in navigation order, the start page first; nothing of 1.0's or of
+    // the other component's.
+    let sources: Vec<String> = summary
+        .sources
+        .iter()
+        .map(|path| {
+            path.strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect();
+    assert_eq!(
+        sources,
+        [
+            "manual/modules/ROOT/pages/index.adoc",
+            "manual/modules/ROOT/pages/install.adoc",
+            "manual/modules/ROOT/pages/tables.adoc",
+            "manual/modules/ROOT/pages/media.adoc",
+            "manual/modules/ROOT/pages/links.adoc",
+            "manual/modules/admin/pages/security.adoc",
+        ]
+    );
+    assert_eq!(summary.pages, 6);
+    for absent in ["OLD-VERSION-MARKER", "API-COMPONENT-MARKER"] {
+        assert!(!document.contains(absent), "{absent}");
+    }
+
+    // One warning, for the reference out of the book, placed where it was written; nothing is
+    // lost without one.
+    let warnings: Vec<String> = summary
+        .diagnostics
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(summary.diagnostics.len(), 1, "{warnings:?}");
+    let (path, line) = summary.diagnostics[0].location.clone().unwrap();
+    assert_eq!(path, root.join("manual/modules/ROOT/pages/links.adoc"));
+    assert_eq!(line, 4);
+    assert!(warnings[0].contains("api::index.adoc"), "{warnings:?}");
+
+    // Real Word structures: the title, parts, chapters and sections as heading styles, and
+    // everything a page holds in its own style.
+    let paragraphs = adoc_docx::testing::paragraphs(&document);
+    let has = |style: &str, text: &str| {
+        paragraphs
+            .iter()
+            .any(|(found, found_text)| found.as_deref() == Some(style) && found_text == text)
+    };
+    for (style, text) in [
+        ("Title", "The Manual"),
+        ("Heading1", "Using the product"),
+        ("Heading1", "Administration"),
+        ("Heading2", "Installing"),
+        ("Heading2", "Media"),
+        ("Heading2", "Links"),
+        ("Heading2", "Security"),
+        ("Heading3", "Requirements"),
+        ("Heading3", "Tables"),
+        ("Heading3", "Keys"),
+        ("Caption", "Table 1. Supported platforms"),
+        ("Caption", "Figure 2. A photograph"),
+        ("Caption", "Starting the service"),
+        ("TOCHeading", "Table of Contents"),
+    ] {
+        assert!(has(style, text), "no {style} {text:?}: {paragraphs:?}");
+    }
+    let styled = |style: &str| {
+        paragraphs
+            .iter()
+            .filter(|(found, _)| found.as_deref() == Some(style))
+            .map(|(_, text)| text.as_str())
+            .collect::<Vec<_>>()
+    };
+    assert!(styled("SourceCode")
+        .iter()
+        .any(|text| text.starts_with("systemctl start product")));
+    // Markup characters escaped, Unicode as written.
+    assert!(document.contains("Ünïcødé, \"quotes\""));
+    assert!(document.contains("&amp; &lt;angle brackets&gt;, and 3 &gt; 2."));
+    assert!(
+        document.contains("NESTED-PARTIAL-MARKER"),
+        "the nested partial"
+    );
+    for style in [
+        "AdocAdmonition",
+        "AdocSidebar",
+        "AdocExample",
+        "Quote",
+        "DescriptionTerm",
+    ] {
+        assert!(document.contains(&format!("w:val=\"{style}\"")), "{style}");
+    }
+    // Lists numbered by Word, nested ones by letter; the table's cells merged on its grid.
+    assert!(document.matches("<w:numPr>").count() >= 5);
+    assert!(text("word/numbering.xml").contains("w:val=\"lowerLetter\""));
+    assert!(document.contains("<w:gridSpan w:val=\"2\"/>"));
+    assert!(document.contains("<w:vMerge w:val=\"restart\"/>"));
+
+    // Links: two between pages of the book, to bookmarks the validator found; one to the web.
+    let internal: Vec<&str> = document
+        .match_indices("w:anchor=\"_a")
+        .map(|(at, _)| &document[at..at + 14])
+        .collect();
+    assert_eq!(internal.len(), 2, "{internal:?}");
+    let relationships = text("word/_rels/document.xml.rels");
+    assert!(relationships.contains(r#"Target="https://example.com/product" TargetMode="External""#));
+    // A footnote written once and referred to twice.
+    assert_eq!(
+        text("word/footnotes.xml")
+            .matches("The note, written once.")
+            .count(),
+        1
+    );
+    assert!(document.contains("NOTEREF _f1"));
+
+    // Pictures: covers, the title page's logo, PNG, JPEG, SVG, a diagram and two formulas, each
+    // file once, whatever uses it, and every one in the package itself.
+    let media: Vec<&String> = entries
+        .keys()
+        .filter(|name| name.starts_with("word/media/"))
+        .collect();
+    assert_eq!(media.len(), 7, "{media:?}");
+    assert!(media.iter().any(|name| name.ends_with(".jpeg")));
+    for alt in [
+        "Front cover",
+        "Back cover",
+        "Logo",
+        "The product logo",
+        "A photograph",
+        "The pipeline drawn as SVG",
+        "A = pi r^2",
+        "sum_(i=1)^n i = (n(n+1))/2",
+    ] {
+        assert!(document.contains(&format!("descr=\"{alt}\"")), "{alt}");
+    }
+    for (name, data) in &entries {
+        assert!(
+            !data.windows(5).any(|window| window == b"file:"),
+            "{name} refers to a file outside the package"
+        );
+    }
+
+    // Sections: front cover, title page, the body numbered from 1 with its first page's own
+    // header, back cover; A4 with the settings' margins.
+    assert_eq!(document.matches("<w:sectPr").count(), 4);
+    assert_eq!(document.matches("<w:pgNumType w:start=\"1\"/>").count(), 1);
+    assert!(document.contains("<w:titlePg/>"));
+    assert!(document.contains("<w:pgSz w:w=\"11906\" w:h=\"16838\"/>"));
+    assert!(document.contains("w:top=\"1134\""));
+    assert!(document.contains("TOC \\o \"1-3\" \\h \\z \\u"));
+    let settings = text("word/settings.xml");
+    assert!(settings.contains("<w:evenAndOddHeaders/>"));
+    assert!(settings.contains("<w:updateFields w:val=\"true\"/>"));
+
+    // Running content: odd and even headers with the logo and the chapter's title, footers
+    // with live page numbers, and a first page's header with the document's title.
+    let parts = |prefix: &str| {
+        entries
+            .keys()
+            .filter(|name| name.starts_with(prefix) && name.ends_with(".xml"))
+            .map(|name| text(name))
+            .collect::<Vec<_>>()
+    };
+    let headers = parts("word/header");
+    assert_eq!(
+        headers
+            .iter()
+            .filter(|header| header.contains("STYLEREF \"heading 2\"")
+                && header.contains("<w:drawing>"))
+            .count(),
+        2
+    );
+    assert!(headers.iter().any(|header| header.contains(">The Manual<")));
+    let footers = parts("word/footer");
+    assert_eq!(
+        footers
+            .iter()
+            .filter(|footer| footer.contains(" PAGE ") && footer.contains(" NUMPAGES "))
+            .count(),
+        2
+    );
+    assert!(entries
+        .keys()
+        .any(|name| name.starts_with("word/_rels/header")));
+
+    // Properties, and the settings' heading colour.
+    let core = text("docProps/core.xml");
+    assert!(core.contains("<dc:title>The Manual</dc:title>"));
+    assert!(core.contains("<dc:creator>Paul Snow</dc:creator>"));
+    assert!(
+        text("word/styles.xml").contains("w:val=\"1F4E79\"")
+            || text("word/styles.xml").contains("w:val=\"1f4e79\"")
+    );
+
+    // The same bytes again, and from a copy of the workspace somewhere else.
+    let again = directory.path().join("again.docx");
+    engine
+        .export_docx_blocking(docx(manual(), &again), WAIT)
+        .unwrap();
+    assert!(
+        fs::read(&again).unwrap() == bytes,
+        "a second export differs"
+    );
+    let (_elsewhere, mut other) = reference_workspace(&directory.path().join("b/c"));
+    let moved = directory.path().join("moved.docx");
+    other
+        .export_docx_blocking(docx(manual(), &moved), WAIT)
+        .unwrap();
+    assert!(
+        fs::read(&moved).unwrap() == bytes,
+        "the workspace's place changes the document"
+    );
+}
+
+/// An export that runs out of time is a failure, and a failure leaves the output as it was,
+/// even when the time runs out while the document is being written: the writer must not
+/// replace the file afterwards. Timeouts from a few milliseconds up, until one is long enough,
+/// so that some end in each stage.
+#[test]
+fn a_timed_out_export_leaves_the_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("long");
+    let pages = root.join("modules/ROOT/pages");
+    fs::create_dir_all(&pages).unwrap();
+    fs::write(
+        root.join("antora.yml"),
+        "name: long\nversion: '1.0'\nnav:\n- modules/ROOT/nav.adoc\n",
+    )
+    .unwrap();
+    let mut nav = String::new();
+    for page in 0..60 {
+        let sections: String = (0..20)
+            .map(|section| format!("== Section {section}\n\nText of {page}.{section}.footnote:[A note.]\n\n|===\n|a |b\n|===\n\n"))
+            .collect();
+        fs::write(
+            pages.join(format!("p{page}.adoc")),
+            format!("= Page {page}\n\n{sections}"),
+        )
+        .unwrap();
+        nav.push_str(&format!("* xref:p{page}.adoc[]\n"));
+    }
+    fs::write(root.join("modules/ROOT/nav.adoc"), nav).unwrap();
+    let mut settings = Settings::default().with_git_opt_in();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    let output = directory.path().join("long.docx");
+    let target = || ExportTarget::Component {
+        name: "long".to_owned(),
+        version: Some("1.0".to_owned()),
+    };
+
+    let mut timeout = Duration::from_millis(2);
+    let mut failures = 0;
+    loop {
+        fs::write(&output, "the earlier document").unwrap();
+        match engine.export_docx_blocking(docx(target(), &output), timeout) {
+            Ok(_) => break,
+            Err(error) => {
+                failures += 1;
+                assert!(error.to_string().contains("in time"), "{error}");
+                // Whatever was still running has finished; the file is untouched.
+                assert!(engine.wait_for_workers(WAIT));
+                assert_eq!(
+                    fs::read_to_string(&output).unwrap_or_default(),
+                    "the earlier document",
+                    "replaced after timing out at {timeout:?}"
+                );
+                let leftovers: Vec<_> = fs::read_dir(directory.path())
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.file_name())
+                    .filter(|name| name != "long" && name != "long.docx")
+                    .collect();
+                assert!(leftovers.is_empty(), "temporary files left: {leftovers:?}");
+            }
+        }
+        assert!(timeout < WAIT, "never finished");
+        timeout = timeout.mul_f64(1.25);
+    }
+    assert!(failures > 0, "no timeout was short enough to test");
+    assert!(fs::read(&output).unwrap().starts_with(b"PK\x03\x04"));
+}
+
+/// Problems in a page are warnings at the file and line they come from, in the page itself or
+/// in a partial it includes, and the document is written with a visible stand-in for each: a
+/// missing image, a diagram nothing renders, a video, and source cut short.
+#[test]
+fn docx_problems_are_located() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("book");
+    copy_tree(&fixture("pdf/book"), &root);
+    let pages = root.join("guide/modules/ROOT");
+    fs::create_dir_all(pages.join("partials")).unwrap();
+    fs::write(
+        pages.join("partials/broken.adoc"),
+        "A partial.\n\nimage::also-missing.png[Also missing]\n",
+    )
+    .unwrap();
+    let page = pages.join("pages/problems.adoc");
+    fs::write(
+        &page,
+        "= Problems\n\nimage::missing.png[Missing]\n\n[graphviz]\n....\ndigraph { a -> b }\n....\n\n\
+         video::intro.mp4[]\n\ninclude::partial$broken.adoc[]\n\n[source,rust]\n----\nfn cut_short() {\n",
+    )
+    .unwrap();
+    // Every page written before the workspace is read, so the partial is in its catalog.
+    let mut settings = Settings::default().with_git_opt_in();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine.set_diagrams(adoc_diagrams::Diagrams::with_providers(
+        adoc_diagrams::DiagramCache::new(directory.path().join("cache")),
+        vec![Box::new(adoc_diagrams::MermaidProvider::default())],
+    ));
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    let id = engine.open(&page).unwrap();
+    let output = directory.path().join("problems.docx");
+    let summary = engine
+        .export_docx_blocking(docx(ExportTarget::Page(id), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let located: Vec<(String, u32, String)> = summary
+        .diagnostics
+        .iter()
+        .map(|diagnostic| {
+            let (path, line) = diagnostic
+                .location
+                .clone()
+                .unwrap_or_else(|| panic!("{diagnostic} has no place"));
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            (name, line, diagnostic.message.clone())
+        })
+        .collect();
+    let at = |name: &str, line: u32, words: &str| {
+        located.iter().any(|(found, found_line, message)| {
+            found == name && *found_line == line && message.contains(words)
+        })
+    };
+    assert!(at("problems.adoc", 3, "missing.png"), "{located:?}");
+    assert!(at("problems.adoc", 5, "graphviz"), "{located:?}");
+    assert!(at("problems.adoc", 10, "video"), "{located:?}");
+    assert!(at("broken.adoc", 3, "also-missing.png"), "{located:?}");
+
+    // Each has a stand-in, and the source cut short is kept as code.
+    let text: String = paragraphs(&output)
+        .into_iter()
+        .map(|(_, text)| text + "\n")
+        .collect();
+    for shown in [
+        "Missing",
+        "digraph { a -> b }",
+        "intro.mp4",
+        "Also missing",
+        "fn cut_short() {",
+    ] {
+        assert!(text.contains(shown), "{shown} is not shown: {text}");
+    }
+    adoc_docx::testing::assert_valid_package(&fs::read(&output).unwrap());
+}

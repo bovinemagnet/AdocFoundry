@@ -1,0 +1,3 @@
+= The Old Manual
+
+OLD-VERSION-MARKER: version 1.0 only.

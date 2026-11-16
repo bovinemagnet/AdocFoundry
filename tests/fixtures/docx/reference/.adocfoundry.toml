@@ -1,0 +1,26 @@
+# The reference book's Word settings: running content on every kind of page, a logo, margins
+# and styles, so the reference test sees each of them in the package.
+[docx]
+paper = "a4"
+logo = "manual/modules/ROOT/images/logo.png"
+odd_even = true
+
+[docx.margins]
+top = "20mm"
+bottom = "20mm"
+
+[docx.header]
+left = "{logo}"
+right = "{chapter-title}"
+
+[docx.header.first]
+centre = "{document-title}"
+
+[docx.footer]
+right = "Page {page-number} of {page-count}"
+
+[docx.footer.even]
+left = "Page {page-number} of {page-count}"
+
+[docx.styles]
+heading_colour = "1f4e79"
