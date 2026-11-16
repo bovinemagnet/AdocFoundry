@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft, 2026-11-16; not yet approved for implementation. The open decisions in §13 are settled in the work package they affect |
+| Status | Approved for implementation, 2026-11-16 (epic #613). The open decisions in §13 are settled in the work package they affect, and recorded in §14 |
 | Date | 2026-11-16 |
 | Scope | A native publication backend that writes editable Microsoft Word `.docx` files for a page, an Antora component version or selected navigation files, through the engine, CLI, desktop app and MCP server |
 | Repository | [bovinemagnet/AdocFoundry](https://github.com/bovinemagnet/AdocFoundry) |
@@ -207,7 +207,7 @@ Order: D1 and D2 first (D2's extraction may begin beside D1); D3 to D6 on their 
 
 Each is settled before work starts on the package it affects, and the outcome is recorded in that package's pull request and in §14.
 
-- **OOXML library (D1).** `docx-rs` is a candidate, not a mandate. The spike checks complex tables, footnotes, the table of contents, sections, field codes, image relationships in headers and footers, build size and licences. The alternative is narrowly scoped in-house WordprocessingML; `quick-xml` is already in the dependency tree, a ZIP writer is not.
+- **OOXML library (D1).** `docx-rs` is a candidate, not a mandate. The spike checks complex tables, footnotes, the table of contents, sections, field codes, image relationships in headers and footers, build size and licences. The alternative is narrowly scoped in-house WordprocessingML; `quick-xml` is already in the dependency tree, a ZIP writer is not. *Settled in D1: in-house (§14).*
 - **Request shape (D2).** Format-specific DOCX arguments, command ids and events, or one common request typed by format with no PDF-only field reachable from DOCX.
 - **Where SVG is rasterised (D4).** The app's `image_decode::svg_to_png` is at L4 and cannot be called from `adoc-docx`. Either `adoc-docx` rasterises (`resvg` at the version already in the tree), or the engine hands it prepared rasters.
 - **Formulas without Typst (D4).** The STEM provider is part of the engine's `typst` feature. A build with `docx` and without `typst` has no formula artwork; decide between the formula's source as text with a diagnostic, and a narrower feature that provides the artwork alone.
@@ -218,7 +218,28 @@ Each is settled before work starts on the package it affects, and the outcome is
 
 ## 14. Implementation notes
 
-None yet. Each work package records here where the implementation departs from this document and how the open decisions of §13 were settled.
+Each work package records here where the implementation departs from this document and how the open decisions of §13 were settled.
+
+### D1 (#618): the crate and its package
+
+- **OOXML library: in-house.** The spike built a document with `docx-rs` 0.4.22 (MIT, July 2026; its only new crate would have been `zip` 8) holding a heading, a footnote, a header with a `PAGE` field, a table of contents and merged cells. It writes all of them, but:
+  - It numbers paragraphs, footnotes, bookmarks, headers, footers and pictures from process-wide counters (`static PIC_ID: AtomicUsize` and nine more). Two exports of the same document in one process gave different bytes, so in the app an export's bytes would depend on what was exported before, against §9, and the counters are global mutable state.
+  - It wrote U+0001 and U+FFFE straight into `word/document.xml`, which is then not well-formed XML (§9); every string would have to be cleaned before it reached the library.
+
+  `adoc-docx` therefore writes the package itself, with no new dependency: `flate2` and `crc32fast` were already in the tree. Every document string goes through one writer, `xml.rs`. It escapes `&`, `<` and `>`, and `"` in attributes. Carriage returns, and tabs and line feeds in attributes, are written as character references. The characters XML 1.0 forbids are replaced by U+FFFD. `zip.rs` writes the ZIP in order, with no seeking, no data descriptors and every entry dated 1 January 1980, and refuses a package past 65,535 entries or 4 GiB (no ZIP64; `DocxError::TooLarge`). `package.rs` writes `[Content_Types].xml` (a `Default` for `rels` and `xml`, an `Override` per part) and each part's relationships in a fixed order. `quick-xml` is not used: writing needs none of it, and the tests read the XML back with `roxmltree`, already a workspace dependency.
+- **Contracts.**
+  - `write_docx(&DocxDocument, &DocxOptions, impl Write) -> Result<DocxReport, DocxError>`.
+  - `DocxDocument` is `Article(DocxPage)` or `Book(DocxBook)`, the shape of `adoc-pdf`'s `Document`, `PageView` and `Book`, without depending on it.
+  - `DocxOptions` holds only the paper for now (A4 or Letter).
+  - `DocxDiagnostic` has a severity, a message and an optional `SourceSpan`.
+  - The sink takes the package a part at a time. Whoever owns the file writes to a temporary sibling and renames it (D2).
+- **Body.**
+  - Sections and discrete headings take Word's built-in `heading 1`–`heading 9` styles, with outline levels; the document title takes Title, and a book's subtitle Subtitle.
+  - In a book, a page's title is a heading at its depth and its sections move down by it. Where the book has parts, a part is Heading 1 on a new page and everything else moves down one.
+  - Paragraphs are text with tabs and line breaks; thematic and page breaks are written.
+  - Every other block is, until D3 to D5, written as plain paragraphs of its text with a warning at its source span. So are the footnotes, at the end of their page, while a table of contents block only warns.
+  - The core properties take the title and the `author` (or `authors`), `description` and `keywords` attributes, and no date.
+- **Checked by hand.** LibreOffice 26 opened the samples `ADOC_DOCX_OUT=<dir> cargo test -p adoc-docx --test package -- --ignored` writes, and read their headings as headings. Microsoft Word is checked in D8.
 
 ## 15. References
 

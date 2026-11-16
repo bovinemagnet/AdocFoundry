@@ -1,0 +1,19 @@
+[package]
+name = "adoc-docx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+adoc-dom.workspace = true
+adoc-render.workspace = true
+crc32fast.workspace = true
+flate2.workspace = true
+
+[dev-dependencies]
+roxmltree.workspace = true
+
+[lints]
+workspace = true

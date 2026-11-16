@@ -38,6 +38,7 @@ adoc-impact = { path = "crates/adoc-impact" }
 adoc-core = { path = "crates/adoc-core" }
 adoc-diagrams = { path = "crates/adoc-diagrams" }
 adoc-dom = { path = "crates/adoc-dom" }
+adoc-docx = { path = "crates/adoc-docx" }
 # Front ends choose its features: `typst` (PDF export, typeset STEM) and `git`.
 adoc-engine = { path = "crates/adoc-engine", default-features = false }
 adoc-git = { path = "crates/adoc-git" }
@@ -56,9 +57,13 @@ adoc-render = { path = "crates/adoc-render" }
 acdc-parser = "=0.11.0"
 asciidoc-parser = "=0.31.2"
 base64 = "=0.22.1"
+# Checksums the DOCX package's ZIP entries; already in the tree through flate2.
+crc32fast = "=1.5.3"
 dirs = "=6.0.0"
 # Embeds the app's Windows icon; already in the tree through GPUI.
 embed-resource = "=3.0.12"
+# Compresses the DOCX package's ZIP entries; already in the tree.
+flate2 = "=1.1.10"
 # Pure-Rust Git, without network transports; see crates/adoc-git.
 globset = "=0.4.21"
 gix = { version = "=0.90.0", default-features = false, features = ["sha1", "status", "revision", "blame"] }
