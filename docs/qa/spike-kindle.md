@@ -43,7 +43,7 @@ Both formats are written in-house, in `adoc-kindle`. That settles the PRD's "Wri
 
 The writers are written from documentation and permissively licensed code, never from GPL code. Calibre, KindleUnpack and `boko` are not consulted.
 
-- **KF8 (AZW3):** the public format documentation on the MobileRead wiki (PalmDB, MOBI header, EXTH, PalmDOC compression, the indexes, the FDST and trailing entries), checked against the MIT source of `epub3-kindle` 0.5.1.
+- **KF8 (AZW3):** the MIT source of `epub3-kindle` 0.5.1 (`src/kf8/`, `src/container/`: the PalmDB and MOBI headers, EXTH, the indexes, the FDST and the trailing entries), the writer with photographs from a device. Anything derived from it carries its MIT notice beside it.
 - **KFX:** the MIT source of `ebook-rs` 0.18.6 (`src/kfx/`: the container, the shared `YJ_symbols` table and the fragments it writes) and the Amazon Ion binary specification. Anything derived from `ebook-rs` carries its MIT notice beside it.
 
 ### Independent readback

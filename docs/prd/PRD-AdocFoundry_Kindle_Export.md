@@ -266,7 +266,7 @@ Each work package records here where the implementation departs from this docume
 The record is `docs/qa/spike-kindle.md`.
 
 - **Writer per format:** both in-house, in `adoc-kindle`, with no writer dependency. Both candidates produced real, repeatable containers, but each takes only a packaged EPUB. `epub3-kindle`'s `zip` dependency compiles three C libraries, and its build script compiles on every platform. `ebook-rs` brings 72 crates, `unsafe` code and string errors.
-- **Format facts:** KF8 comes from the MobileRead wiki's format documentation, checked against `epub3-kindle`'s MIT source. KFX comes from `ebook-rs`'s MIT source and the Amazon Ion binary specification. No GPL source is consulted; code derived from `ebook-rs` keeps its MIT notice.
+- **Format facts:** KF8 comes from `epub3-kindle`'s MIT source. KFX comes from `ebook-rs`'s MIT source and the Amazon Ion binary specification. No GPL source is consulted; code derived from `ebook-rs` keeps its MIT notice.
 - **If KFX proves blocked:** it is not blocked, since a Rust writer exists and its container reads back. The decision returns to the maintainer only if the in-house KFX fails the reader checks in K8.
 - **Independent readback:** for AZW3, `mobi` 0.8.0 (MIT, a dev-dependency only), plus a KF8 index reader in `adoc-kindle`'s `testing` module. For KFX, an Ion and container reader in that module, written apart from the writer.
 - **Supported readers:** proposed in the spike record and confirmed by hand in K8. Nothing older than the Kindle Touch (4th generation).
