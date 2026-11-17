@@ -39,7 +39,9 @@ fuzz_target!(|data: &[u8]| {
     let kfx = write_kindle(&document, KindleFormat::Kfx, &options)
         .unwrap_or_else(|error| panic!("KFX: {error}"));
     let read = read_kfx(&kfx.bytes).unwrap_or_else(|error| panic!("KFX read back: {error}"));
-    let chapters = read.chapters().unwrap_or_else(|error| panic!("KFX chapters: {error}"));
+    let chapters = read
+        .chapters()
+        .unwrap_or_else(|error| panic!("KFX chapters: {error}"));
     for block in chapters.iter().flatten() {
         for (_, _, anchor) in &block.links {
             assert!(read.anchor(*anchor).is_some(), "a link to no anchor");
