@@ -30,6 +30,26 @@ fn writes_the_reference_article() {
     }
 }
 
+/// The reference article as a read-only PDF (READONLY 4/5), for opening in PDF readers.
+#[test]
+#[ignore = "writes files for inspection; needs ADOC_PDF_OUT"]
+fn writes_the_reference_article_read_only() {
+    let out = std::path::PathBuf::from(std::env::var("ADOC_PDF_OUT").expect("ADOC_PDF_OUT"));
+    let path = common::fixtures().join("pdf/reference/article.adoc");
+    let options = PdfOptions {
+        protection: adoc_pdf::PdfProtection::RestrictModification,
+        ..PdfOptions::default()
+    };
+    let output = export(
+        &common::article(common::view_of(&path)),
+        &common::default_theme(),
+        &options,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    assert!(output.protected);
+    std::fs::write(out.join("article-read-only.pdf"), output.bytes).unwrap();
+}
+
 /// The reference article with the custom theme and a title page, for inspection.
 #[test]
 #[ignore = "writes files for inspection; needs ADOC_PDF_OUT"]

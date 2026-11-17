@@ -125,10 +125,13 @@ pub fn compile(
     let mut protected = false;
     if options.protection == crate::PdfProtection::RestrictModification {
         // Encrypted in memory, before the bytes reach any file.
-        bytes = crate::protect::restrict_modification(&bytes, &mut |buffer| {
-            getrandom::fill(buffer).expect("the system gives random bytes");
-        })
-        .map_err(|message| {
+        let mut unavailable = None;
+        let encrypted = crate::protect::restrict_modification(&bytes, &mut |buffer| {
+            if let Err(error) = getrandom::fill(buffer) {
+                unavailable.get_or_insert(format!("no random bytes for the encryption: {error}"));
+            }
+        });
+        bytes = unavailable.map_or(encrypted, Err).map_err(|message| {
             PdfError::Pdf(vec![PdfDiagnostic {
                 severity: PdfSeverity::Error,
                 message,

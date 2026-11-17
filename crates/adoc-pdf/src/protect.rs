@@ -34,6 +34,14 @@ fn allowed() -> Permissions {
         | Permissions::PRINTABLE_IN_HIGH_QUALITY
 }
 
+/// A password nobody needs or is told, from random bytes: printable ASCII, as revision 6
+/// takes it.
+fn owner_password(seed: &[u8]) -> String {
+    seed.iter()
+        .map(|byte| char::from(b'!' + byte % 94))
+        .collect()
+}
+
 /// `pdf` encrypted so that modification is denied, with randomness from `random`: the file key
 /// and the owner password, neither kept.
 pub(crate) fn restrict_modification(
@@ -44,13 +52,9 @@ pub(crate) fn restrict_modification(
         Document::load_mem(pdf).map_err(|error| format!("reading the PDF back: {error}"))?;
     let mut key = [0u8; 32];
     random(&mut key);
-    // A password nobody needs or is told: printable ASCII, as revision 6 takes it.
     let mut seed = [0u8; 32];
     random(&mut seed);
-    let owner: String = seed
-        .iter()
-        .map(|byte| char::from(b'!' + byte % 94))
-        .collect();
+    let owner = owner_password(&seed);
     let mut adbe = Dictionary::new();
     adbe.set("BaseVersion", Object::Name(b"1.7".to_vec()));
     adbe.set("ExtensionLevel", Object::Integer(8));
@@ -105,20 +109,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_owner_password_is_printable_and_random() {
-        let mut calls = 0u8;
-        let mut random = |buffer: &mut [u8]| {
-            calls += 1;
-            buffer.fill(calls * 37);
-        };
-        let mut seed = [0u8; 32];
-        random(&mut seed);
-        let owner: String = seed
-            .iter()
-            .map(|byte| char::from(b'!' + byte % 94))
-            .collect();
-        assert!(owner.chars().all(|c| c.is_ascii_graphic()));
-        assert_eq!(owner.len(), 32);
+    fn the_owner_password_is_printable_ascii() {
+        let every: Vec<u8> = (0..=255).collect();
+        let owner = owner_password(&every);
+        assert_eq!(owner.len(), 256);
+        assert!(owner.chars().all(|c| c.is_ascii_graphic()), "{owner}");
+        assert_ne!(owner_password(&[1; 32]), owner_password(&[2; 32]));
     }
 
     #[test]

@@ -128,4 +128,79 @@ fn pdf_protected_preserves_links_images_fonts() {
     );
     assert_eq!(pages, plain_pages);
     assert!(pages.iter().any(|(links, _, _)| *links > 0), "{pages:?}");
+    // Every string, decrypted: link addresses, outline titles, names, the information
+    // dictionary; equal to the plain PDF's.
+    let (plain_strings, strings) = (strings(&plain), strings(&protected));
+    assert!(plain_strings.iter().any(|(key, _)| key == "URI"));
+    assert!(plain_strings.iter().any(|(key, _)| key == "Title"));
+    assert_eq!(strings, plain_strings);
+}
+
+/// Each string in the document under the key that holds it, sorted; the encryption
+/// dictionary's own left out.
+fn strings(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
+    fn walk(key: &str, object: &lopdf::Object, found: &mut Vec<(String, Vec<u8>)>) {
+        match object {
+            lopdf::Object::String(text, _) => found.push((key.to_owned(), text.clone())),
+            lopdf::Object::Array(items) => items.iter().for_each(|item| walk(key, item, found)),
+            lopdf::Object::Dictionary(dictionary) => dictionary.iter().for_each(|(name, value)| {
+                walk(&String::from_utf8_lossy(name), value, found);
+            }),
+            lopdf::Object::Stream(stream) => stream.dict.iter().for_each(|(name, value)| {
+                walk(&String::from_utf8_lossy(name), value, found);
+            }),
+            _ => {}
+        }
+    }
+    let document = lopdf::Document::load_mem(bytes).unwrap();
+    let encrypt = document
+        .trailer
+        .get(b"Encrypt")
+        .and_then(lopdf::Object::as_reference)
+        .ok();
+    let mut found = Vec::new();
+    for (id, object) in &document.objects {
+        if Some(*id) != encrypt {
+            walk("", object, &mut found);
+        }
+    }
+    found.sort();
+    found
+}
+
+/// PDF/UA-1 lets an encrypted file be conformant when assistive technology may still read it
+/// (`/P` bit 10). A protected PDF/UA-1 article is checked by veraPDF when it is on `PATH`; CI's
+/// veraPDF job checks one through the command line.
+#[test]
+fn pdfua_with_protection_checked() {
+    let view = common::view_of(&common::fixtures().join("pdf/reference/article.adoc"));
+    let output = adoc_pdf::export(
+        &common::article(view),
+        &common::default_theme(),
+        &PdfOptions {
+            standards: vec![adoc_pdf::PdfStandard::Ua1],
+            protection: PdfProtection::RestrictModification,
+            ..PdfOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(output.protected);
+    let Ok(found) = std::process::Command::new("verapdf")
+        .arg("--version")
+        .output()
+    else {
+        eprintln!("skipped: veraPDF is not on PATH");
+        return;
+    };
+    assert!(found.status.success());
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("article-ua-protected.pdf");
+    std::fs::write(&path, &output.bytes).unwrap();
+    let result = std::process::Command::new("verapdf")
+        .args(["--flavour", "ua1", "--format", "text"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&result.stdout);
+    assert!(report.starts_with("PASS"), "{report}");
 }
