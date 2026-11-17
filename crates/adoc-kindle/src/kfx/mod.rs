@@ -445,8 +445,16 @@ impl Flattener<'_> {
             self.anchors.insert(anchor, (eid, 0));
         }
         for unit in inner.units {
-            let Unit::Text { look, text: part } = unit else {
-                continue;
+            // A picture in a cell is its description; a table in a cell was made lines of
+            // text when the book was built.
+            let (look, part) = match unit {
+                Unit::Text { look, text } => (look, text),
+                Unit::Image { alt, .. } => {
+                    let mut part = Text::default();
+                    push_text(&mut part, &alt);
+                    (Look::Italic, part)
+                }
+                Unit::Table { .. } => continue,
             };
             if !text.text.is_empty() {
                 push_text(&mut text, "\n");

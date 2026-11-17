@@ -249,6 +249,51 @@ pub enum Link {
     External(String),
 }
 
+/// The inline content of `blocks` run together, a space between blocks: what a table cell
+/// holds, as one line.
+#[must_use]
+pub fn inline_content(blocks: &[Block]) -> Vec<Inline> {
+    let mut out = Vec::new();
+    for block in blocks {
+        let before = out.len();
+        if before > 0 {
+            out.push(Inline::Text(" ".to_owned()));
+        }
+        match block {
+            Block::Heading { content, .. } | Block::Paragraph { content, .. } => {
+                out.extend(content.iter().cloned());
+            }
+            Block::Preformatted { text, .. } => out.push(Inline::Text(text.replace('\n', " "))),
+            Block::List { items, .. } => {
+                for item in items {
+                    out.extend(inline_content(item));
+                }
+            }
+            Block::Definitions { items, .. } => {
+                for (term, description) in items {
+                    out.extend(term.iter().cloned());
+                    out.push(Inline::Text(" ".to_owned()));
+                    out.extend(inline_content(description));
+                }
+            }
+            Block::Quote { blocks, .. } | Block::Aside { blocks, .. } => {
+                out.extend(inline_content(blocks));
+            }
+            Block::Table { rows, .. } => {
+                for cell in rows.iter().flat_map(|row| &row.cells) {
+                    out.extend(inline_content(&cell.blocks));
+                }
+            }
+            Block::Figure { alt, .. } => out.push(Inline::Text(alt.clone())),
+            Block::Rule | Block::PageBreak | Block::Notes(_) => {}
+        }
+        if out.len() == before + 1 && before > 0 {
+            out.pop();
+        }
+    }
+    out
+}
+
 /// The text of `inlines` as a reader would read it aloud: no marks, an image's alternative
 /// text, a footnote's number.
 #[must_use]

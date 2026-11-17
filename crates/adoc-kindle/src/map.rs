@@ -48,6 +48,7 @@ pub(crate) fn build(
         footnotes: BTreeMap::new(),
         notes_used: Vec::new(),
         diagnostics: Vec::new(),
+        in_table: false,
     };
     let mut chapters = Vec::new();
     let mut toc = Toc::default();
@@ -326,6 +327,8 @@ struct Mapper<'a> {
     /// The footnotes the page's marks used, in order, with the first mark's anchor.
     notes_used: Vec<(u32, Option<String>)>,
     diagnostics: Vec<KindleDiagnostic>,
+    /// Whether the blocks being mapped are in a table's cell.
+    in_table: bool,
 }
 
 impl Mapper<'_> {
@@ -632,8 +635,39 @@ impl Mapper<'_> {
                 }
                 self.blocks(blocks, depth, out, sections);
             }
+            ViewKind::Table(table) if self.in_table => {
+                // A table in a table's cell: few readers lay one out, so each row is a line of
+                // text, its cells separated by bars (Kindle PRD §15, "Tables").
+                self.warn(
+                    None,
+                    "a table inside a table cell is exported as lines of text".to_owned(),
+                );
+                let rows = table
+                    .header
+                    .iter()
+                    .chain(table.rows.iter())
+                    .chain(table.footer.iter());
+                let mut first = true;
+                for row in rows {
+                    let mut content = Vec::new();
+                    for (index, cell) in row.iter().enumerate() {
+                        if index > 0 {
+                            content.push(Inline::Text(" | ".to_owned()));
+                        }
+                        let blocks = self.nested(&cell.blocks, depth);
+                        content.extend(crate::book::inline_content(&blocks));
+                    }
+                    out.push(Block::Paragraph {
+                        anchor: if first { anchor.clone() } else { None },
+                        class: ParagraphClass::Normal,
+                        content,
+                    });
+                    first = false;
+                }
+            }
             ViewKind::Table(table) => {
                 let mut rows = Vec::new();
+                let was_in_table = std::mem::replace(&mut self.in_table, true);
                 let mut push = |mapper: &mut Self, cells: &[adoc_render::ViewCell], header| {
                     let cells = cells
                         .iter()
@@ -654,6 +688,7 @@ impl Mapper<'_> {
                 if let Some(footer) = &table.footer {
                     push(self, footer, false);
                 }
+                self.in_table = was_in_table;
                 out.push(Block::Table { anchor, rows });
             }
             ViewKind::Image(image) => {
@@ -897,9 +932,11 @@ impl Mapper<'_> {
                 .map(|(_, fragment)| fragment.to_owned())
         });
         let chapter = match &link.target {
-            Some(location) if location.path != self.source => {
-                self.pages.get(&location.path).copied()
-            }
+            Some(location) if location.path != self.source => self
+                .pages
+                .get(&location.path)
+                .or_else(|| self.pages.get(&adoc_core::normalize_path(&location.path)))
+                .copied(),
             _ => Some(self.chapter),
         };
         if let Some(chapter) = chapter {

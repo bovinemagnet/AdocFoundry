@@ -307,6 +307,15 @@ The record is `docs/qa/spike-kindle.md`.
 - As a development check outside the repository, `ebook-rs`'s own reader read the sample KFX back: its title, author, language, both chapters' text and the nested table of contents. It is not a dependency.
 - Not yet checked on a Kindle (`docs/qa/kindle.md`, K8). KFX remains the riskier format: if a Kindle refuses it, §15's "If KFX proves blocked" comes back to the maintainer.
 
+### K5 (#631): meaning, references and navigation
+
+- **Tables (§15):** a table stays a table in both formats, with its header row and its spans. A table inside another's cell, which few readers lay out, becomes paragraphs instead: a line per row, its cells separated by ` | `, with a warning at its source line. Settled for both formats in the book, so they agree.
+- A picture in a KFX table cell is its alternative text, as KFX here writes a cell as one run of text.
+- The fallbacks of §6.2, each with a located warning from the mapping: a reference out of the book is emphasised text (or the published page's address when `page_urls` has one); audio and video are their addresses; passthrough content is text, never markup; an unsupported block is its source. Pictures, diagrams and formulas until K6, as K2 recorded.
+- A cross reference's target is compared after lexical normalisation, so `../other/page.adoc` from a page finds that page in the book.
+- The chapter structure follows the plan the engine shares with PDF and Word: a part is a chapter of its own, at the top of the table of contents, and a page's sections are nested below the page, two levels deep. Headings move down by the page's depth.
+- Tests: `kindle_formats_agree` (chapters, table of contents and links in both formats, read back independently), `kindle_content_stays_text` and `kindle_unsupported_content_warns`, in `crates/adoc-kindle/tests/content.rs`.
+
 ## 17. References
 
 - Amazon KDP, [supported eBook formats](https://kdp.amazon.com/en_US/help/topic/G200634390)

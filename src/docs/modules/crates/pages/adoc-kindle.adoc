@@ -37,6 +37,25 @@ They are stable, and cannot collide across pages.
 * A cross reference becomes a link inside the book when its target page is in the book.
 Otherwise it is the page's published URL when a site URL is configured, and failing that it stays text with a warning at its source.
 
+== Content and fallbacks
+
+Both formats are written from the same `KindleBook`, so the chapters, the table of contents and the links agree.
+The tests `kindle_formats_agree`, `kindle_content_stays_text` and `kindle_unsupported_content_warns` (in `crates/adoc-kindle/tests/content.rs`) read both formats back independently.
+
+* Lists, code, description lists, admonitions, quotes, tables and footnotes are text, never pictures.
+* Tables stay tables, with header rows and spans.
+A table inside another table's cell becomes paragraphs, one line per row with the cells separated by ` | `, and a warning at its source line.
+* A part of a book is a chapter of its own at the top of the table of contents.
+A page's sections are nested under the page, two levels deep, and headings move down by the page's navigation depth.
+
+Anything a Kindle cannot show has a readable fallback and a warning located at its source:
+
+* A cross reference out of the book is emphasised text, or the target page's published address when a site URL is configured.
+* Audio and video become their addresses.
+* Passthrough content is text, never markup.
+* An unsupported block is its source.
+* Images, diagrams and formulas are exported as their descriptions or sources, with a warning, until Kindle 6/9 embeds them.
+
 == The API
 
 `write_kindle(&KindleDocument, KindleFormat, &KindleOptions)` writes the book in memory and checks the bytes before returning them.
