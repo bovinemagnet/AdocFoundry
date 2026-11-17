@@ -50,7 +50,30 @@ The attribute's name is not case-sensitive, and when the header declares it more
 == Where it must be
 
 Only the page's own main header counts.
-That is the title, its author and revision lines, attribute entries and comments, up to the first blank line.
+Put the declaration directly under the page's title (`= Title`, or Markdown's `# Title`), among the header's attribute entries, with no blank line between the title and it.
+Leading blank lines and comments may come before the title.
+After the title, the first line that is not an attribute entry or comment is the author line, and the next is the revision line only if it reads as one, for example `v1.0, 2026-11-17: Draft`.
+A page with no title can declare it among the attribute entries at the very top.
+
+[source,asciidoc]
+----
+= Approved Procedure
+Paul Snow
+v1.0, 2026-11-17
+:export-read-only:
+
+The procedure begins here.
+----
+
+Where the declaration's place is uncertain, the export is an error at the declaration's line rather than a guess, so a page that asks is never exported editable by mistake.
+The export writes nothing and names the page and line.
+These cases are errors:
+
+* A declaration after a blank line that ends the header but before the page's first content.
+The usual slip is a blank line between the title and the attribute entries.
+* A declaration in a header that has anything other than comments above its title, such as an attribute entry, an anchor like `[[id]]` or an attribute list like `[role]`.
+* A page that begins with a byte-order mark, an invisible character some editors add at the start of a file, which hides the header from the export.
+Save the file without one.
 
 A declaration anywhere else never counts.
 That includes the body, an included file (its header or its body), `antora.yml`, the playbook, a publication profile's `attributes` and an export's own attributes.
@@ -126,7 +149,7 @@ A refusal is an error with one of these stable codes.
 |A PDF would claim PDF/A.
 
 |`export_protection_invalid_header`
-|A header gives an invalid value. `details.source` gives `{path, line}`.
+|A header gives an invalid value, or declares it where its place is uncertain. `details.source` gives `{path, line}`.
 |===
 
 `details.requested_by` lists `{path, line}` for each page that asks.
