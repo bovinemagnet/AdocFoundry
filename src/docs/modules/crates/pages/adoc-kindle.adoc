@@ -67,7 +67,7 @@ It reassembles the chapters from skeletons and fragments, decodes the indexes an
 The `mobi` crate (MIT, a dev-dependency only) reads the same files.
 The tests are `azw3_is_a_kf8_container`, `azw3_reads_back_complete` and `kindle_never_substitutes_a_format` in the crate, and `kindle_and_pdf_select_the_same_pages` in the engine's `tests/kindle_export.rs`.
 
-NOTE: The format facts come from the MobileRead wiki's documentation, checked against epub3-kindle's MIT source (see the spike's record).
+NOTE: The format facts come from epub3-kindle's MIT source (see the spike's record).
 The output has not yet been checked on a Kindle device.
 
 == Related

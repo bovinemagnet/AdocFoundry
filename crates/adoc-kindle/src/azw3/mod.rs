@@ -1,6 +1,6 @@
-//! AZW3: a KF8 book in a PalmDB/MOBI file, written in-house (Kindle PRD §6.5; the format facts
-//! from the MobileRead wiki's documentation, checked against `epub3-kindle`'s MIT source, as
-//! `docs/qa/spike-kindle.md` records). KF8 only: there is no MOBI7 part.
+//! AZW3: a KF8 book in a PalmDB/MOBI file, written in-house (Kindle PRD §6.5). The format
+//! facts are from `epub3-kindle`'s MIT source, as `docs/qa/spike-kindle.md` records. KF8 only:
+//! there is no MOBI7 part.
 //!
 //! The text is one stream of markup: each chapter's skeleton followed by its fragments, then
 //! the stylesheet. Record 0 holds the PalmDOC and MOBI headers and the EXTH metadata; then come
