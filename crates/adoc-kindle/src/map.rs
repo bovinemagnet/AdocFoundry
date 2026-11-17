@@ -664,6 +664,9 @@ impl Mapper<'_> {
                     });
                     first = false;
                 }
+                if first {
+                    keep_anchor(out, anchor);
+                }
             }
             ViewKind::Table(table) => {
                 let mut rows = Vec::new();
@@ -767,10 +770,16 @@ impl Mapper<'_> {
                     code: false,
                 });
             }
-            ViewKind::ThematicBreak => out.push(Block::Rule),
-            ViewKind::PageBreak => out.push(Block::PageBreak),
+            ViewKind::ThematicBreak => {
+                keep_anchor(out, anchor);
+                out.push(Block::Rule);
+            }
+            ViewKind::PageBreak => {
+                keep_anchor(out, anchor);
+                out.push(Block::PageBreak);
+            }
             // The reader shows its own table of contents.
-            ViewKind::Toc => {}
+            ViewKind::Toc => keep_anchor(out, anchor),
             ViewKind::Unsupported { name, source } => {
                 self.warn(
                     None,
@@ -986,6 +995,18 @@ impl Mapper<'_> {
                 Inline::Emphasis(shown)
             }
         }
+    }
+}
+
+/// A place for `anchor` where its block shows nothing an anchor can sit on: an empty
+/// paragraph, as an open block's id gets, so a reference to it still lands.
+fn keep_anchor(out: &mut Vec<Block>, anchor: Option<String>) {
+    if let Some(anchor) = anchor {
+        out.push(Block::Paragraph {
+            anchor: Some(anchor),
+            class: ParagraphClass::Normal,
+            content: Vec::new(),
+        });
     }
 }
 

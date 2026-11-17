@@ -257,3 +257,46 @@ fn kindle_unsupported_content_warns() {
         );
     }
 }
+
+/// An id on a block that shows nothing of its own (a page break, the table of contents macro)
+/// is still a place a reference may lead to, in both formats. (The parser gives a thematic
+/// break no id, so a reference to one leads to nothing and is text with a warning.)
+#[test]
+fn ids_on_breaks_stay_places_to_link_to() {
+    let text = "= Page\n\nSee <<turn>> and <<contents>>.\n\n[[turn]]\n<<<\n\n[[contents]]\ntoc::[]\n\nThe end.\n";
+    let document = KindleDocument::Article(KindlePage {
+        key: "p0".to_owned(),
+        view: view(Path::new("/docs/page.adoc"), text),
+        depth: 0,
+    });
+    for format in [KindleFormat::Azw3, KindleFormat::Kfx] {
+        let output = write_kindle(&document, format, &KindleOptions::default())
+            .unwrap_or_else(|error| panic!("{format}: {error}"));
+        match format {
+            KindleFormat::Azw3 => {
+                let read = read_azw3(&output.bytes).unwrap();
+                let links: Vec<_> = read
+                    .hrefs()
+                    .into_iter()
+                    .filter(|(_, href)| href.starts_with("kindle:pos"))
+                    .collect();
+                assert_eq!(links.len(), 2, "{links:?}");
+                for (_, href) in links {
+                    assert!(read.follow(&href).is_some(), "{href}");
+                }
+            }
+            KindleFormat::Kfx => {
+                let read = read_kfx(&output.bytes).unwrap();
+                let chapters = read.chapters().unwrap();
+                let see = chapters[0]
+                    .iter()
+                    .find(|block| block.text.starts_with("See "))
+                    .unwrap();
+                assert_eq!(see.links.len(), 2);
+                for (_, _, anchor) in &see.links {
+                    assert!(read.anchor(*anchor).unwrap().is_ok());
+                }
+            }
+        }
+    }
+}
