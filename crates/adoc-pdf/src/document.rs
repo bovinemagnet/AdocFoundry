@@ -56,6 +56,8 @@ pub struct PdfOptions {
     pub date: Option<(i32, u8, u8)>,
     /// Which files the export may read: images, fonts and every other file Typst asks for.
     pub access: FileAccess,
+    /// The editing restriction the PDF carries (read-only exports, READONLY 4/5).
+    pub protection: crate::PdfProtection,
 }
 
 /// What is exported: one page as an article, or pages in order as a book.

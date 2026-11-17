@@ -391,6 +391,10 @@ The command waits for diagrams to render, then prints `<output> (<n> pages)` on 
 Warnings, such as an unknown theme key, a missing image or a diagram that could not be rendered (wherever it sits: in a list, a table cell or any other block), print on standard error as `path:line: warning: message`.
 An export that fails, or reports a diagnostic that meets `--fail-on`, exits with 1, and a usage error exits with 2.
 
+A page whose header asks for a read-only export (`:export-read-only: true`) is refused, because a PDF cannot carry that restriction yet, and so is a PDF that claims PDF/A for such a page.
+The command exits with 1, whatever `--fail-on` says, printing the reason with the page and line, and writes nothing.
+See xref:read-only-exports.adoc[Read-only exports].
+
 [[docx]]
 == docx
 
@@ -461,6 +465,10 @@ It counts AsciiDoc pages because Word lays out its own pages.
 After that line it prints the look used, as `look: pdf-theme <name>`, `look: template <name> (<path>)` or `look: none`.
 Warnings, such as a missing image or a diagram that could not be rendered, print on standard error as `path:line: warning: message`.
 An export that fails, or reports a diagnostic that meets `--fail-on`, exits with 1, and a usage error exits with 2.
+
+When the pages' headers ask for a read-only export (`:export-read-only: true`), the document is written with Word's read-only protection, and the command prints `protected: read-only` after the output line.
+A refusal, such as a book that mixes pages that ask with pages that do not, or an invalid value, exits with 1, whatever `--fail-on` says, printing the reason with the page and line, and writes nothing.
+See xref:read-only-exports.adoc[Read-only exports].
 
 [[git-status]]
 == git-status

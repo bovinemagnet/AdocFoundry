@@ -211,6 +211,18 @@ pub struct StyleOverrides {
     pub link_colour: Option<String>,
 }
 
+/// An editing restriction the document carries (read-only exports,
+/// `docs/prd/PRD-AdocFoundry_READONLY.md` §5.3): Word's enforced document protection, with no
+/// password, so it deters editing rather than prevents it. A document that leaves some pages
+/// editable is not written: the engine refuses it first.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum WordProtection {
+    #[default]
+    None,
+    /// `w:documentProtection w:edit="readOnly" w:enforcement="1"` over the whole document.
+    ReadOnly,
+}
+
 /// How a document is exported.
 #[derive(Clone, Debug, Default)]
 pub struct DocxOptions {
@@ -228,6 +240,8 @@ pub struct DocxOptions {
     pub access: adoc_core::FileAccess,
     /// Name the look's fonts without embedding them (`[docx] embed_fonts = false`).
     pub fonts_named_only: bool,
+    /// The editing restriction the document carries.
+    pub protection: WordProtection,
 }
 
 impl DocxOptions {
@@ -270,6 +284,9 @@ impl fmt::Display for DocxDiagnostic {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DocxReport {
     pub diagnostics: Vec<DocxDiagnostic>,
+    /// The document was written with the editing restriction asked for: set by the writer
+    /// that wrote it into the settings, never taken from the request.
+    pub protected: bool,
 }
 
 /// Why a document could not be written.
@@ -503,6 +520,14 @@ pub fn write_docx(
         relationships: Vec::new(),
     }));
     let body = std::mem::take(&mut writer.xml);
+    let (settings, protected) = parts::settings(
+        footnotes,
+        odd_even,
+        writer.wrote_toc,
+        options.protection,
+        fonts.embeds()
+            || template_fonts.is_some_and(|fonts| fonts.embeds && !options.fonts_named_only),
+    );
     parts.splice(
         0..0,
         [
@@ -536,14 +561,7 @@ pub fn write_docx(
             package::Part {
                 name: "word/settings.xml".to_owned(),
                 content_type: parts::SETTINGS_TYPE,
-                data: parts::settings(
-                    footnotes,
-                    odd_even,
-                    writer.wrote_toc,
-                    fonts.embeds()
-                        || template_fonts
-                            .is_some_and(|fonts| fonts.embeds && !options.fonts_named_only),
-                ),
+                data: settings,
                 relationships: Vec::new(),
             },
         ],
@@ -624,6 +642,7 @@ pub fn write_docx(
     )?;
     Ok(DocxReport {
         diagnostics: writer.diagnostics,
+        protected,
     })
 }
 

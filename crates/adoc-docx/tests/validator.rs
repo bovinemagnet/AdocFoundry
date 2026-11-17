@@ -128,6 +128,39 @@ fn the_package_checks_catch_damage() {
     };
     let damage: Vec<(&str, Vec<u8>, &str)> = vec![
         (
+            "document protection out of the schema's order",
+            changed(
+                &entries,
+                "word/settings.xml",
+                replace(
+                    "</w:compat>",
+                    r#"</w:compat><w:documentProtection w:edit="readOnly" w:enforcement="1"/>"#,
+                ),
+            ),
+            "out of the schema's order",
+        ),
+        (
+            "document protection not enforced",
+            changed(
+                &entries,
+                "word/settings.xml",
+                replace(
+                    "<w:embedTrueTypeFonts/>",
+                    r#"<w:embedTrueTypeFonts/><w:documentProtection w:edit="readOnly" w:enforcement="0"/>"#,
+                ),
+            ),
+            "the protection is enforced",
+        ),
+        (
+            "a read-only recommendation in place of protection",
+            changed(
+                &entries,
+                "word/settings.xml",
+                replace("<w:compat>", "<w:writeProtection/><w:compat>"),
+            ),
+            "only asks",
+        ),
+        (
             "a picture's part missing",
             changed(&entries, &media, |_| None),
             "not in the package",

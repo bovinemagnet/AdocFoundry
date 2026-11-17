@@ -6771,6 +6771,68 @@ fn export_page_to_word_with_theme_offers_the_looks(cx: &mut TestAppContext) {
     );
 }
 
+/// Read-only exports, READONLY 5/5 (`docs/prd/PRD-AdocFoundry_READONLY.md` §10, test 24): the
+/// app takes the engine's decision, says before asking where to save when the format cannot
+/// carry it, says when a document is read-only, and leaves the page and its editor editable.
+#[gpui::test]
+fn protection_app_keeps_editors_editable(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let (root, app, events, mut cx) = profile_workspace(
+        directory.path(),
+        "",
+        "guide/modules/ROOT/pages/install.adoc",
+        cx,
+    );
+    let page = root.join("guide/modules/ROOT/pages/approved.adoc");
+    let text = "= Approved\n:export-read-only:\n\nThe procedure.\n";
+    std::fs::write(&page, text).unwrap();
+    let id = cx.update(|_, cx| {
+        app.update(cx, |state, _| {
+            let id = state.engine.open(&page).unwrap();
+            state.engine.set_active(id);
+            id
+        })
+    });
+    cx.run_until_parked();
+
+    // A PDF cannot carry it: said at once, and no save dialog.
+    cx.dispatch_action(crate::editor::bindings::ExportPagePdf);
+    cx.run_until_parked();
+    assert!(
+        !cx.did_prompt_for_new_path(),
+        "asked where to save a PDF that would be refused"
+    );
+
+    // Word can: the document is read-only, and the message says so.
+    cx.dispatch_action(crate::editor::bindings::ExportPageDocx);
+    let output = directory.path().join("approved.docx");
+    let summary = finish_export(&app, &events, &output, &mut cx).unwrap();
+    assert!(summary.protected);
+    let message = crate::workspace_view::export_message(&output, &Ok(summary));
+    assert!(message.ends_with(", read-only"), "{message}");
+
+    // The page is as editable as before: its source takes an edit, and it was not touched.
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), text);
+    cx.update(|_, cx| {
+        app.update(cx, |state, _| {
+            state
+                .engine
+                .invoke(
+                    adoc_engine::commands::ids::EDIT_INSERT_TEXT,
+                    adoc_engine::CommandArgs::Text {
+                        id,
+                        range: adoc_core::SourceRange::new(text.len(), text.len()),
+                        text: "More.\n".to_owned(),
+                    },
+                )
+                .unwrap();
+            let edited = state.engine.document(id).unwrap().text.to_string();
+            assert!(edited.ends_with("More.\n"), "{edited}");
+        });
+    });
+}
+
 /// The Antora workspace with two components, copied, with Alpha's page `page` open.
 fn drag_workspace(
     page: &str,

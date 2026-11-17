@@ -1089,12 +1089,22 @@ pub(crate) fn settings(
     footnotes: bool,
     odd_even: bool,
     update_fields: bool,
+    protection: crate::WordProtection,
     embed_fonts: bool,
-) -> Vec<u8> {
+) -> (Vec<u8>, bool) {
     let mut xml = Xml::part();
     xml.open("w:settings", &[("xmlns:w", W)]);
     if embed_fonts {
         xml.empty("w:embedTrueTypeFonts", &[]);
+    }
+    // After the fonts and before the headers' setting, as `CT_Settings` orders them. Enforced,
+    // with no password: never `w:writeProtection` or `w:readOnlyRecommended`, which only ask.
+    let protected = protection == crate::WordProtection::ReadOnly;
+    if protected {
+        xml.empty(
+            "w:documentProtection",
+            &[("w:edit", "readOnly"), ("w:enforcement", "1")],
+        );
     }
     if odd_even {
         xml.empty("w:evenAndOddHeaders", &[]);
@@ -1119,7 +1129,8 @@ pub(crate) fn settings(
     );
     xml.close("w:compat");
     xml.close("w:settings");
-    xml.into_bytes()
+    // The settings, and whether they hold the protection: what the report says was written.
+    (xml.into_bytes(), protected)
 }
 
 /// The facts `docProps/core.xml` holds. No date: the same document gives the same bytes.

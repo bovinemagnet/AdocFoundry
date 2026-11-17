@@ -51,9 +51,15 @@ fn export_html_command(
             expected: "a page and an output path",
         });
     };
-    engine
+    let document = engine
         .document(id)
         .ok_or(EngineError::UnknownDocument(id))?;
+    // HTML has no editing restriction: a page that asks for one is refused, from the text the
+    // export renders.
+    let page = crate::read_only::page_read_only(&document.path, &document.text.to_string());
+    crate::protection::request([(document.path.clone(), page)])
+        .and_then(|request| crate::protection::resolve(request, crate::ExportFormat::Html, None))
+        .map_err(|refusal| EngineError::ExportProtection(Box::new(refusal)))?;
     engine.render_now(id);
     engine.html_exports.waiting.push((id, output));
     Ok(CommandOutcome::Done)
@@ -175,6 +181,7 @@ impl Engine {
             sources: Vec::new(),
             diagnostics: Vec::new(),
             look: None,
+            protected: false,
         });
         self.emit(EngineEvent::ExportFinished { output, result });
     }

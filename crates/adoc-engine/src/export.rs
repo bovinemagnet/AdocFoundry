@@ -112,6 +112,8 @@ pub struct ExportSummary {
     pub diagnostics: Vec<ExportDiagnostic>,
     /// The look a Word export used; `None` for PDF and HTML.
     pub look: Option<crate::ExportLook>,
+    /// The output carries an editing restriction its pages asked for (`:export-read-only:`).
+    pub protected: bool,
 }
 
 /// A problem found while exporting, at a line of a page when known.
@@ -248,6 +250,30 @@ impl Request {
         }
     }
 
+    /// The format the request writes, with the PDF/A standard it claims (from `[pdf]
+    /// standards` and its own), if any.
+    #[allow(unused_variables)]
+    fn format(&self, settings: &crate::Settings) -> (crate::ExportFormat, Option<String>) {
+        match self {
+            #[cfg(feature = "typst")]
+            Self::Pdf(args) => {
+                let standards: Vec<crate::PdfStandard> = settings
+                    .pdf
+                    .standards
+                    .iter()
+                    .chain(&args.standards)
+                    .copied()
+                    .collect();
+                match crate::protection::pdfa(&standards) {
+                    Some(standard) => (crate::ExportFormat::PdfA, Some(standard)),
+                    None => (crate::ExportFormat::Pdf, None),
+                }
+            }
+            #[cfg(feature = "docx")]
+            Self::Docx(_) => (crate::ExportFormat::Docx, None),
+        }
+    }
+
     /// Refuses an output this format never writes.
     fn check_output(&self) -> Result<(), EngineError> {
         match self {
@@ -338,6 +364,8 @@ struct Job {
     /// One of `export.pdf_pages`'s pages, reported in its summary rather than on its own.
     #[cfg_attr(not(feature = "typst"), allow(dead_code))]
     in_batch: bool,
+    /// The editing restriction the output is to carry, decided before the job started.
+    protection: crate::ExportProtection,
 }
 
 /// `export.pdf_pages` under way: its pages are exported one after another, so a folder of
@@ -892,6 +920,14 @@ impl Engine {
                 Ok(input)
             })
             .collect::<Result<_, EngineError>>()?;
+        // Read-only exports: the pages' own headers, read from the very text the worker will
+        // parse, decide once, before anything is parsed or written.
+        let protection = self.protection_of(
+            inputs.iter().map(|input: &crate::rendered::OwnedInput| {
+                (input.path.clone(), input.text.clone())
+            }),
+            request.format(&self.settings),
+        )?;
         self.export.next += 1;
         let job = self.export.next;
         self.export.jobs.insert(
@@ -904,6 +940,7 @@ impl Engine {
                 doms: Vec::new(),
                 keep_result,
                 in_batch,
+                protection,
             },
         );
         let parser = self.document_parser();
@@ -924,6 +961,56 @@ impl Engine {
             let _ = sender.send(WorkerMessage::ExportParsed { job, doms });
         });
         Ok(job)
+    }
+
+    /// What an export of `target` in `format` would carry, or why it would be refused: the
+    /// decision the export makes, from the pages it would select as they stand now (open
+    /// buffers included), for front ends to show before exporting.
+    pub fn export_protection(
+        &self,
+        target: &ExportTarget,
+        format: crate::ExportFormat,
+    ) -> Result<crate::ExportProtection, EngineError> {
+        let plan = self.export_plan(target)?;
+        let texts = plan
+            .paths()
+            .iter()
+            .map(|path| {
+                self.parse_input_for_path(path)
+                    .map(|input| (input.path, input.text))
+                    .ok_or_else(|| {
+                        EngineError::NotFound(format!("{} cannot be read", path.display()))
+                    })
+            })
+            .collect::<Result<Vec<_>, EngineError>>()?;
+        // A PDF claims the standards `[pdf]` names, as an export of it would.
+        #[cfg(feature = "typst")]
+        let standard = (format == crate::ExportFormat::Pdf)
+            .then(|| crate::protection::pdfa(&self.settings.pdf.standards))
+            .flatten();
+        #[cfg(not(feature = "typst"))]
+        let standard = None;
+        self.protection_of(texts.into_iter(), (format, standard))
+    }
+
+    /// The decision for pages with these texts, written in `format` (with the PDF/A standard
+    /// it claims, if any).
+    fn protection_of(
+        &self,
+        pages: impl Iterator<Item = (PathBuf, std::sync::Arc<str>)>,
+        (format, standard): (crate::ExportFormat, Option<String>),
+    ) -> Result<crate::ExportProtection, EngineError> {
+        let request = crate::protection::request(pages.map(|(path, text)| {
+            let page = crate::read_only::page_read_only(&path, &text);
+            (path, page)
+        }))
+        .map_err(|refusal| EngineError::ExportProtection(Box::new(refusal)))?;
+        let format = match (format, &standard) {
+            (crate::ExportFormat::Pdf, Some(_)) => crate::ExportFormat::PdfA,
+            _ => format,
+        };
+        crate::protection::resolve(request, format, standard)
+            .map_err(|refusal| EngineError::ExportProtection(Box::new(refusal)))
     }
 
     /// The pages to export and how they are arranged.
@@ -1216,6 +1303,7 @@ impl Engine {
         #[cfg(feature = "typst")]
         let replace = state.in_batch;
         let plan = state.plan.clone();
+        let protection = state.protection.clone();
         let written = Written {
             sources: plan.paths(),
             arranged: arrange(&plan, views),
@@ -1223,9 +1311,9 @@ impl Engine {
         };
         match request {
             #[cfg(feature = "typst")]
-            Request::Pdf(args) => self.write_pdf(job, args, written, replace, commit),
+            Request::Pdf(args) => self.write_pdf(job, args, written, replace, commit, protection),
             #[cfg(feature = "docx")]
-            Request::Docx(args) => self.write_docx(job, args, written, commit),
+            Request::Docx(args) => self.write_docx(job, args, written, commit, protection),
         }
     }
 
@@ -1278,6 +1366,7 @@ impl Engine {
         written: Written,
         replace: bool,
         commit: Commit,
+        protection: crate::ExportProtection,
     ) {
         let Written {
             sources,
@@ -1292,7 +1381,12 @@ impl Engine {
             adoc_pdf::Document::Book(book) => book.attributes.clone(),
         };
         let theme = self.export_theme(&args, &attributes, first_page.as_deref());
-        let options = self.export_options(&args, &attributes, first_page.as_deref());
+        let mut options = self.export_options(&args, &attributes, first_page.as_deref());
+        options.protection = if protection == crate::ExportProtection::Off {
+            adoc_pdf::PdfProtection::None
+        } else {
+            adoc_pdf::PdfProtection::RestrictModification
+        };
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
         let crashed = move |error| WorkerMessage::ExportFinished {
@@ -1347,6 +1441,7 @@ impl Engine {
             page_urls,
             date: None,
             access: self.file_access.clone(),
+            protection: adoc_pdf::PdfProtection::None,
         }
     }
 }
@@ -1592,7 +1687,14 @@ fn to_docx(arranged: Arranged) -> adoc_docx::DocxDocument {
 #[cfg(feature = "docx")]
 impl Engine {
     /// Writes the DOCX document on a worker.
-    fn write_docx(&mut self, job: u64, args: DocxExportArgs, written: Written, commit: Commit) {
+    fn write_docx(
+        &mut self,
+        job: u64,
+        args: DocxExportArgs,
+        written: Written,
+        commit: Commit,
+        protection: crate::ExportProtection,
+    ) {
         let Written {
             sources,
             arranged,
@@ -1625,6 +1727,13 @@ impl Engine {
                 crate::docx_look::ResolvedLook::None.report(),
             ),
         };
+        let mut options = options;
+        let asked = protection != crate::ExportProtection::Off;
+        options.protection = if asked {
+            adoc_docx::WordProtection::ReadOnly
+        } else {
+            adoc_docx::WordProtection::None
+        };
         let resolved = resolved.map(drop);
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
@@ -1635,6 +1744,17 @@ impl Engine {
         crate::worker::spawn(sender, crashed, move |sender| {
             let result = resolved
                 .and_then(|()| write_docx_file(&document, &options, &args.output, &commit))
+                // The writer says it wrote the restriction; a request is no proof of it.
+                .and_then(|report| {
+                    if asked && !report.protected {
+                        Err(
+                            "the document was asked to be read-only but was not written so"
+                                .to_owned(),
+                        )
+                    } else {
+                        Ok(report)
+                    }
+                })
                 .map(|report| {
                     let mut diagnostics: Vec<ExportDiagnostic> = report
                         .diagnostics
@@ -1650,12 +1770,14 @@ impl Engine {
                         .collect();
                     diagnostics.extend(failed);
                     diagnostics.extend(unread);
+                    let report_protected = report.protected;
                     ExportSummary {
                         output: args.output.clone(),
                         pages: sources.len(),
                         sources,
                         diagnostics,
                         look: Some(look),
+                        protected: report_protected,
                     }
                 });
             let _ = sender.send(WorkerMessage::ExportFinished { job, result });
@@ -1796,6 +1918,8 @@ impl Engine {
             // Images, diagrams, formulas and fonts are read as the PDF's are.
             access: self.file_access.clone(),
             fonts_named_only: !settings.embed_fonts,
+            // Set by the export from its decision, never from settings.
+            protection: adoc_docx::WordProtection::None,
         }
     }
 }
@@ -1869,6 +1993,10 @@ fn typeset(
             .map_err(|error| format!("{}: {error}", path.display()))?;
     }
     let output = adoc_pdf::compile(&typst, theme, options).map_err(|error| error.to_string())?;
+    // The bytes say they carry the restriction; a request is no proof of it.
+    if options.protection != adoc_pdf::PdfProtection::None && !output.protected {
+        return Err("the PDF was asked to be read-only but was not written so".to_owned());
+    }
     let failed = |error: std::io::Error| format!("{}: {error}", args.output.display());
     if replace {
         let folder = args
@@ -1907,6 +2035,7 @@ fn typeset(
         sources: Vec::new(),
         diagnostics,
         look: None,
+        protected: output.protected,
     })
 }
 

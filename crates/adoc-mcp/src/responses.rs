@@ -39,6 +39,16 @@ pub enum ErrorCode {
     ResultTooLarge,
     /// The server failed; the request may be fine.
     InternalError,
+    /// The pages ask for a read-only export (`:export-read-only:`) the format cannot carry.
+    ExportProtectionUnsupported,
+    /// Some pages ask for a read-only export and others do not, and the format restricts only
+    /// whole documents.
+    ExportProtectionMixed,
+    /// The pages ask for a read-only PDF and the export claims PDF/A, which forbids encryption.
+    ExportProtectionPdfaConflict,
+    /// A page's `:export-read-only:` has a value other than `true` or `false`, or cannot be
+    /// read without running the preprocessor.
+    ExportProtectionInvalidHeader,
 }
 
 /// Why a tool could not answer.
@@ -103,6 +113,17 @@ impl Failure {
     }
 }
 
+/// The code of a read-only export's refusal.
+pub fn protection_code(refusal: &adoc_engine::ProtectionRefusal) -> ErrorCode {
+    use adoc_engine::ProtectionRefusal;
+    match refusal {
+        ProtectionRefusal::InvalidHeader(_) => ErrorCode::ExportProtectionInvalidHeader,
+        ProtectionRefusal::UnsupportedFormat { .. } => ErrorCode::ExportProtectionUnsupported,
+        ProtectionRefusal::MixedDocument { .. } => ErrorCode::ExportProtectionMixed,
+        ProtectionRefusal::IncompatibleStandard { .. } => ErrorCode::ExportProtectionPdfaConflict,
+    }
+}
+
 impl From<EngineError> for Failure {
     fn from(error: EngineError) -> Self {
         let code = match &error {
@@ -120,6 +141,8 @@ impl From<EngineError> for Failure {
             | EngineError::SaveConflict { .. }
             | EngineError::GroupBlocked { .. } => ErrorCode::Conflict,
             EngineError::PreviewStale { .. } => ErrorCode::StalePreview,
+            // Read-only exports' own codes arrive with READONLY 5/5.
+            EngineError::ExportProtection(refusal) => protection_code(refusal),
         };
         Self::new(code, error.to_string())
     }

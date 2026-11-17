@@ -53,6 +53,9 @@ impl fmt::Display for PdfDiagnostic {
 pub struct PdfOutput {
     pub bytes: Vec<u8>,
     pub pages: usize,
+    /// The bytes carry the editing restriction asked for: read back from them, never taken
+    /// from the request.
+    pub protected: bool,
     /// Warnings: from the theme, the fonts, missing images and Typst.
     pub diagnostics: Vec<PdfDiagnostic>,
 }
@@ -118,9 +121,30 @@ pub fn compile(
     // Writing the PDF is memoised too (converted images, fonts, compressed streams), so the
     // cache is emptied after it, whether or not it succeeded.
     evict(Cache::Clear);
+    let mut bytes = written?;
+    let mut protected = false;
+    if options.protection == crate::PdfProtection::RestrictModification {
+        // Encrypted in memory, before the bytes reach any file.
+        let mut unavailable = None;
+        let encrypted = crate::protect::restrict_modification(&bytes, &mut |buffer| {
+            if let Err(error) = getrandom::fill(buffer) {
+                unavailable.get_or_insert(format!("no random bytes for the encryption: {error}"));
+            }
+        });
+        bytes = unavailable.map_or(encrypted, Err).map_err(|message| {
+            PdfError::Pdf(vec![PdfDiagnostic {
+                severity: PdfSeverity::Error,
+                message,
+                hints: Vec::new(),
+                source: None,
+            }])
+        })?;
+        protected = crate::restricts_modification(&bytes);
+    }
     Ok(PdfOutput {
-        bytes: written?,
+        bytes,
         pages: document.pages().len(),
+        protected,
         diagnostics,
     })
 }

@@ -471,6 +471,57 @@ pub fn assert_valid_package(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
         !embedded.is_empty(),
         "the settings say fonts are embedded only when one is"
     );
+    // The settings in `CT_Settings`' order, and document protection, when there is any,
+    // enforced and read-only, never a mere recommendation.
+    if !settings.is_empty() {
+        const ORDER: [&str; 6] = [
+            "embedTrueTypeFonts",
+            "documentProtection",
+            "evenAndOddHeaders",
+            "updateFields",
+            "footnotePr",
+            "compat",
+        ];
+        let parsed = roxmltree::Document::parse(settings).unwrap();
+        let children: Vec<roxmltree::Node> = parsed
+            .root_element()
+            .children()
+            .filter(roxmltree::Node::is_element)
+            .collect();
+        let positions: Vec<usize> = children
+            .iter()
+            .filter_map(|node| {
+                ORDER
+                    .iter()
+                    .position(|name| node.tag_name().name() == *name)
+            })
+            .collect();
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "the settings are out of the schema's order: {settings}"
+        );
+        for refused in ["writeProtection", "readOnlyRecommended"] {
+            assert!(
+                !children
+                    .iter()
+                    .any(|node| node.tag_name().name() == refused),
+                "w:{refused} only asks; protection is w:documentProtection"
+            );
+        }
+        let protections: Vec<&roxmltree::Node> = children
+            .iter()
+            .filter(|node| node.tag_name().name() == "documentProtection")
+            .collect();
+        assert!(protections.len() <= 1, "protection is set once");
+        if let Some(protection) = protections.first() {
+            assert_eq!(protection.attribute((W, "edit")), Some("readOnly"));
+            assert_eq!(
+                protection.attribute((W, "enforcement")),
+                Some("1"),
+                "the protection is enforced"
+            );
+        }
+    }
 
     // Every style used is defined, as the kind of style it is used as.
     let styles = roxmltree::Document::parse(text(&entries, "word/styles.xml")).unwrap();

@@ -62,6 +62,7 @@ A component version exports as a book, in this order.
 . A back cover.
 
 Unsaved edits are exported, because the export reads open buffers.
+A page can ask, in its own header, for its Word document to open read-only; see xref:read-only-exports.adoc[Read-only exports].
 The export selects the same pages as the PDF export.
 
 [#look]

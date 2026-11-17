@@ -7,6 +7,7 @@ mod export;
 mod fonts;
 pub mod highlight;
 mod icons;
+mod protect;
 mod running;
 /// asciidoctor-pdf themes, loaded by `adoc-theme`, which Word export reads too.
 pub use adoc_theme as theme;
@@ -21,6 +22,7 @@ pub use export::{
     PreviewPage, RenderedMath, TextRun, TypesetPage,
 };
 pub use fonts::missing_fonts;
+pub use protect::{restricts_modification, PdfProtection};
 
 /// The Typst literal writers, for the fuzz targets in `fuzz/`: not part of the API.
 #[cfg(feature = "fuzzing")]

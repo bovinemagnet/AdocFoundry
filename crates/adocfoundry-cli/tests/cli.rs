@@ -1598,3 +1598,106 @@ fn docx_look_choice_everywhere() {
     assert!(refused(&["pdf", page, "--template", "corporate"]).contains("unknown option"));
     assert!(refused(&["pdf", page, "--no-theme"]).contains("unknown option"));
 }
+
+/// Read-only exports, READONLY 5/5 (`docs/prd/PRD-AdocFoundry_READONLY.md` §10, test 22): the
+/// command line's exit status, message and preserved output for each case of §5.2.
+#[test]
+fn protection_cli_exit_codes() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("ws");
+    let pages = root.join("docs/modules/ROOT/pages");
+    std::fs::create_dir_all(&pages).unwrap();
+    std::fs::write(
+        root.join("docs/antora.yml"),
+        "name: docs\nversion: '1.0'\nnav:\n- modules/ROOT/nav.adoc\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("docs/modules/ROOT/nav.adoc"),
+        "* xref:a.adoc[]\n* xref:b.adoc[]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        pages.join("a.adoc"),
+        "= A\n:export-read-only: true\n\nText.\n",
+    )
+    .unwrap();
+    std::fs::write(pages.join("b.adoc"), "= B\n\nText.\n").unwrap();
+    std::fs::write(
+        pages.join("bad.adoc"),
+        "= Bad\n:export-read-only: maybe\n\nText.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join(".adocfoundry.toml"),
+        "[docx.profiles.manual]\ncomponent = \"1.0@docs\"\noutput = \"manual.docx\"\n",
+    )
+    .unwrap();
+    let run = |arguments: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+            .current_dir(&root)
+            .args(arguments)
+            .output()
+            .unwrap()
+    };
+    let a = "docs/modules/ROOT/pages/a.adoc";
+    let b = "docs/modules/ROOT/pages/b.adoc";
+
+    // Nothing asked: as before.
+    let output = run(&["docx", b, "--output", "b.docx"]);
+    assert!(output.status.success());
+    assert!(!stdout(&output).contains("protected"));
+    // A protected page to Word: read-only, and said.
+    let output = run(&["docx", a, "--output", "a.docx"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout(&output).contains("protected: read-only"),
+        "{}",
+        stdout(&output)
+    );
+
+    // Every refusal fails, with the page and line, and leaves what was there.
+    let refused = |arguments: &[&str], output: &str, says: &str| {
+        let file = root.join(output);
+        std::fs::write(&file, "kept").unwrap();
+        let mut all = arguments.to_vec();
+        all.extend(["--output", output]);
+        let result = run(&all);
+        assert_eq!(result.status.code(), Some(1), "{arguments:?}");
+        let stderr = String::from_utf8_lossy(&result.stderr).into_owned();
+        assert!(stderr.contains(says), "{arguments:?}: {stderr}");
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "kept",
+            "{arguments:?}"
+        );
+    };
+    refused(&["pdf", a], "a.pdf", "a.adoc:2");
+    refused(
+        &["pdf", a, "--standard", "pdf-a-2a"],
+        "archive.pdf",
+        "PDF/A-2a",
+    );
+    refused(&["docx", "docs"], "docs.docx", "export them separately");
+    refused(&["pdf", "docs"], "docs.pdf", "export them separately");
+    refused(
+        &["docx", "docs/modules/ROOT/pages/bad.adoc"],
+        "bad.docx",
+        "bad.adoc:2",
+    );
+    refused(
+        &["docx", "--profile", "manual"],
+        "manual.docx",
+        "export them separately",
+    );
+    // `--fail-on` keeps its meaning: a refusal fails whatever it says.
+    refused(
+        &["docx", "docs", "--fail-on", "none"],
+        "docs.docx",
+        "export them separately",
+    );
+}

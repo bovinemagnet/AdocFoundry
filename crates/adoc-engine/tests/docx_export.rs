@@ -1131,3 +1131,71 @@ fn docx_problems_are_located() {
     }
     adoc_docx::testing::assert_valid_package(&fs::read(&output).unwrap());
 }
+
+/// Read-only exports, READONLY 3/5 (`docs/prd/PRD-AdocFoundry_READONLY.md` §10, test 15): the
+/// reference book with every page asking to be read-only is enforced read-only, still passes
+/// every structural check (pictures, styles, footnotes, headers, footers and links included),
+/// and differs from the book exported editable only in its settings.
+#[test]
+fn docx_readonly_preserves_relationships() {
+    let directory = tempfile::tempdir().unwrap();
+    let (_root, mut engine) = reference_workspace(&directory.path().join("plain"));
+    let plain_output = directory.path().join("plain.docx");
+    let plain = engine
+        .export_docx_blocking(docx(manual(), &plain_output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(!plain.protected);
+
+    // Every page of version 2.0 asks, in its header, under its title.
+    let (root, _) = reference_workspace(&directory.path().join("protected"));
+    let mut pages = Vec::new();
+    for module in fs::read_dir(root.join("manual/modules")).unwrap() {
+        let folder = module.unwrap().path().join("pages");
+        for entry in fs::read_dir(&folder).into_iter().flatten() {
+            let path = entry.unwrap().path();
+            if path
+                .extension()
+                .is_some_and(|extension| extension == "adoc")
+            {
+                pages.push(path);
+            }
+        }
+    }
+    assert!(pages.len() > 3, "{pages:?}");
+    for page in &pages {
+        let text = fs::read_to_string(page).unwrap();
+        let (title, rest) = text.split_once('\n').unwrap();
+        fs::write(page, format!("{title}\n:export-read-only:\n{rest}")).unwrap();
+    }
+    let mut settings = Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    let output = directory.path().join("protected.docx");
+    let summary = engine
+        .export_docx_blocking(docx(manual(), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(summary.protected);
+    assert_eq!(summary.sources.len(), plain.sources.len());
+
+    let protected = adoc_docx::testing::assert_valid_package(&fs::read(&output).unwrap());
+    let plain = adoc_docx::testing::assert_valid_package(&fs::read(&plain_output).unwrap());
+    let settings = adoc_docx::testing::text(&protected, "word/settings.xml");
+    assert!(
+        settings.contains(r#"<w:documentProtection w:edit="readOnly" w:enforcement="1"/>"#),
+        "{settings}"
+    );
+    assert_eq!(
+        protected.keys().collect::<Vec<_>>(),
+        plain.keys().collect::<Vec<_>>()
+    );
+    for (name, data) in &protected {
+        if name != "word/settings.xml" {
+            assert!(
+                plain[name] == *data,
+                "{name} differs from the editable book's"
+            );
+        }
+    }
+}
