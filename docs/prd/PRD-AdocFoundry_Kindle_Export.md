@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft, 2026-11-16; not yet approved for implementation. K1 (§13) is a feasibility gate for everything after it, and the open decisions in §15 are settled in the work package they affect |
+| Status | Approved for implementation, 2026-11-17, after the K1 spike (`docs/qa/spike-kindle.md`): both formats are written in-house. The open decisions in §15 are settled in the work package they affect, and recorded in §16 |
 | Date | 2026-11-16 |
 | Scope | A native publication backend that writes reflowable Kindle books, `.kfx` (KF10) and `.azw3` (KF8), for a page, an Antora component version or selected navigation files, entirely in Rust, through the engine, CLI, desktop app and MCP server |
 | Repository | [bovinemagnet/AdocFoundry](https://github.com/bovinemagnet/AdocFoundry) |
@@ -121,7 +121,7 @@ KFX and AZW3 are files a Kindle reads. They are not KDP manuscript formats: Amaz
 - `adoc-kindle`'s own source is held to a forbidden-paths list in `xtask/src/layers.rs` (no process, no network), as `adoc-audit` and `adoc-impact` are.
 - A third-party crate is accepted only after a review of its licence, the toolchain it needs (the workspace's `rust-version` is 1.99), safety, maintenance, features and build size, and it must pass `cargo deny check`. The licence check covers test dependencies too.
 - No GPL or other copyleft dependency. [`boko`](https://github.com/zacharydenton/boko) reads and writes both formats but is GPL-3.0; it is not added to this repository, as a dependency or as a test dependency, without a separate, explicit licensing decision.
-- [`ebook-rs`](https://github.com/SV-stark/ebook-rs) (MIT, a KFX writer) and [`epub3-kindle`](https://github.com/cbz-tools/Epub3-Kindle) (MIT, an AZW3 writer) are **candidates only**. Both are young projects with few users, and what a README claims is not evidence. K1 builds a constrained prototype with each and tests the result on real readers before either is chosen. An in-house writer remains an option where a dependency falls short.
+- [`ebook-rs`](https://github.com/SV-stark/ebook-rs) (MIT, a KFX writer) and [`epub3-kindle`](https://github.com/cbz-tools/Epub3-Kindle) (MIT, an AZW3 writer) were the candidates. K1 built a prototype with each and chose in-house writers for both formats (§16). Their MIT source is a reference for the format facts, not a dependency.
 - A dependency may take structured XHTML or EPUB-like parts in memory, as long as the conversion stays in Rust and those parts are internal data. No `.epub` file is written.
 - The workspace forbids `unsafe` code, so an in-house writer is written without it.
 
@@ -259,7 +259,19 @@ Each is settled before work starts on the package it affects, and the outcome is
 
 ## 16. Implementation notes
 
-None yet. Each work package records here where the implementation departs from this document and how the open decisions of §15 were settled.
+Each work package records here where the implementation departs from this document and how the open decisions of §15 were settled.
+
+### K1 (#627): the spike
+
+The record is `docs/qa/spike-kindle.md`.
+
+- **Writer per format:** both in-house, in `adoc-kindle`, with no writer dependency. Both candidates produced real, repeatable containers, but each takes only a packaged EPUB. `epub3-kindle`'s `zip` dependency compiles three C libraries, and its build script compiles on every platform. `ebook-rs` brings 72 crates, `unsafe` code and string errors.
+- **Format facts:** KF8 comes from the MobileRead wiki's format documentation, checked against `epub3-kindle`'s MIT source. KFX comes from `ebook-rs`'s MIT source and the Amazon Ion binary specification. No GPL source is consulted; code derived from `ebook-rs` keeps its MIT notice.
+- **If KFX proves blocked:** it is not blocked, since a Rust writer exists and its container reads back. The decision returns to the maintainer only if the in-house KFX fails the reader checks in K8.
+- **Independent readback:** for AZW3, `mobi` 0.8.0 (MIT, a dev-dependency only), plus a KF8 index reader in `adoc-kindle`'s `testing` module. For KFX, an Ion and container reader in that module, written apart from the writer.
+- **Supported readers:** proposed in the spike record and confirmed by hand in K8. Nothing older than the Kindle Touch (4th generation).
+- **Budgets:** those of the DOCX exporter's large book, given in the spike record.
+- **Shared plan:** #619 is done (the DOCX epic), so K2 builds on the plan it extracted; the question of who extracts it does not arise.
 
 ## 17. References
 
