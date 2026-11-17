@@ -216,6 +216,7 @@ dependencies = [
  "adoc-graph",
  "adoc-impact",
  "adoc-index",
+ "adoc-kindle",
  "adoc-lang",
  "adoc-math",
  "adoc-model",
@@ -274,6 +275,18 @@ version = "0.11.0"
 dependencies = [
  "adoc-core",
  "adoc-parser",
+]
+
+[[package]]
+name = "adoc-kindle"
+version = "0.11.0"
+dependencies = [
+ "adoc-core",
+ "adoc-dom",
+ "adoc-kindle",
+ "adoc-render",
+ "sha2 0.10.9",
+ "tempfile",
 ]
 
 [[package]]

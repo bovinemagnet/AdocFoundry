@@ -1,0 +1,54 @@
+= adoc-kindle
+Paul Snow
+:revnumber: 0.0.0
+:description: Kindle export: an export mapped to one book model, for AZW3 (KF8) and KFX (KF10) writers, in-house, with no PDF or Typst in between.
+
+`adoc-kindle` turns a rendered view tree into a Kindle book.
+It is at layer L2, beside `adoc-render`, which it reads.
+The specification is `docs/prd/PRD-AdocFoundry_Kindle_Export.md` in the repository, and the spike's record is `docs/qa/spike-kindle.md`; neither is part of this site.
+The engine calls the crate behind its `kindle` feature (`export.kindle_page`, `export.kindle_component` and `Engine::export_kindle_blocking`).
+There is no CLI, app or MCP entry point for it yet (Kindle 7/9).
+
+== What it does
+
+The crate is given a `KindleDocument`, which is an article (a `KindlePage`) or a book (a `KindlePlan` of parts, headings and pages), and builds one `KindleBook` from it with `KindleBook::build`.
+Each writer then writes that one book, so the two formats never differ in content.
+It knows nothing of the engine, the workspace or a UI framework.
+
+The book holds:
+
+* chapters in reading order, with the ids `c1`, `c2` and so on, and their blocks and inlines;
+* a nested table of contents;
+* metadata: the title, authors, language, a stable `urn:uuid:` identifier derived from the title, authors and version, the publisher, the description, the date (from `revdate`) and the version (from `revnumber`);
+* assets.
+
+== Where it sits
+
+`adoc-kindle` is headless.
+It depends on `adoc-render`, an allowed same-layer pair listed in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`, and on `adoc-core`, `adoc-dom` and `sha2`.
+It must never build `adoc-pdf`, `adoc-docx`, Typst or the engine.
+It starts no process and uses no network: `cargo xtask layers` refuses `std::process`, `Command::new`, `std::net`, `TcpStream` and `UdpSocket` in its sources.
+It also checks that `adoc-kindle`, and the engine built with `--no-default-features --features kindle`, compile none of `adoc-pdf`, `adoc-docx`, `adoc-math` or Typst, which the test `kindle_builds_alone` holds.
+
+== Anchors and links
+
+* Anchors are generated, never taken from a path: `c<n>-a<m>` for an id a page defines, `c<n>-n<number>` for a footnote and `c<n>-r<number>` for its first mark.
+They are stable, and cannot collide across pages.
+* A cross reference becomes a link inside the book when its target page is in the book.
+Otherwise it is the page's published URL when a site URL is configured, and failing that it stays text with a warning at its source.
+
+== The API
+
+`write_kindle(&KindleDocument, KindleFormat, &KindleOptions)` writes the book in memory and checks the bytes before returning them.
+`KindleFormat::Azw3` is KF8, and `KindleFormat::Kfx` is KF10.
+Both are written from the same `KindleBook`, and a format is never written in place of another.
+A failure is a `KindleError`: `Unsupported`, `Invalid` or `TooLarge`.
+
+The AZW3 and KFX writers are to come (Kindle 3/9 and 4/9), so for now writing returns `KindleError::Unsupported`.
+
+== Related
+
+* xref:adoc-render.adoc[adoc-render], which builds the view tree
+* xref:adoc-dom.adoc[adoc-dom], for source spans
+* xref:adoc-docx.adoc[adoc-docx], the Word export, which this crate never builds
+* xref:index.adoc[Crates]

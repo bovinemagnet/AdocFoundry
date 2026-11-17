@@ -53,6 +53,8 @@ jobs:
       # The engine with DOCX and without Typst, as a front end exporting only DOCX builds it; the
       # workspace's own build turns every feature on together (#619).
       - run: cargo check -p adoc-engine --no-default-features --features docx
+      # And with Kindle export alone, which needs no Typst and no other exporter (#628).
+      - run: cargo check -p adoc-engine --no-default-features --features kindle
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
       - run: cargo xtask layers
       # The desktop entry and AppStream metadata the Linux packages and the Flatpak install, as

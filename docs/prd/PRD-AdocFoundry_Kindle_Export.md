@@ -273,6 +273,15 @@ The record is `docs/qa/spike-kindle.md`.
 - **Budgets:** those of the DOCX exporter's large book, given in the spike record.
 - **Shared plan:** #619 is done (the DOCX epic), so K2 builds on the plan it extracted; the question of who extracts it does not arise.
 
+### K2 (#628): the crate, the book and the engine's feature
+
+- `adoc-kindle` (L2, on `adoc-render`) maps a `KindleDocument` to a `KindleBook` (`KindleBook::build`) and writes it with `write_kindle(document, KindleFormat, options)`, in memory, the bytes checked before they are returned. The book is public in the crate's API, for the engine and the tests, and never shown to users.
+- Anchors are named before anything is mapped: `c<n>` for a chapter, `c<n>-a<m>` for an id a page defines, `c<n>-n<k>` and `c<n>-r<k>` for a footnote and its first mark.
+- The engine's `kindle` feature adds `Request::Kindle` to the shared pipeline, with `KindleExportArgs` (no other format's options), `export.kindle_page`, `export.kindle_component` and `export_kindle_blocking`. The output's extension must be the format's. A page asking for `:export-read-only:` is refused, since a Kindle book carries no restriction (`ExportFormat::Kindle`).
+- Cancellation: the writers work in memory on the export's worker, and a timed-out or abandoned export is dropped by the job's `Commit` before its file is renamed into place, as for PDF and DOCX. The writers need no cancellation of their own.
+- Departure: `kindle_and_pdf_select_the_same_pages` (§12 test 1) needs a writer to export with, so it lands with K3, the first writer. K2 writes nothing yet: `write_kindle` returns `KindleError::Unsupported` for both formats until K3 and K4.
+- Images, diagrams and formulas are exported as their descriptions or sources, with a warning, until K6 embeds them.
+
 ## 17. References
 
 - Amazon KDP, [supported eBook formats](https://kdp.amazon.com/en_US/help/topic/G200634390)

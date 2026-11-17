@@ -15,6 +15,8 @@ pub enum ExportFormat {
     PdfA,
     Docx,
     Html,
+    /// A Kindle book, AZW3 or KFX, which carries no editing restriction.
+    Kindle,
 }
 
 impl ExportFormat {
@@ -23,6 +25,7 @@ impl ExportFormat {
             Self::Pdf | Self::PdfA => "PDF",
             Self::Docx => "Word",
             Self::Html => "HTML",
+            Self::Kindle => "Kindle",
         }
     }
 
@@ -32,7 +35,7 @@ impl ExportFormat {
     fn protects_whole_document(self) -> bool {
         match self {
             Self::Docx => true,
-            Self::Pdf | Self::PdfA | Self::Html => false,
+            Self::Pdf | Self::PdfA | Self::Html | Self::Kindle => false,
         }
     }
 }

@@ -346,6 +346,9 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `Peek`, `E
 |`export.docx_page`, `export.docx_component`
 |Export the active page, or a component version, as an editable Word document (DOCX); see <<the-export-service>>. They are registered only with the `docx` feature.
 
+|`export.kindle_page`, `export.kindle_component`
+|Export the active page, or a component version, as a Kindle book (AZW3 or KFX); see <<the-export-service>>. They are registered only with the `kindle` feature.
+
 |`export.docx_profile`
 |Export a `[docx.profiles.<name>]` Word profile, with `CommandArgs::Profile`; see <<the-export-service>>.
 
@@ -548,11 +551,11 @@ Only the active page has a shared parse, so the spell check of a background page
 [[the-export-service]]
 == The export service
 
-The engine exports a page, or a component version in navigation order, to PDF or to DOCX, through one pipeline in `export.rs`.
+The engine exports a page, or a component version in navigation order, to PDF, to DOCX or to a Kindle book, through one pipeline in `export.rs`.
 `export.pdf_page` and `export.pdf_component` take `CommandArgs::Export(ExportArgs)`, with an `ExportTarget`, the output path, an optional theme, the standards, a fonts directory and an optional path for the generated Typst.
 `export.docx_page` ("Export Page to Word…") and `export.docx_component` ("Export Component to Word…") take `CommandArgs::ExportDocx(DocxExportArgs)`, which has a `target`, an `output` and `attributes`, and nothing of PDF's: no theme, standards, fonts directory or Typst path.
 
-A job holds a `Request`, PDF or DOCX, over the same plan.
+A job holds a `Request`, PDF, DOCX or Kindle, over the same plan.
 The plan is an article, or a book made from the component version's navigation (or the given navigation files, in their order), with the start page as a preface when the navigation does not list it, and each page once.
 The pages are parsed on a worker from their open buffers or files, their views are built on the engine thread, and their diagrams are rendered.
 Once no diagram is pending, `arrange` puts the views in the plan's order, and only then is the document made for its format.
@@ -562,6 +565,13 @@ The result arrives as `EngineEvent::ExportFinished`, with an `ExportSummary` (th
 `sources` lists the AsciiDoc pages exported, in order, and is empty for HTML.
 For DOCX, the page count is the number of AsciiDoc pages, since Word lays out its own pages.
 The entry points are the app's three Word commands (`export.docx_page`, `export.docx_component` and `export.docx_profile`), `adocfoundry-cli docx` through `export_docx_blocking`, and the MCP `export_docx` tool; their acceptance tests are `docx_cli_exports_and_gates` (`crates/adocfoundry-cli/tests/cli.rs`), `docx_mcp_export_is_write_gated` (`crates/adoc-mcp/tests/docx.rs`) and `docx_app_exports_through_engine` (`crates/adocfoundry/src/ui_tests.rs`).
+
+`export.kindle_page` ("Export Page to Kindle…") and `export.kindle_component` ("Export Component to Kindle…") take `CommandArgs::ExportKindle(KindleExportArgs)`, which has a `target`, a `format` (`KindleFormat`), an `output`, `attributes`, and an optional `title`, `creator`, `language` and `identifier`.
+`Engine::export_kindle_blocking` serves the CLI.
+A Kindle output's extension must be the format's, `.azw3` or `.kfx`, and a folder or a link there is refused.
+The book is written to a temporary file beside the output and renamed over it through the job's commit, so a failed export leaves what was there.
+A page that asks for `:export-read-only:` is refused for Kindle, since `ExportFormat::Kindle` carries no restriction.
+The writers are to come, so for now an export reports `KindleError::Unsupported`; front ends get Kindle export in Kindle 7/9.
 
 A blocking export that times out abandons its job through a per-job commit lock (`Commit`), which each writer takes to rename its file over the output.
 A timed-out export therefore never replaces the output afterwards, and one whose file was already in place reports success.
