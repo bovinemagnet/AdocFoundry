@@ -1,0 +1,9 @@
+# The Kindle reference book's settings: the defaults every export of it takes, and a profile.
+[kindle]
+publisher = "AdocFoundry"
+language = "en-GB"
+
+[kindle.profiles.handbook]
+component = "2.0@manual"
+format = "kfx"
+output = "build/handbook.kfx"

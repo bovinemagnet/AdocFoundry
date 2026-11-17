@@ -410,3 +410,216 @@ component = "nowhere"
     assert!(engine.kindle_profile_export_args("missing").is_err());
     assert!(engine.kindle_profile_export_args("wrong").is_err());
 }
+
+/// The reference book: the Word reference book with the Kindle fixture laid over it.
+fn kindle_reference(folder: &Path) -> (PathBuf, Engine) {
+    let root = folder.join("reference");
+    copy_tree(&fixture("docx/reference"), &root);
+    copy_tree(&fixture("kindle/reference"), &root);
+    let mut settings = Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    (root, engine)
+}
+
+fn manual() -> ExportTarget {
+    ExportTarget::Component {
+        name: "manual".to_owned(),
+        version: Some("2.0".to_owned()),
+    }
+}
+
+/// PRD §12 test 20: a versioned book of two components with nested partials, footnotes,
+/// Japanese and Greek text, code, tables, formulas, a cover, pictures, a missing picture, a
+/// malformed page, page aliases and an id two pages define passes every structural check in
+/// both formats, read back by the independent readers.
+#[test]
+fn kindle_reference_book_is_complete() {
+    let directory = tempfile::tempdir().unwrap();
+    let (root, mut engine) = kindle_reference(directory.path());
+    let relative = |paths: &[PathBuf]| -> Vec<String> {
+        paths
+            .iter()
+            .map(|path| {
+                path.strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect()
+    };
+    let expected_pages = [
+        "manual/modules/ROOT/pages/index.adoc",
+        "manual/modules/ROOT/pages/install.adoc",
+        "manual/modules/ROOT/pages/tables.adoc",
+        "manual/modules/ROOT/pages/media.adoc",
+        "manual/modules/ROOT/pages/links.adoc",
+        "manual/modules/ROOT/pages/extras.adoc",
+        "manual/modules/admin/pages/security.adoc",
+    ];
+    for format in [KindleFormat::Azw3, KindleFormat::Kfx] {
+        let output = directory
+            .path()
+            .join(format!("manual.{}", format.extension()));
+        let summary = engine
+            .export_kindle_blocking(
+                KindleExportArgs::new(manual(), format, output.clone()),
+                WAIT,
+            )
+            .unwrap_or_else(|error| panic!("{format:?}: {error}"));
+        // Version 2.0's pages, in navigation order, the start page first; nothing of 1.0's or
+        // of the other component's.
+        assert_eq!(relative(&summary.sources), expected_pages);
+        // The reference out of the book and the missing picture warn where they are written.
+        let warnings: Vec<String> = summary
+            .diagnostics
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let at = |needle: &str| {
+            summary
+                .diagnostics
+                .iter()
+                .find(|diagnostic| diagnostic.message.contains(needle))
+                .and_then(|diagnostic| diagnostic.location.clone())
+                .unwrap_or_else(|| panic!("{needle} in {warnings:?}"))
+        };
+        assert_eq!(
+            at("api::index.adoc"),
+            (root.join("manual/modules/ROOT/pages/links.adoc"), 4)
+        );
+        assert_eq!(
+            at("missing.png"),
+            (root.join("manual/modules/ROOT/pages/extras.adoc"), 12)
+        );
+        let bytes = fs::read(&output).unwrap();
+        let text = match format {
+            KindleFormat::Azw3 => {
+                let read = adoc_kindle::testing::read_azw3(&bytes).unwrap();
+                assert_eq!(read.version, 8);
+                assert_eq!(read.title, "The Manual");
+                assert_eq!(read.exth_text(100), ["Paul Snow"]);
+                assert_eq!(read.exth_text(101), ["AdocFoundry"]);
+                assert_eq!(read.exth_text(524), ["en-GB"]);
+                // A chapter a page, and a part for the administration guide's titled list.
+                assert!(
+                    read.files.len() >= expected_pages.len(),
+                    "{}",
+                    read.files.len()
+                );
+                // Every link lands on the start of an element: an anchor's, or a chapter's
+                // first; every entry of the contents on a heading.
+                for (_, href) in read.hrefs() {
+                    if href.starts_with("kindle:pos") {
+                        let (_, rest) = read.follow(&href).unwrap_or_else(|| panic!("{href}"));
+                        assert!(rest.starts_with('<') && !rest.starts_with("</"), "{href}");
+                    }
+                }
+                for entry in &read.ncx {
+                    let (file, at) = read.position(entry.fid, entry.offset).unwrap();
+                    assert!(read.files[file][at..].starts_with("<h"), "{}", entry.label);
+                }
+                // The cover, the pictures, the drawn diagram and formulas.
+                let cover = read.exth_number(201).unwrap() as usize;
+                assert_eq!(
+                    read.images[cover],
+                    fs::read(root.join("manual/modules/ROOT/images/cover.png")).unwrap()
+                );
+                assert!(read.images.len() >= 5, "{}", read.images.len());
+                read.plain_text()
+            }
+            KindleFormat::Kfx => {
+                let read = adoc_kindle::testing::read_kfx(&bytes).unwrap();
+                assert_eq!(read.metadata("title").as_deref(), Some("The Manual"));
+                assert_eq!(read.metadata("publisher").as_deref(), Some("AdocFoundry"));
+                let chapters = read.chapters().unwrap();
+                assert_eq!(chapters.len(), read.reading_order().len());
+                let mut eids = std::collections::HashSet::new();
+                for block in chapters.iter().flatten() {
+                    eids.insert(block.eid);
+                    eids.extend(block.rows.iter().flatten().map(|cell| cell.eid));
+                }
+                for block in chapters.iter().flatten() {
+                    for (_, _, anchor) in &block.links {
+                        if let Ok((eid, _)) = read.anchor(*anchor).unwrap() {
+                            assert!(eids.contains(&eid));
+                        }
+                    }
+                }
+                for (label, _, eid, _) in read.toc() {
+                    assert!(eids.contains(&eid), "{label}");
+                }
+                let pictures = chapters
+                    .iter()
+                    .flatten()
+                    .filter(|block| block.kind == "image")
+                    .count();
+                assert!(pictures >= 4, "{pictures}");
+                chapters
+                    .iter()
+                    .flatten()
+                    .flat_map(|block| {
+                        std::iter::once(block.text.clone())
+                            .chain(block.rows.iter().flatten().map(|cell| cell.text.clone()))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+        };
+        // What the pages hold, partials included, and nothing of the other version or
+        // component.
+        for wanted in [
+            "日本語のテキストを読む",
+            "Καλημέρα",
+            "A missing picture",
+            "never closed",
+        ] {
+            assert!(text.contains(wanted), "{format:?}: {wanted}");
+        }
+        for absent in ["OLD-VERSION-MARKER", "API-COMPONENT-MARKER"] {
+            assert!(!text.contains(absent), "{format:?}: {absent}");
+        }
+    }
+    // The profile writes the same book as the export it names.
+    engine
+        .export_kindle_blocking(engine.kindle_profile_export_args("handbook").unwrap(), WAIT)
+        .unwrap();
+    assert_eq!(
+        fs::read(root.join("build/handbook.kfx")).unwrap(),
+        fs::read(directory.path().join("manual.kfx")).unwrap()
+    );
+}
+
+/// PRD §12 test 21: two exports of one input are the same bytes, in both formats, from one
+/// engine or two, wherever the workspace is.
+#[test]
+fn kindle_output_is_deterministic() {
+    let directory = tempfile::tempdir().unwrap();
+    let (_, mut first) = kindle_reference(&directory.path().join("a"));
+    let (_, mut second) = kindle_reference(&directory.path().join("b/elsewhere"));
+    for format in [KindleFormat::Azw3, KindleFormat::Kfx] {
+        let export = |engine: &mut Engine, name: &str| {
+            let output = directory
+                .path()
+                .join(format!("{name}.{}", format.extension()));
+            engine
+                .export_kindle_blocking(
+                    KindleExportArgs::new(manual(), format, output.clone()),
+                    WAIT,
+                )
+                .unwrap_or_else(|error| panic!("{error}"));
+            fs::read(output).unwrap()
+        };
+        let once = export(&mut first, "once");
+        assert!(
+            once == export(&mut first, "twice"),
+            "{format:?}: the same engine twice"
+        );
+        assert!(
+            once == export(&mut second, "moved"),
+            "{format:?}: another engine and folder"
+        );
+    }
+}

@@ -68,7 +68,7 @@ Devices older than the Kindle Touch (4th generation) are out of scope, as they a
 
 ## Resource budgets (for K6 and K8)
 
-These follow the DOCX exporter's (`docx_large_book_is_bounded`): a book of 600 pages, each with a section, a list, a code block and a table, plus 50 images, exported in each format by a debug build on a CI runner, within 90 s, with the command returning within 3 s, no pump longer than 3 s and the process's peak memory under 2 GB. Each embedded image is limited to 16 MiB and 40 megapixels, and a book to 256 MiB of embedded bytes. K8 measures against these and records what it finds.
+These follow the DOCX exporter's (`docx_large_book_is_bounded`): a book of 600 pages, each with a section, a list, a code block and a table, plus 50 images, exported in each format by a debug build on a CI runner, within 90 s, with the command returning within 3 s, no pump longer than 3 s and the process's peak memory under 2 GB. Each embedded image is limited to 16 MiB and 40 megapixels, and a book to 256 MiB of embedded bytes. K8 measured a debug build on a 2024 laptop: AZW3 in 3.6 s and KFX in 4.0 s (`kindle_large_book_is_bounded`), well inside the budgets.
 
 ## Pending manual checks
 

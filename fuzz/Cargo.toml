@@ -17,10 +17,12 @@ adoc-core = { path = "../crates/adoc-core" }
 adoc-dom = { path = "../crates/adoc-dom" }
 # Only for `resource_id_string`, the writer of resource ids the MCP server uses.
 adoc-engine = { path = "../crates/adoc-engine", default-features = false }
+adoc-kindle = { path = "../crates/adoc-kindle", features = ["test-support"] }
 adoc-math = { path = "../crates/adoc-math" }
 adoc-model = { path = "../crates/adoc-model" }
 adoc-parser = { path = "../crates/adoc-parser" }
 adoc-pdf = { path = "../crates/adoc-pdf", features = ["fuzzing"] }
+adoc-render = { path = "../crates/adoc-render" }
 libfuzzer-sys = "=0.4.13"
 # At the versions the main workspace pins.
 typst-library = "=0.15.1"
@@ -70,6 +72,13 @@ bench = false
 [[bin]]
 name = "math_is_safe"
 path = "fuzz_targets/math_is_safe.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kindle_write"
+path = "fuzz_targets/kindle_write.rs"
 test = false
 doc = false
 bench = false

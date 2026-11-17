@@ -339,6 +339,17 @@ The record is `docs/qa/spike-kindle.md`.
 - **The MCP server:** `export_kindle`, a write tool, takes a `path`, `component` or `profile`, an optional `format` and an `output` inside the roots, not a link, not a page, of the format's extension. It answers with the format written.
 - Tests: `kindle_profiles_resolve_and_validate` and `kindle_failed_export_keeps_existing_output` (engine), `kindle_cli_exports_and_gates` (CLI), `kindle_mcp_export_is_write_gated` (MCP) and `kindle_app_exports_through_engine` (the app). The manual checks are `docs/qa/kindle.md`.
 
+### K8 (#634): conformance, performance and documentation
+
+- `kindle_reference_book_is_complete` exports `tests/fixtures/docx/reference` with `tests/fixtures/kindle/reference` laid over it, in both formats. The overlay adds `[kindle]` settings, a profile and an extra page with Japanese and Greek text, an id another page defines too, page aliases, a missing picture and a listing never closed. Each book is read back by the independent readers: the pages of version 2.0 only, in order; links on elements' starts; contents entries on headings; the cover, pictures, diagram and formulas; the warnings located. The profile writes the same bytes.
+- `kindle_output_is_deterministic`: the same bytes from one engine twice, and from another engine with the workspace in another folder.
+- `kindle_large_book_is_bounded` (its own test binary, `tests/kindle_large.rs`): 600 pages of ten sections each, with 50 distinct pictures, in both formats. On a 2024 laptop in a debug build: AZW3 in 3.6 s and KFX in 4.0 s, the command returning in 0.34 s and no pump over 0.16 s, against the budgets of 90 s, 3 s and 3 s. Peak memory is checked where Linux reports it, against 2 GB.
+- `kindle_is_in_process` (`xtask`): `adoc-kindle`'s sources name no process or network path, and every package it builds may be used under a licence that is not copyleft. An `OR` choice that may be taken without copyleft is allowed, as `cargo deny` allows it. `cargo xtask layers` runs both checks.
+- Fuzzing: `fuzz/fuzz_targets/kindle_write.rs` writes any page in both formats, reads each back and follows every link. It is in the weekly fuzz workflow and seeded from the fixtures' pages. It ran 56,899 inputs in two minutes without a failure.
+- Compile size: the release binaries gain `adoc-kindle` and nothing else. `resvg` and `sha1_smol` were in the tree already. `mobi` and its encoding tables are dev-dependencies only. The crate is about 6,400 lines with its test readers.
+- The release smoke test (`packaging/smoke-test.py`) exports a page as AZW3 and as KFX with the packaged `adocfoundry-cli`, and checks each file's signature.
+- What tests cannot show remains in `docs/qa/kindle.md`, not yet run: the books on a Kindle e-reader and a Kindle app. Until then neither format is called ready, and the epic stays open.
+
 ## 17. References
 
 - Amazon KDP, [supported eBook formats](https://kdp.amazon.com/en_US/help/topic/G200634390)
