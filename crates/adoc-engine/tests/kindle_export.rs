@@ -377,9 +377,10 @@ component = "nowhere"
     let args = engine.kindle_profile_export_args("admin").unwrap();
     let summary = engine.export_kindle_blocking(args, WAIT).unwrap();
     assert_eq!(summary.sources[0], page(&root, "ROOT/pages/index.adoc"));
+    let admin = root.join("guide/modules/admin");
     assert!(summary.sources[1..]
         .iter()
-        .all(|source| source.to_string_lossy().contains("/admin/")));
+        .all(|source| source.starts_with(&admin)));
 
     // Through the command, as the app and MCP server export a profile.
     fs::remove_file(root.join("build/install.azw3")).unwrap();

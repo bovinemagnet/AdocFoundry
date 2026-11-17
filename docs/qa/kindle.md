@@ -45,6 +45,7 @@ Record each reader's model and firmware or app version beside its result.
 - [ ] The picture, the diagram and the formula show, fitted to the screen, and the formula's alternative text is its source.
 - [ ] Japanese text shows, and search finds a word of it.
 - [ ] Highlighting, notes and the dictionary work on the text.
+- [ ] For AZW3, going to a chapter from the table of contents, and paging back and forth across chapters, is as quick as in a KindleGen book. The writer leaves out the trailing byte sequences that index the table of contents by text record, which `epub3-kindle` writes (PRD §16, K3). If a Kindle refuses the book or navigates it badly, they are added.
 
 ## Results
 
