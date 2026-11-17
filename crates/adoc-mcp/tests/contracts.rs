@@ -47,7 +47,7 @@ const EXISTING_READ_TOOLS: [&str; 10] = [
     "symbols",
 ];
 
-const WRITE_TOOLS: [&str; 10] = [
+const WRITE_TOOLS: [&str; 11] = [
     "apply_changes",
     "create_module",
     "create_page",
@@ -55,6 +55,7 @@ const WRITE_TOOLS: [&str; 10] = [
     "create_partial",
     "edit_page",
     "export_docx",
+    "export_kindle",
     "export_pdf",
     "rename_page",
     "revert_page",

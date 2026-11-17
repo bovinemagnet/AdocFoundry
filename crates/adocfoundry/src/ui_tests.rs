@@ -1571,6 +1571,93 @@ fn export_component_exports_the_active_page_s_component_with_unsaved_edits(
     assert!(!std::fs::read_to_string(&page).unwrap().contains("unsaved"));
 }
 
+/// The Kindle export PRD, §12 test 18: Export Component to Kindle… offers the formats, writes
+/// through the save dialog the book the engine writes in the one chosen, reports it, and opens
+/// no preview of it.
+#[gpui::test]
+fn kindle_app_exports_through_engine(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("book"));
+    copy_dir(&fixture("pdf/book"), &root);
+    let page = root.join("guide/modules/ROOT/pages/use.adoc");
+    let mut settings = Settings::default();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    let events = engine.subscribe();
+    let app = app_with(engine, cx);
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx.new(|cx| {
+            WorkspaceView::new(
+                app.clone(),
+                Some(root.clone()),
+                vec![page.clone()],
+                window,
+                cx,
+            )
+        });
+        Root::new(view, window, cx)
+    });
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| {
+            app.read(cx).engine.active().is_some() && !app.read(cx).engine.is_indexing()
+        })
+    }));
+    let tabs = cx.update(|_, cx| app.read(cx).engine.tab_order().len());
+
+    // The format picker, AZW3 first by default: choose KFX.
+    cx.dispatch_action(crate::editor::bindings::ExportComponentKindle);
+    cx.run_until_parked();
+    cx.simulate_input("KFX");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    let output = directory.path().join("guide.kfx");
+    let summary =
+        finish_export(&app, &events, &output, &mut cx).unwrap_or_else(|error| panic!("{error}"));
+    let from_app = std::fs::read(&output).unwrap();
+    assert!(from_app.starts_with(b"CONT"));
+    assert!(summary.sources.len() >= 8, "{:?}", summary.sources);
+    let message = crate::workspace_view::export_message(&output, &Ok(summary.clone()));
+    assert!(
+        message.starts_with(&format!(
+            "Exported guide.kfx ({} AsciiDoc pages)",
+            summary.pages
+        )),
+        "{message}"
+    );
+    assert_eq!(
+        crate::workspace_view::export_message(&output, &Err("no space".to_owned())),
+        "Kindle export failed: no space"
+    );
+
+    // What the engine writes for the same component, and no tab or preview opened for it.
+    let from_engine = directory.path().join("engine.kfx");
+    cx.update(|_, cx| {
+        app.update(cx, |app, _| {
+            let (name, version) = ("guide".to_owned(), Some("1.0".to_owned()));
+            app.engine
+                .export_kindle_blocking(
+                    adoc_engine::KindleExportArgs::new(
+                        adoc_engine::ExportTarget::Component { name, version },
+                        adoc_engine::KindleFormat::Kfx,
+                        from_engine.clone(),
+                    ),
+                    std::time::Duration::from_secs(120),
+                )
+                .unwrap();
+        })
+    });
+    assert!(
+        std::fs::read(&from_engine).unwrap() == from_app,
+        "the app's book differs from the engine's"
+    );
+    assert_eq!(
+        cx.update(|_, cx| app.read(cx).engine.tab_order().len()),
+        tabs
+    );
+}
+
 /// The DOCX export PRD, §10 test 17: Export Component to Word… writes, through the save
 /// dialog, the navigation-ordered book the engine writes, and opens no preview of it.
 #[gpui::test]

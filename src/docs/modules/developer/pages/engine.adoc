@@ -349,6 +349,9 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `Peek`, `E
 |`export.kindle_page`, `export.kindle_component`
 |Export the active page, or a component version, as a Kindle book (AZW3 or KFX); see <<the-export-service>>. They are registered only with the `kindle` feature.
 
+|`export.kindle_profile`
+|Export a `[kindle.profiles.<name>]` Kindle profile, with `CommandArgs::Profile`; see <<the-export-service>>.
+
 |`export.docx_profile`
 |Export a `[docx.profiles.<name>]` Word profile, with `CommandArgs::Profile`; see <<the-export-service>>.
 
@@ -571,7 +574,9 @@ The entry points are the app's three Word commands (`export.docx_page`, `export.
 A Kindle output's extension must be the format's, `.azw3` or `.kfx`, and a folder or a link there is refused.
 The book is written to a temporary file beside the output and renamed over it through the job's commit, so a failed export leaves what was there.
 A page that asks for `:export-read-only:` is refused for Kindle, since `ExportFormat::Kindle` carries no restriction.
-Both writers exist, AZW3 and KFX; front ends get Kindle export in Kindle 7/9.
+Both writers exist, AZW3 and KFX.
+The entry points are the app's Export Page to Kindle…, Export Component to Kindle… and Export Kindle Profile… commands, `adocfoundry-cli kindle` through `export_kindle_blocking`, and the MCP `export_kindle` tool.
+`[kindle]` is read by `kindle_settings.rs` (its module documentation is the schema) and `[kindle.profiles.<name>]` is a Kindle publication; nothing of `[pdf]` or `[docx]` is read for Kindle.
 
 A blocking export that times out abandons its job through a per-job commit lock (`Commit`), which each writer takes to rename its file over the output.
 A timed-out export therefore never replaces the output afterwards, and one whose file was already in place reports success.

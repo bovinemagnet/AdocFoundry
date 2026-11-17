@@ -18,6 +18,10 @@
 //!     [--output <file.docx>] [--fail-on none|warning|error]
 //! adocfoundry-cli docx --profile <name> [<root>] [--theme … | --template … | --no-theme]
 //!     [--output <file.docx>] [--fail-on none|warning|error]
+//! adocfoundry-cli kindle <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
+//!     [--format azw3|kfx] [--output <file.azw3|file.kfx>] [--fail-on none|warning|error]
+//! adocfoundry-cli kindle --profile <name> [<root>] [--format azw3|kfx]
+//!     [--output <file.azw3|file.kfx>] [--fail-on none|warning|error]
 //! adocfoundry-cli git-status <root> [--format text|json]
 //! adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--ages]
 //!     [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
@@ -39,7 +43,8 @@ use adoc_engine::{
     pdf_standard,
     report::{display_path, severity_name, ChangedFile},
     CommandArgs, CommandOutcome, DocxExportArgs, Engine, EngineError, ExportArgs, ExportSummary,
-    ExportTarget, GraphFilter, GraphScope, LookChoice, Settings, SvgStyle,
+    ExportTarget, GraphFilter, GraphScope, KindleExportArgs, KindleFormat, LookChoice, Settings,
+    SvgStyle,
 };
 
 const USAGE: &str = "usage:
@@ -60,6 +65,10 @@ const USAGE: &str = "usage:
       [--output <file.docx>] [--fail-on none|warning|error]
   adocfoundry-cli docx --profile <name> [<root>] [--theme … | --template … | --no-theme]
       [--output <file.docx>] [--fail-on none|warning|error]
+  adocfoundry-cli kindle <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
+      [--format azw3|kfx] [--output <file.azw3|file.kfx>] [--fail-on none|warning|error]
+  adocfoundry-cli kindle --profile <name> [<root>] [--format azw3|kfx]
+      [--output <file.azw3|file.kfx>] [--fail-on none|warning|error]
   adocfoundry-cli git-status <root> [--format text|json]
   adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--ages]
       [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
@@ -167,6 +176,7 @@ fn run(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         "render" => render(rest, out),
         "pdf" => pdf(rest, out),
         "docx" => docx(rest, out),
+        "kindle" => kindle(rest, out),
         "git-status" => git_status(rest, out),
         "graph" => graph(rest, out),
         "doctor" => doctor(rest, out),
@@ -1218,6 +1228,77 @@ fn docx(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         look,
     };
     let result = engine.export_docx_blocking(args, INDEX_TIMEOUT);
+    report(result, &output, &root, fail_on, out, true)
+}
+
+/// Exports a page, or a component version as a book, to a Kindle book: AZW3 or KFX, from
+/// `--format`, else the output's extension, else `[kindle] format`. A format is never written
+/// under the other's extension.
+fn kindle(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+    let (positional, options) = parse_options(
+        arguments,
+        &[
+            "root",
+            "component",
+            "output",
+            "profile",
+            "fail-on",
+            "format",
+        ],
+    )?;
+    let fail_on = fail_on(&options)?;
+    let asked = option(&options, "format")
+        .map(|name| {
+            KindleFormat::from_name(name).ok_or_else(|| format!("unknown Kindle format `{name}`"))
+        })
+        .transpose()?;
+    let output_format = option(&options, "output").map(|output| {
+        Path::new(output)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .and_then(KindleFormat::from_name)
+            .ok_or_else(|| format!("{output} is not a .azw3 or .kfx file"))
+    });
+    let named = match (asked, output_format.transpose()?) {
+        (Some(asked), Some(named)) if asked != named => {
+            return Err(format!(
+                "--format {} writes a .{} file",
+                asked.extension(),
+                asked.extension()
+            ))
+        }
+        (asked, named) => asked.or(named),
+    };
+    if let Some(profile) = option(&options, "profile") {
+        let root = profile_root(&positional, &options)?;
+        let mut engine = open_engine(&root, false)?;
+        let mut args = engine
+            .kindle_profile_export_args(profile)
+            .map_err(|error| error.to_string())?;
+        if let Some(format) = named {
+            args.format = format;
+            args.output = args.output.with_extension(format.extension());
+        }
+        if let Some(output) = option(&options, "output") {
+            args.output = PathBuf::from(output);
+        }
+        let output = args.output.clone();
+        let result = engine.export_kindle_blocking(args, INDEX_TIMEOUT);
+        return report(result, &output, &root, fail_on, out, true);
+    }
+    let [target] = positional.as_slice() else {
+        return Err(USAGE.to_owned());
+    };
+    let guess = named.unwrap_or_default();
+    let (mut engine, root, target, default_output) =
+        open_target(target, &options, guess.extension())?;
+    let format = named.unwrap_or(engine.settings().kindle.format);
+    let output = option(&options, "output").map_or_else(
+        || default_output.with_extension(format.extension()),
+        PathBuf::from,
+    );
+    let args = KindleExportArgs::new(target, format, output.clone());
+    let result = engine.export_kindle_blocking(args, INDEX_TIMEOUT);
     report(result, &output, &root, fail_on, out, true)
 }
 

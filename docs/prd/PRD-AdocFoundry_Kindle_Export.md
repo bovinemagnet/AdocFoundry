@@ -328,6 +328,17 @@ The record is `docs/qa/spike-kindle.md`.
 - Embedded fonts: none. Both formats leave the font to the reader (§6.3), so there is no font licence to check.
 - Tests: `kindle_media_is_embedded` and `kindle_bad_assets_are_reported` in `crates/adoc-kindle/tests/media.rs`.
 
+### K7 (#633): settings, profiles and the front ends
+
+- `[kindle]` (`KindleSettings`, built without the `kindle` feature too) holds the default `format` (AZW3 unless set: more Kindles read it) and the metadata defaults `title`, `creator`, `language`, `identifier`, `publisher` and `cover`. `[kindle.profiles.<name>]` (`KindleProfile`) names its content with exactly one of `page`, `component` or `nav`, through the PDF and Word profiles' shared helpers, plus `format`, `output`, `attributes`, the metadata and `cover`. An output whose extension is not a Kindle book's, or disagrees with `format`, is refused when the settings are read.
+- **Profile sharing (§15):** as for Word, a Kindle profile repeats its content rather than naming another format's profile. Nothing is read from `[pdf]` or `[docx]`.
+- The engine adds `export.kindle_profile` (Export Kindle Profile…), `Engine::kindle_profile_export_args`, `kindle_profile_problems` and `kindle_profiles`. A profile's output must be inside the workspace, and its format comes from its output's extension, else its `format`, else `[kindle] format`. An export's own metadata wins over `[kindle]`'s, and `[kindle]`'s over the document's.
+- **Which builds include it (§15):** the app, the CLI and the MCP server name the engine's `kindle` feature; `adoc-ls` does not, and `cargo xtask layers` keeps it out of its build.
+- **The app:** Export Page to Kindle… and Export Component to Kindle… first offer the format (the default first), then the save dialog, then report as the other exports do. No preview is opened.
+- **The CLI:** `adocfoundry-cli kindle` takes the format from `--format`, else the output's extension, else `[kindle] format`. A format and an output that disagree are refused. `--fail-on` gates as for PDF and Word.
+- **The MCP server:** `export_kindle`, a write tool, takes a `path`, `component` or `profile`, an optional `format` and an `output` inside the roots, not a link, not a page, of the format's extension. It answers with the format written.
+- Tests: `kindle_profiles_resolve_and_validate` and `kindle_failed_export_keeps_existing_output` (engine), `kindle_cli_exports_and_gates` (CLI), `kindle_mcp_export_is_write_gated` (MCP) and `kindle_app_exports_through_engine` (the app). The manual checks are `docs/qa/kindle.md`.
+
 ## 17. References
 
 - Amazon KDP, [supported eBook formats](https://kdp.amazon.com/en_US/help/topic/G200634390)

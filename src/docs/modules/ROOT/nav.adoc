@@ -10,6 +10,7 @@
 *** xref:pdf-theme-keys.adoc[PDF theme keys]
 ** xref:word-export.adoc[Exporting to Word]
 *** xref:word-theme-keys.adoc[Word theme keys]
+** xref:kindle-export.adoc[Exporting to Kindle]
 ** xref:read-only-exports.adoc[Read-only exports]
 ** xref:keyboard-shortcuts.adoc[Keyboard shortcuts]
 ** xref:settings.adoc[Settings]

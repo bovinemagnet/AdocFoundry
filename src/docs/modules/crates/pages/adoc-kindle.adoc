@@ -7,7 +7,7 @@ Paul Snow
 It is at layer L2, beside `adoc-render`, which it reads.
 The specification is `docs/prd/PRD-AdocFoundry_Kindle_Export.md` in the repository, and the spike's record is `docs/qa/spike-kindle.md`; neither is part of this site.
 The engine calls the crate behind its `kindle` feature (`export.kindle_page`, `export.kindle_component` and `Engine::export_kindle_blocking`).
-There is no CLI, app or MCP entry point for it yet (Kindle 7/9).
+`adocfoundry-cli kindle`, the app's Export Page to Kindle…, Export Component to Kindle… and Export Kindle Profile… and the MCP `export_kindle` tool call it through the engine; see xref:ROOT:kindle-export.adoc[Exporting to Kindle].
 
 == What it does
 

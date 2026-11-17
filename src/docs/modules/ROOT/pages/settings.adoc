@@ -109,6 +109,14 @@ heading_colour = "1F3864"
 page = "docs/modules/ROOT/pages/quick-start.adoc"
 output = "build/quick-start.docx"
 
+[kindle]                         # Kindle export; nothing here is read for PDF or Word
+format = "azw3"                  # azw3 | kfx
+language = "en-GB"
+
+[kindle.profiles.quick-start]    # a named Kindle book, run by name
+page = "docs/modules/ROOT/pages/quick-start.adoc"
+output = "build/quick-start.azw3"
+
 [spelling]
 enabled = true                   # underline misspelt words in prose
 language = "en_GB"               # for pages with no lang attribute
@@ -433,6 +441,11 @@ These settings never affect PDF export (`pdf.theme`), HTML or the Antora site.
 |tables
 |see <<docx-settings>>
 |How Word documents are laid out and styled, and named Word publication profiles in `[docx.profiles.<name>]`. See <<docx-settings>>.
+
+|`kindle.*`
+|tables
+|see <<kindle-settings>>
+|The Kindle export's format and metadata, and named Kindle publication profiles in `[kindle.profiles.<name>]`. See <<kindle-settings>>.
 
 |`history.enabled`
 |boolean
@@ -905,6 +918,70 @@ right = "{page-number} of {page-count}"
 ----
 
 The PDF profile's `theme` is not read for Word, which has its own look keys, and the Word profile's `orientation` is not read for PDF.
+
+[#kindle-settings]
+== Kindle export settings
+
+The `[kindle]` table sets the format and metadata of the Kindle books the engine writes, and `[kindle.profiles.<name>]` saves Kindle publications under a name.
+These settings are what Export Page to Kindle…, Export Component to Kindle…, Export Kindle Profile…, `adocfoundry-cli kindle` (see xref:command-line.adoc#kindle[kindle]) and the MCP `export_kindle` tool read.
+See xref:kindle-export.adoc[Exporting to Kindle] for the export itself.
+Nothing is read from `[pdf]` or `[docx]`.
+An unknown key, or an output whose extension disagrees with `format`, is reported when the settings are read.
+
+[cols="2,2,2,4"]
+|===
+|Key |Type |Default |Meaning
+
+|`kindle.format`
+|string
+|`"azw3"`
+|The default format: `"azw3"` (KF8) or `"kfx"` (KF10).
+
+|`kindle.title`, `creator`, `language`, `identifier` and `publisher`
+|strings
+|from the book
+|The book's metadata, which replaces what the pages give.
+
+|`kindle.cover`
+|string
+|none
+|A picture for the cover, relative to the first workspace root. The `front-cover-image` attribute wins over it.
+
+|`kindle.profiles.<name>`
+|table
+|none
+|A named Kindle publication. See <<kindle-profiles>>.
+|===
+
+[#kindle-profiles]
+=== Kindle profiles
+
+A profile has exactly one of these.
+
+* `page`, a page.
+* `component`, a component version as `version@name` or `name`.
+* `nav`, an array of navigation files.
+
+It may also have these keys.
+
+* `format`, as `[kindle] format`.
+* `output`, relative to the first root and inside the workspace, with the format's extension.
+It is `<name>.<format>` at the root by default.
+* `attributes`, which are set for the export.
+* `title`, `creator`, `language`, `identifier` and `cover`, as for `[kindle]`.
+
+[source,toml]
+----
+[kindle]
+format = "kfx"
+creator = "Paul Snow"
+
+[kindle.profiles.admin-guide]
+component = "2.0@guide"
+format = "azw3"
+output = "build/admin-guide.azw3"
+cover = "images/cover.png"
+----
 
 == What a workspace file may set
 

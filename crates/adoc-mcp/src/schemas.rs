@@ -270,6 +270,29 @@ pub fn export_pdf() -> Arc<JsonObject> {
     )
 }
 
+pub fn export_kindle() -> Arc<JsonObject> {
+    object(
+        json!({
+            "output": { "type": "string" },
+            "format": {
+                "type": "string",
+                "enum": ["azw3", "kfx"],
+                "description": "The format written; never another in its place.",
+            },
+            "pages": {
+                "type": "integer",
+                "description": "The AsciiDoc pages exported; the reader lays out its own pages.",
+            },
+            "sources": list(json!({
+                "type": "string",
+                "description": "A page exported, in the book's order.",
+            })),
+            "warnings": list(json!({ "type": "string" })),
+        }),
+        &["output", "format", "pages", "sources", "warnings"],
+    )
+}
+
 pub fn export_docx() -> Arc<JsonObject> {
     object(
         json!({

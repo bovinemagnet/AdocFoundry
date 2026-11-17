@@ -1,7 +1,7 @@
 = Command line
 Paul Snow
 :revnumber: 0.0.0
-:description: Using adocfoundry-cli to check, search, follow links, render and export to PDF and Word headlessly, including in CI.
+:description: Using adocfoundry-cli to check, search, follow links, render and export to PDF, Word and Kindle headlessly, including in CI.
 
 `adocfoundry-cli` is a headless front end over the same engine as the desktop application.
 It needs no display, which makes it suitable for continuous integration.
@@ -28,6 +28,10 @@ adocfoundry-cli docx <file|component-dir> [--root <dir>] [--component [<version>
 adocfoundry-cli docx --profile <name> [<root>]
     [--theme <name|file.yml> | --template <name|file.dotx> | --no-theme]
     [--output <file.docx>] [--fail-on none|warning|error]
+adocfoundry-cli kindle <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
+    [--format azw3|kfx] [--output <file.azw3|file.kfx>] [--fail-on none|warning|error]
+adocfoundry-cli kindle --profile <name> [<root>] [--format azw3|kfx]
+    [--output <file.azw3|file.kfx>] [--fail-on none|warning|error]
 adocfoundry-cli git-status <root> [--format text|json]
 adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--format json|dot|svg]
     [--no-partials] [--no-nav] [--unresolved] [--ages] [--dark]
@@ -468,6 +472,55 @@ An export that fails, or reports a diagnostic that meets `--fail-on`, exits with
 
 When the pages' headers ask for a read-only export (`:export-read-only: true`), the document is written with Word's read-only protection, and the command prints `protected: read-only` after the output line.
 A refusal, such as a book that mixes pages that ask with pages that do not, or an invalid value, exits with 1, whatever `--fail-on` says, printing the reason with the page and line, and writes nothing.
+
+[[kindle]]
+== kindle
+
+`kindle` exports a page, or a whole component version, as a Kindle book in AZW3 (KF8) or KFX (KF10).
+See xref:settings.adoc#kindle-settings[Kindle export settings] for the metadata and profiles it reads.
+For what the book contains, see xref:kindle-export.adoc[Exporting to Kindle].
+
+[source,sh]
+----
+adocfoundry-cli kindle docs/modules/ROOT/pages/index.adoc
+adocfoundry-cli kindle docs --output docs.kfx
+adocfoundry-cli kindle docs --root . --component 2.0@guide --format azw3 --fail-on warning
+adocfoundry-cli kindle --profile admin-guide .
+----
+
+Targets are chosen as `docx` chooses them.
+The format comes from `--format`, else the output's extension, else `[kindle] format`, which is AZW3 by default.
+A format and an output that disagree are refused.
+A file argument exports that page as an article, and by default the book is written beside the page.
+A directory that holds an `antora.yml`, or `--component`, exports the component version as a book in navigation order, by default in the current directory and named after the component.
+
+[cols="2,4"]
+|===
+|Option |Meaning
+
+|`--root <dir>`
+|The workspace root, so that includes, xrefs and images resolve across components.
+
+|`--component [<version>@]<name>`
+|Export this component version as a book, with coordinates written as Antora writes them.
+
+|`--profile <name>`
+|Export the Kindle profile `[kindle.profiles.<name>]` from the settings. The workspace root is the argument, `--root <dir>`, or else the current directory. `--format` and `--output` win over the profile's.
+
+|`--format azw3\|kfx`
+|The format to write.
+
+|`--output <file.azw3\|file.kfx>`
+|Where to write the book. Its extension must be the format's; any other output is refused.
+
+|`--fail-on none\|warning\|error`
+|Exit with 1 when the export reports a diagnostic at least this severe. The book is written all the same. The default, `none`, never fails for a diagnostic.
+|===
+
+The command prints `<output> (<n> AsciiDoc pages)` on standard output.
+Warnings print on standard error as `path:line: warning: message`.
+An export that fails, or reports a diagnostic that meets `--fail-on`, exits with 1, and a usage error exits with 2.
+A page that asks for a read-only export (`:export-read-only:`) is refused, since a Kindle book carries no restriction; the command exits with 1 and writes nothing.
 See xref:read-only-exports.adoc[Read-only exports].
 
 [[git-status]]

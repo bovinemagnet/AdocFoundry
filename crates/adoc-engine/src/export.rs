@@ -106,9 +106,10 @@ pub struct DocxExportArgs {
 
 /// The Kindle formats (`docs/prd/PRD-AdocFoundry_Kindle_Export.md` §4). One is never written
 /// in place of the other.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum KindleFormat {
-    /// KF8, in a PalmDB/MOBI file.
+    /// KF8, in a PalmDB/MOBI file: the default, read by more Kindles.
+    #[default]
     Azw3,
     /// KF10.
     Kfx,
@@ -148,11 +149,13 @@ pub struct KindleExportArgs {
     /// Attributes every page is read with before its own header, after Antora's, and that a
     /// book's own attributes take.
     pub attributes: Vec<(String, String)>,
-    /// Metadata in place of the document's: a profile's.
+    /// Metadata in place of the document's and `[kindle]`'s: a profile's.
     pub title: Option<String>,
     pub creator: Option<String>,
     pub language: Option<String>,
     pub identifier: Option<String>,
+    /// The cover, in place of `[kindle] cover` and the document's `front-cover-image`.
+    pub cover: Option<PathBuf>,
 }
 
 impl KindleExportArgs {
@@ -168,6 +171,7 @@ impl KindleExportArgs {
             creator: None,
             language: None,
             identifier: None,
+            cover: None,
         }
     }
 }
@@ -519,6 +523,17 @@ pub(crate) fn register_export(registry: &mut CommandRegistry) {
             ),
             kindle_command,
         );
+        register(
+            registry,
+            spec(
+                ids::EXPORT_KINDLE_PROFILE,
+                "Export Kindle Profile…",
+                CommandCategory::Workspace,
+                None,
+                CommandContext::Always,
+            ),
+            kindle_profile_command,
+        );
     }
     #[cfg(feature = "docx")]
     {
@@ -590,6 +605,23 @@ fn kindle_command(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutco
             expected: "an export target, a Kindle format and an .azw3 or .kfx output path",
         });
     };
+    engine.start_export(Request::Kindle(args), false)?;
+    Ok(CommandOutcome::Done)
+}
+
+/// Exports a Kindle publication profile to the output it names.
+#[cfg(feature = "kindle")]
+fn kindle_profile_command(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Profile(name) = args else {
+        return Err(EngineError::InvalidArguments {
+            command: ids::EXPORT_KINDLE_PROFILE,
+            expected: "a profile name",
+        });
+    };
+    let args = engine.kindle_profile_export_args(&name)?;
     engine.start_export(Request::Kindle(args), false)?;
     Ok(CommandOutcome::Done)
 }
@@ -2291,13 +2323,26 @@ impl Engine {
         } = written;
         let failed = failed_diagrams(&arranged);
         let document = to_kindle(arranged);
+        // The export's own (a profile's), else `[kindle]`'s, else the document's.
+        let defaults = &self.settings.kindle;
+        let root = self.roots.first().cloned();
+        let cover = args.cover.clone().or_else(|| {
+            let cover = defaults.cover.as_deref()?;
+            Some(match &root {
+                Some(root) => crate::normalize_path(&root.join(cover)),
+                None => PathBuf::from(cover),
+            })
+        });
         let options = adoc_kindle::KindleOptions {
-            title: args.title.clone(),
-            creator: args.creator.clone(),
-            language: args.language.clone(),
-            identifier: args.identifier.clone(),
-            publisher: None,
-            cover: None,
+            title: args.title.clone().or_else(|| defaults.title.clone()),
+            creator: args.creator.clone().or_else(|| defaults.creator.clone()),
+            language: args.language.clone().or_else(|| defaults.language.clone()),
+            identifier: args
+                .identifier
+                .clone()
+                .or_else(|| defaults.identifier.clone()),
+            publisher: defaults.publisher.clone(),
+            cover,
             page_urls: self
                 .site_url()
                 .map(|site| self.page_urls(&site))

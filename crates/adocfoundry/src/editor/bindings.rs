@@ -134,6 +134,9 @@ actions!(
         ExportPageDocx,
         ExportComponentDocx,
         ExportDocxProfile,
+        ExportPageKindle,
+        ExportComponentKindle,
+        ExportKindleProfile,
         ExportPageDocxThemed,
         ExportComponentDocxThemed,
         ExportPagePdfWithTheme,
@@ -296,6 +299,9 @@ fn binding_for(id: CommandId, keys: &str, cx: &App) -> Option<KeyBinding> {
         ids::EXPORT_DOCX_PAGE => key_binding(keys, ExportPageDocx, workspace, cx),
         ids::EXPORT_DOCX_COMPONENT => key_binding(keys, ExportComponentDocx, workspace, cx),
         ids::EXPORT_DOCX_PROFILE => key_binding(keys, ExportDocxProfile, workspace, cx),
+        ids::EXPORT_KINDLE_PAGE => key_binding(keys, ExportPageKindle, workspace, cx),
+        ids::EXPORT_KINDLE_COMPONENT => key_binding(keys, ExportComponentKindle, workspace, cx),
+        ids::EXPORT_KINDLE_PROFILE => key_binding(keys, ExportKindleProfile, workspace, cx),
         ids::EXPORT_DOCX_PAGE_THEMED => key_binding(keys, ExportPageDocxThemed, workspace, cx),
         ids::EXPORT_DOCX_COMPONENT_THEMED => {
             key_binding(keys, ExportComponentDocxThemed, workspace, cx)
@@ -415,6 +421,9 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::EXPORT_DOCX_PAGE => Box::new(ExportPageDocx),
         ids::EXPORT_DOCX_COMPONENT => Box::new(ExportComponentDocx),
         ids::EXPORT_DOCX_PROFILE => Box::new(ExportDocxProfile),
+        ids::EXPORT_KINDLE_PAGE => Box::new(ExportPageKindle),
+        ids::EXPORT_KINDLE_COMPONENT => Box::new(ExportComponentKindle),
+        ids::EXPORT_KINDLE_PROFILE => Box::new(ExportKindleProfile),
         ids::EXPORT_DOCX_PAGE_THEMED => Box::new(ExportPageDocxThemed),
         ids::EXPORT_DOCX_COMPONENT_THEMED => Box::new(ExportComponentDocxThemed),
         ids::SETTINGS_OPEN => Box::new(OpenSettings),
@@ -598,10 +607,6 @@ mod tests {
             ids::APPEARANCE_SAVE,
             // Saved by Select Font Set…, which is the app's own.
             ids::APPEARANCE_SAVE_FONT_SET,
-            // Kindle export: the app does not build the engine's `kindle` feature until Kindle
-            // 7/9 (#633) gives these actions, but a workspace build turns it on for every crate.
-            ids::EXPORT_KINDLE_PAGE,
-            ids::EXPORT_KINDLE_COMPONENT,
         ];
         let engine = Engine::new(Settings::default());
         let missing: Vec<&str> = engine

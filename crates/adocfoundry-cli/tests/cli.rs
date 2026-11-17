@@ -1314,6 +1314,201 @@ fn pdf_exports_the_component_folder_named_to_the_current_directory() {
     assert!(!work.join("api").exists());
 }
 
+/// The Kindle export PRD, §12 test 16: an article, a book and a profile in both formats, the
+/// format from `--format` or the output's extension, with exit codes that follow `--fail-on`.
+#[test]
+fn kindle_cli_exports_and_gates() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("book");
+    copy_tree(&repository_root().join("tests/fixtures/pdf/book"), &root);
+    std::fs::write(
+        root.join(".adocfoundry.toml"),
+        "[kindle.profiles.handbook]\ncomponent = \"1.0@guide\"\nformat = \"kfx\"\noutput = \"build/handbook.kfx\"\n",
+    )
+    .unwrap();
+    let run = |folder: &Path, arguments: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+            .current_dir(folder)
+            .args(arguments)
+            .output()
+            .unwrap()
+    };
+    let succeeded = |output: &Output| {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    let is_azw3 = |path: &Path| std::fs::read(path).unwrap()[60..68] == *b"BOOKMOBI";
+    let is_kfx = |path: &Path| std::fs::read(path).unwrap().starts_with(b"CONT");
+
+    // A page: AZW3 by default, beside it.
+    let output = run(&root, &["kindle", "guide/modules/ROOT/pages/install.adoc"]);
+    succeeded(&output);
+    assert!(is_azw3(&root.join("guide/modules/ROOT/pages/install.azw3")));
+    assert!(
+        stdout(&output).contains("install.azw3 (1 AsciiDoc page)"),
+        "{}",
+        stdout(&output)
+    );
+    // KFX by `--format`, and by the output's extension.
+    let output = run(
+        &root,
+        &[
+            "kindle",
+            "guide/modules/ROOT/pages/install.adoc",
+            "--format",
+            "kfx",
+        ],
+    );
+    succeeded(&output);
+    assert!(is_kfx(&root.join("guide/modules/ROOT/pages/install.kfx")));
+    succeeded(&run(
+        &root,
+        &[
+            "kindle",
+            "guide/modules/ROOT/pages/install.adoc",
+            "--output",
+            "named.kfx",
+        ],
+    ));
+    assert!(is_kfx(&root.join("named.kfx")));
+    // A format and an output that disagree, or a format that is not Kindle's, are refused.
+    let output = run(
+        &root,
+        &[
+            "kindle",
+            "guide/modules/ROOT/pages/install.adoc",
+            "--format",
+            "kfx",
+            "--output",
+            "x.azw3",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(!root.join("x.azw3").exists());
+    assert!(!run(
+        &root,
+        &[
+            "kindle",
+            "guide/modules/ROOT/pages/install.adoc",
+            "--output",
+            "x.epub"
+        ]
+    )
+    .status
+    .success());
+    assert!(!run(
+        &root,
+        &[
+            "kindle",
+            "guide/modules/ROOT/pages/install.adoc",
+            "--format",
+            "mobi"
+        ]
+    )
+    .status
+    .success());
+
+    // A component folder: its book, in both formats.
+    let output = run(directory.path(), &["kindle", "book/guide"]);
+    succeeded(&output);
+    assert!(is_azw3(&directory.path().join("guide.azw3")));
+    assert!(
+        stdout(&output).contains("(8 AsciiDoc pages)"),
+        "{}",
+        stdout(&output)
+    );
+    succeeded(&run(
+        directory.path(),
+        &[
+            "kindle",
+            "book",
+            "--component",
+            "1.0@guide",
+            "--format",
+            "kfx",
+        ],
+    ));
+    assert!(is_kfx(&directory.path().join("guide.kfx")));
+
+    // A profile writes what the app's command writes.
+    let output = run(
+        directory.path(),
+        &["kindle", "--profile", "handbook", "book"],
+    );
+    succeeded(&output);
+    let written = root.join("build/handbook.kfx");
+    let from_cli = std::fs::read(&written).unwrap();
+    std::fs::remove_file(&written).unwrap();
+    let mut settings = adoc_engine::Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = adoc_engine::Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    let wait = std::time::Duration::from_secs(120);
+    assert!(engine.wait_for_workers(wait));
+    engine
+        .invoke(
+            adoc_engine::commands::ids::EXPORT_KINDLE_PROFILE,
+            adoc_engine::CommandArgs::Profile("handbook".to_owned()),
+        )
+        .unwrap();
+    while engine.is_exporting() {
+        assert!(engine.wait_for_workers(wait));
+    }
+    assert!(
+        std::fs::read(&written).unwrap() == from_cli,
+        "the app's book differs from the command line's"
+    );
+    // The profile in the other format, by `--format`.
+    succeeded(&run(
+        directory.path(),
+        &[
+            "kindle",
+            "--profile",
+            "handbook",
+            "book",
+            "--format",
+            "azw3",
+        ],
+    ));
+    assert!(is_azw3(&root.join("build/handbook.azw3")));
+    let output = run(
+        directory.path(),
+        &["kindle", "--profile", "missing", "book"],
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no Kindle profile `missing`"));
+
+    // `--fail-on`: a reference that leads nowhere is a warning; the book is written all the
+    // same.
+    std::fs::write(
+        root.join("guide/modules/ROOT/pages/broken.adoc"),
+        "= Broken\n\nSee xref:missing.adoc[nowhere].\n",
+    )
+    .unwrap();
+    let page = [
+        "kindle",
+        "guide/modules/ROOT/pages/broken.adoc",
+        "--output",
+        "broken.kfx",
+    ];
+    let output = run(&root, &page);
+    succeeded(&output);
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("broken.adoc:3: warning: the cross reference missing.adoc leads to nothing"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = run(&root, &[&page[..], &["--fail-on", "warning"]].concat());
+    assert_eq!(output.status.code(), Some(1));
+    assert!(is_kfx(&root.join("broken.kfx")));
+    succeeded(&run(&root, &[&page[..], &["--fail-on", "error"]].concat()));
+    succeeded(&run(&root, &[&page[..], &["--fail-on", "none"]].concat()));
+}
+
 /// The DOCX export PRD, §10 test 15: an article, a book and a profile, with exit codes that
 /// follow `--fail-on`, and nothing of PDF's.
 #[test]

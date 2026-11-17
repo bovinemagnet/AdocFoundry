@@ -829,6 +829,10 @@ Nothing in a page's text, and nothing in a client's request, can change this.
 |`path`, `component` or `profile`, `output?`, `theme?`, `template?`, `no_theme?`
 |Exports a page as an article, a component version as a book, or a `[docx.profiles]` publication, as an editable Word document. `output` is required unless a profile is given. At most one of `theme`, `template` and `no_theme` chooses the look. It returns the output, the page count, the pages exported, the look and any warnings. See below.
 
+|`export_kindle`
+|`path`, `component` or `profile`, `format?`, `output?`
+|Exports a page as an article, a component version as a book, or a `[kindle.profiles]` publication, as a Kindle book in AZW3 or KFX. `output` is required unless a profile names one. It returns the output, the format, the page count, the pages exported and any warnings. See below.
+
 |`export_pdf`
 |`path` or `component`, `output`, `theme?`, `standards?`
 |Exports a page as an article, or a component version as a book. A component is `name` or `version@name`. The standards are `pdf-a-1b`, `pdf-a-1a`, `pdf-a-2a` and `pdf-ua-1`. `output` must be a `.pdf` when a file is there already: an existing file that is not a PDF, or any indexed page, is refused with `invalid_argument`, so a page or `antora.yml` is never replaced. It returns the output, the page count and any warnings.
@@ -856,6 +860,18 @@ It returns `output`, `pages` (the number of AsciiDoc pages exported), `sources` 
 STEM formulas are typeset as pictures, with their source as the picture's alternative text.
 The tool never opens Word or runs an external tool.
 See xref:settings.adoc#docx-settings[Word export settings].
+
+`export_kindle` exports to a Kindle book.
+Exactly one of `path`, `component` or `profile` is given, as for `export_docx`.
+`format` is `azw3` or `kfx`; without it the format is the output's extension, else `[kindle] format`.
+`output` is required, except with a profile that names one.
+It must be inside a root, or the call fails with `outside_workspace`, and it must not be a link or a page, or the call fails with `invalid_argument`.
+It must have the format's extension, `.azw3` or `.kfx`.
+A page that asks for a read-only export is refused, since a Kindle book carries no restriction.
+It returns `output`, `format`, `pages` (the number of AsciiDoc pages exported), `sources` (those pages in the book's order, as workspace-relative paths) and `warnings`, which are strings.
+An unknown profile or component is `not_found`, and without `--allow-write` the tool is not listed and a call is refused with `permission_denied`.
+The tool never runs an external program.
+See xref:settings.adoc#kindle-settings[Kindle export settings].
 
 === Creating pages and partials
 
@@ -996,7 +1012,7 @@ Each tool carries MCP annotations.
 
 * The read-only tools have `readOnlyHint: true` and `openWorldHint: false`.
 * `edit_page`, `revert_page` and `rename_page` have `readOnlyHint: false` and `destructiveHint: true`.
-* `export_pdf` and `export_docx` have the same, and `idempotentHint: true`, as has `revert_page`.
+* `export_pdf`, `export_docx` and `export_kindle` have the same, and `idempotentHint: true`, as has `revert_page`.
 
 Annotations are hints for clients.
 They never grant permission.
