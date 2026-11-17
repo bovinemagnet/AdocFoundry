@@ -27,6 +27,7 @@ mod azw3;
 mod book;
 mod kfx;
 mod map;
+mod media;
 mod metadata;
 #[cfg(feature = "test-support")]
 pub mod testing;
@@ -128,6 +129,8 @@ pub struct KindleOptions {
     /// The address of each page a reference out of the book may lead to; a reference to any
     /// other page outside the book is left as text.
     pub page_urls: HashMap<PathBuf, String>,
+    /// The cover picture, in place of the document's `front-cover-image`.
+    pub cover: Option<PathBuf>,
     /// Which files the export may read: its pictures.
     pub access: adoc_core::FileAccess,
 }

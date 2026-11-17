@@ -49,6 +49,7 @@ pub(crate) fn build(
         notes_used: Vec::new(),
         diagnostics: Vec::new(),
         in_table: false,
+        media: crate::media::Media::default(),
     };
     let mut chapters = Vec::new();
     let mut toc = Toc::default();
@@ -89,12 +90,13 @@ pub(crate) fn build(
         });
     }
     let metadata = metadata::metadata(document, options);
+    let cover = mapper.cover(document);
     let book = KindleBook {
         metadata,
         chapters,
         toc: toc.finish(),
-        assets: Vec::new(),
-        cover: None,
+        assets: std::mem::take(&mut mapper.media.assets),
+        cover,
     };
     (book, mapper.diagnostics)
 }
@@ -329,9 +331,56 @@ struct Mapper<'a> {
     diagnostics: Vec<KindleDiagnostic>,
     /// Whether the blocks being mapped are in a table's cell.
     in_table: bool,
+    media: crate::media::Media,
 }
 
 impl Mapper<'_> {
+    /// The cover: the export's own picture, else the document's `front-cover-image` (a book's
+    /// from its first page, which is read with the book's attributes).
+    fn cover(&mut self, document: &KindleDocument) -> Option<usize> {
+        self.span = None;
+        if let Some(path) = self.options.cover.clone() {
+            return match self.load(&path) {
+                Ok(asset) => Some(asset),
+                Err(reason) => {
+                    self.warn(None, format!("the cover {} {reason}", path.display()));
+                    None
+                }
+            };
+        }
+        let first = match document {
+            KindleDocument::Article(page) => Some(page),
+            KindleDocument::Book(book) => book.items.iter().find_map(|item| match item {
+                BookItem::Page(page) => Some(page),
+                _ => None,
+            }),
+        }?;
+        let image = first
+            .view
+            .attribute_images
+            .get("front-cover-image")?
+            .clone();
+        match &image.path {
+            Some(path) => match self.load(path) {
+                Ok(asset) => Some(asset),
+                Err(reason) => {
+                    self.warn(None, format!("the cover {} {reason}", image.target));
+                    None
+                }
+            },
+            None => {
+                self.warn(
+                    None,
+                    format!(
+                        "the cover {} cannot be found or is remote, and is left out",
+                        image.target
+                    ),
+                );
+                None
+            }
+        }
+    }
+
     fn warn(&mut self, span: Option<&SourceSpan>, message: String) {
         self.diagnostics.push(KindleDiagnostic {
             severity: KindleSeverity::Warning,
@@ -695,23 +744,15 @@ impl Mapper<'_> {
                 out.push(Block::Table { anchor, rows });
             }
             ViewKind::Image(image) => {
-                let text = if image.alt.trim().is_empty() {
-                    image.target.clone()
-                } else {
-                    image.alt.clone()
-                };
-                self.warn(
-                    None,
-                    format!(
-                        "the image {} is not embedded and is exported as its description",
-                        image.target
-                    ),
-                );
-                out.push(Block::Paragraph {
-                    anchor,
-                    class: ParagraphClass::Caption,
-                    content: vec![Inline::Text(text)],
-                });
+                let alt = alt_of(image);
+                match self.picture(image) {
+                    Some(asset) => out.push(Block::Figure { anchor, asset, alt }),
+                    None => out.push(Block::Paragraph {
+                        anchor,
+                        class: ParagraphClass::Caption,
+                        content: self.picture_fallback(image, alt),
+                    }),
+                }
             }
             ViewKind::Media { kind, targets } => {
                 let kind = match kind {
@@ -733,31 +774,69 @@ impl Mapper<'_> {
                 });
             }
             ViewKind::Diagram(diagram) => {
-                let (kind, source) = match diagram {
-                    DiagramView::Svg(_) => ("diagram", None),
+                match diagram {
+                    DiagramView::Svg(path) => {
+                        let alt = ViewInline::plain_text(&block.title);
+                        let alt = if alt.trim().is_empty() {
+                            "Diagram".to_owned()
+                        } else {
+                            alt
+                        };
+                        match self.load(path) {
+                            Ok(asset) => out.push(Block::Figure { anchor, asset, alt }),
+                            Err(reason) => {
+                                self.warn(None, format!("the diagram {reason} and is left out"));
+                                out.push(Block::Paragraph {
+                                    anchor,
+                                    class: ParagraphClass::Caption,
+                                    content: vec![Inline::Text(alt)],
+                                });
+                            }
+                        }
+                    }
+                    // A failed diagram was reported with the export's other diagrams; one still
+                    // pending when the book is written is reported here.
                     DiagramView::Pending { kind, source }
-                    | DiagramView::Failed { kind, source, .. } => (kind.as_str(), Some(source)),
-                };
-                self.warn(
-                    None,
-                    format!("the {kind} diagram is not embedded and is exported as its source"),
-                );
-                out.push(Block::Preformatted {
-                    anchor,
-                    text: source.cloned().unwrap_or_default(),
-                    code: true,
-                });
+                    | DiagramView::Failed { kind, source, .. } => {
+                        if matches!(diagram, DiagramView::Pending { .. }) {
+                            self.warn(
+                            None,
+                            format!("the {kind} diagram was not drawn and is exported as its source"),
+                        );
+                        }
+                        out.push(Block::Preformatted {
+                            anchor,
+                            text: source.clone(),
+                            code: true,
+                        });
+                    }
+                }
             }
-            ViewKind::Stem { source, .. } => {
-                self.warn(
-                    None,
-                    "the formula is not drawn and is exported as its source".to_owned(),
-                );
-                out.push(Block::Preformatted {
-                    anchor,
-                    text: source.clone(),
-                    code: true,
-                });
+            ViewKind::Stem {
+                source, rendered, ..
+            } => {
+                let drawn = match rendered {
+                    DiagramView::Svg(path) => self.load(path).ok(),
+                    _ => None,
+                };
+                match drawn {
+                    Some(asset) => out.push(Block::Figure {
+                        anchor,
+                        asset,
+                        alt: source.clone(),
+                    }),
+                    None => {
+                        self.warn(
+                            None,
+                            "the formula is not drawn and is exported as its source".to_owned(),
+                        );
+                        out.push(Block::Preformatted {
+                            anchor,
+                            text: source.clone(),
+                            code: true,
+                        });
+                    }
+                }
             }
             ViewKind::Passthrough(text) => {
                 self.warn(
@@ -792,6 +871,50 @@ impl Mapper<'_> {
                 });
             }
         }
+    }
+
+    /// The picture a local image shows, embedded; `None`, with a warning, where it cannot be.
+    fn picture(&mut self, image: &adoc_render::ViewImage) -> Option<usize> {
+        let path = image.path.as_ref()?;
+        match self.load(path) {
+            Ok(asset) => Some(asset),
+            Err(reason) => {
+                self.warn(
+                    None,
+                    format!(
+                        "the image {} {reason} and is exported as its description",
+                        image.target
+                    ),
+                );
+                None
+            }
+        }
+    }
+
+    fn load(&mut self, path: &std::path::Path) -> Result<usize, String> {
+        self.media.load(path, &self.options.access)
+    }
+
+    /// What an image that is not embedded becomes: its description, and a link to a remote
+    /// one, which is never fetched; each with a warning.
+    fn picture_fallback(&mut self, image: &adoc_render::ViewImage, alt: String) -> Vec<Inline> {
+        if let Some(url) = &image.url {
+            self.warn(
+                None,
+                format!("the remote image {url} is not fetched and is exported as a link to it"),
+            );
+            return vec![self.external_or_text(url, &[ViewInline::Text(alt)])];
+        }
+        if image.path.is_none() {
+            self.warn(
+                None,
+                format!(
+                    "the image {} cannot be found and is exported as its description",
+                    image.target
+                ),
+            );
+        }
+        vec![Inline::Text(alt)]
     }
 
     fn list_item(&mut self, item: &ViewListItem, depth: u8) -> Vec<Block> {
@@ -848,14 +971,11 @@ impl Mapper<'_> {
                 }
             }
             ViewInline::Image(image) => {
-                self.warn(
-                    None,
-                    format!(
-                        "the image {} is not embedded and is exported as its description",
-                        image.target
-                    ),
-                );
-                out.push(Inline::Text(image.alt.clone()));
+                let alt = alt_of(image);
+                match self.picture(image) {
+                    Some(asset) => out.push(Inline::Image { asset, alt }),
+                    None => out.extend(self.picture_fallback(image, alt)),
+                }
             }
             ViewInline::Icon(name) => out.push(Inline::Text(format!("[{name}]"))),
             ViewInline::FootnoteRef { number, repeat, .. } => {
@@ -881,12 +1001,25 @@ impl Mapper<'_> {
             ViewInline::Menu(items) => {
                 out.push(Inline::Strong(vec![Inline::Text(items.join(" › "))]));
             }
-            ViewInline::Stem { source, .. } => {
-                self.warn(
-                    None,
-                    "the formula is not drawn and is exported as its source".to_owned(),
-                );
-                out.push(Inline::Code(vec![Inline::Text(source.clone())]));
+            ViewInline::Stem {
+                source, rendered, ..
+            } => {
+                let drawn = rendered
+                    .as_ref()
+                    .and_then(|formula| self.load(&formula.path).ok());
+                match drawn {
+                    Some(asset) => out.push(Inline::Image {
+                        asset,
+                        alt: source.clone(),
+                    }),
+                    None => {
+                        self.warn(
+                            None,
+                            "the formula is not drawn and is exported as its source".to_owned(),
+                        );
+                        out.push(Inline::Code(vec![Inline::Text(source.clone())]));
+                    }
+                }
             }
         }
     }
@@ -1007,6 +1140,15 @@ fn keep_anchor(out: &mut Vec<Block>, anchor: Option<String>) {
             class: ParagraphClass::Normal,
             content: Vec::new(),
         });
+    }
+}
+
+/// An image's description, else its file's name.
+fn alt_of(image: &adoc_render::ViewImage) -> String {
+    if image.alt.trim().is_empty() {
+        image.target.clone()
+    } else {
+        image.alt.clone()
     }
 }
 

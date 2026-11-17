@@ -286,6 +286,7 @@ dependencies = [
  "adoc-kindle",
  "adoc-render",
  "mobi",
+ "resvg 0.46.0",
  "sha1_smol",
  "sha2 0.10.9",
  "tempfile",

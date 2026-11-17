@@ -2297,6 +2297,7 @@ impl Engine {
             language: args.language.clone(),
             identifier: args.identifier.clone(),
             publisher: None,
+            cover: None,
             page_urls: self
                 .site_url()
                 .map(|site| self.page_urls(&site))

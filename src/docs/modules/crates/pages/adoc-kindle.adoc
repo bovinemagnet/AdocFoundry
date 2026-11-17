@@ -54,7 +54,29 @@ Anything a Kindle cannot show has a readable fallback and a warning located at i
 * Audio and video become their addresses.
 * Passthrough content is text, never markup.
 * An unsupported block is its source.
-* Images, diagrams and formulas are exported as their descriptions or sources, with a warning, until Kindle 6/9 embeds them.
+* A remote image is never fetched: it becomes a link to its address, with a warning.
+* A picture that is missing, unreadable, malformed, oversized or out of bounds is its description, with a warning at its line.
+* A diagram still pending when the book is written is its source, with a warning.
+* Without the engine's `typst` feature, a formula is its source as fixed-width text, with a warning.
+
+== Pictures and the cover
+
+Images, diagrams and formulas are embedded in both formats.
+The `media` module reads each picture through the export's `FileAccess`, and tells PNG, JPEG, GIF and SVG apart by their bytes, never by their names.
+
+* Raster pictures are checked whole and kept as they are.
+* SVG is drawn as a PNG in process with `resvg`, at twice its size on a white ground, and nothing is loaded from outside the file.
+* Each file is kept once however often it is shown, and identical bytes are kept once.
+* The limits are 16 MiB a file, 10,000 pixels a side, 40 megapixels, and 256 MiB of pictures a book.
+* Diagrams are embedded as the engine's diagram pipeline drew them.
+* Formulas drawn by the engine's STEM provider (the engine's `typst` feature) are embedded as pictures, and their alternative text is their source.
+* Pictures size for reflow, with no fixed sizes, and no fonts are embedded.
+
+The cover is `KindleOptions::cover`, else the document's `front-cover-image`, which for a book is the first page's.
+AZW3 names it in the EXTH 201 record, and KFX in its `cover_image` metadata.
+No cover page is added to the reading order.
+
+The tests are `kindle_media_is_embedded` and `kindle_bad_assets_are_reported`, in `crates/adoc-kindle/tests/media.rs`.
 
 == The API
 

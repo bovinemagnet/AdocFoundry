@@ -316,6 +316,18 @@ The record is `docs/qa/spike-kindle.md`.
 - The chapter structure follows the plan the engine shares with PDF and Word: a part is a chapter of its own, at the top of the table of contents, and a page's sections are nested below the page, two levels deep. Headings move down by the page's depth.
 - Tests: `kindle_formats_agree` (chapters, table of contents and links in both formats, read back independently), `kindle_content_stays_text` and `kindle_unsupported_content_warns`, in `crates/adoc-kindle/tests/content.rs`.
 
+### K6 (#632): covers, pictures, diagrams and formulas
+
+- `media.rs` reads each picture through the export's `FileAccess` and tells PNG, JPEG, GIF and SVG apart by their bytes. A raster picture is checked whole and kept as it is. A file appears once however often it is shown, and the same bytes from two files are kept once. Limits: 16 MiB a file, 10,000 pixels a side, 40 megapixels, and 256 MiB of pictures a book.
+- **Where SVG is rasterised (§15):** in `adoc-kindle`, with `resvg`, as the DOCX exporter does. An SVG is drawn as a PNG at twice its size on a white ground, with nothing loaded from outside the file.
+- **Diagrams drawn by external tools (§15):** a diagram is embedded as the engine's diagram pipeline drew it, Mermaid in process and the others by their optional tools, as for PDF and Word. §7 is read as covering the Kindle conversion itself: `adoc-kindle` runs nothing. A diagram still pending when the book is written is its source, with a warning. A failed one is its source, with the export's diagram warning.
+- **Formulas without Typst (§15):** as for Word, a formula is drawn by the engine's STEM provider (the `typst` feature) and embedded as a picture whose alternative text is its source. A build without `typst` exports the source as fixed-width text, with a warning. There is no native maths markup in either format.
+- The cover is `KindleOptions::cover`, else the document's `front-cover-image` (a book's from its first page, read with the book's attributes). It is named in AZW3's EXTH 201 and KFX's `cover_image`. A sideloaded book's library thumbnail is the device's choice, documented in K8. No cover page is added to the reading order.
+- Pictures are sized for reflow: the AZW3 stylesheet's `max-width: 100%`, and no size in KFX, so the reader fits them.
+- A remote image is never fetched: it is a link to its address, with a warning. A missing, unreadable, malformed, oversized or out-of-bounds picture is its description, with a warning at its line.
+- Embedded fonts: none. Both formats leave the font to the reader (§6.3), so there is no font licence to check.
+- Tests: `kindle_media_is_embedded` and `kindle_bad_assets_are_reported` in `crates/adoc-kindle/tests/media.rs`.
+
 ## 17. References
 
 - Amazon KDP, [supported eBook formats](https://kdp.amazon.com/en_US/help/topic/G200634390)
