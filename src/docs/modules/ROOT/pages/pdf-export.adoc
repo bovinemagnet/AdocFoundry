@@ -50,6 +50,7 @@ An appendix's own caption ("Appendix A:") always shows.
 Export Page to PDF… (`export.pdf_page`) exports the active page as an article.
 It opens a save dialog, suggesting the page's name with a `.pdf` extension.
 Unsaved edits are included, because the export reads open buffers.
+A page whose header asks for a read-only export is refused for now, because a PDF cannot carry that restriction yet; see xref:read-only-exports.adoc[Read-only exports].
 
 A cross reference from the page to another page links to that page's address on the published site (`<site>/<component>/<version>/<module>/<page>.html`, without `ROOT` or `~`).
 The site address is `[pdf] site_url`, else the `site.url` of the Antora playbook (`antora-playbook.yml` at the workspace root).

@@ -541,8 +541,9 @@ pub(crate) fn export_message(output: &Path, result: &Result<ExportSummary, Strin
                     .as_ref()
                     .map_or_else(String::new, |look| format!(" {}", look_phrase(look)));
                 format!(
-                    "Exported {name} ({} AsciiDoc page{plural}){look}",
-                    summary.pages
+                    "Exported {name} ({} AsciiDoc page{plural}){look}{}",
+                    summary.pages,
+                    if summary.protected { ", read-only" } else { "" }
                 )
             } else {
                 format!("Exported {name} ({} pages)", summary.pages)
@@ -4100,6 +4101,9 @@ impl WorkspaceView {
         let Some(path) = engine.document(id).map(|document| document.path.clone()) else {
             return;
         };
+        if self.protection_refused(&ExportTarget::Page(id), extension, window, cx) {
+            return;
+        }
         let directory = path.parent().map(Path::to_path_buf).unwrap_or_default();
         let name = path
             .file_stem()
@@ -4427,6 +4431,9 @@ impl WorkspaceView {
         let directory = engine.roots().first().cloned().unwrap_or_default();
         let suggested = Some(format!("{name}.{extension}"));
         let target = ExportTarget::Component { name, version };
+        if self.protection_refused(&target, extension, window, cx) {
+            return;
+        }
         self.export_to(
             command,
             move |output| args(target, output),
@@ -4435,6 +4442,32 @@ impl WorkspaceView {
             window,
             cx,
         );
+    }
+
+    /// Says, before asking where to save, when the pages an export of `target` to the format
+    /// `extension` names ask for a read-only export it cannot carry, or one gives no policy:
+    /// the engine's own decision, so nothing is asked that would only be refused. The editors
+    /// are untouched either way.
+    fn protection_refused(
+        &self,
+        target: &ExportTarget,
+        extension: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let format = match extension {
+            "pdf" => adoc_engine::ExportFormat::Pdf,
+            "docx" => adoc_engine::ExportFormat::Docx,
+            "html" => adoc_engine::ExportFormat::Html,
+            _ => return false,
+        };
+        match self.app.read(cx).engine.export_protection(target, format) {
+            Err(error @ adoc_engine::EngineError::ExportProtection(_)) => {
+                window.push_notification(error.to_string(), cx);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Asks where to write `export`, starting in `directory` with `suggested`, then runs it

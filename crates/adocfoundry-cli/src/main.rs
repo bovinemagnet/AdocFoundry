@@ -1310,6 +1310,10 @@ fn report(
             } else {
                 outln!(out, "{} ({} pages)", output.display(), summary.pages);
             }
+            // The pages asked for a read-only export, and the document carries it.
+            if summary.protected {
+                outln!(out, "protected: read-only");
+            }
             let failed = fail_on.is_some_and(|threshold| {
                 summary.diagnostics.iter().any(|diagnostic| {
                     threshold == DiagnosticSeverity::Warning

@@ -983,7 +983,14 @@ impl Engine {
                     })
             })
             .collect::<Result<Vec<_>, EngineError>>()?;
-        self.protection_of(texts.into_iter(), (format, None))
+        // A PDF claims the standards `[pdf]` names, as an export of it would.
+        #[cfg(feature = "typst")]
+        let standard = (format == crate::ExportFormat::Pdf)
+            .then(|| crate::protection::pdfa(&self.settings.pdf.standards))
+            .flatten();
+        #[cfg(not(feature = "typst"))]
+        let standard = None;
+        self.protection_of(texts.into_iter(), (format, standard))
     }
 
     /// The decision for pages with these texts, written in `format` (with the PDF/A standard

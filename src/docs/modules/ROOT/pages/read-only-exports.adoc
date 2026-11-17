@@ -1,0 +1,142 @@
+= Read-only exports
+Paul Snow
+:revnumber: 0.0.0
+:description: Asking, in a page's own header, for its exports to carry an editing restriction: the attribute and its values, what each format does, refusals, and how the application, command line and MCP server report it.
+
+A page can ask, in its own header, for its exports to carry an editing restriction.
+A Word export of such a page opens read-only in Word and LibreOffice.
+The source page and the editors stay fully editable; the restriction is about the exported file only.
+
+[source,asciidoc]
+----
+= Architecture Guide
+:export-read-only: true
+----
+
+== What it is and is not
+
+It is a deterrent, not DRM.
+Word's protection is written without a password, so anyone who knows how can remove it.
+It does not encrypt the document or hide its content.
+
+Nothing but the page's header turns it on or off.
+No setting, profile key, command-line flag or MCP argument can do so.
+
+== The attribute
+
+[cols="2,4"]
+|===
+|Header entry |Meaning
+
+|`:export-read-only: true`
+|Exports carry the restriction.
+
+|`:export-read-only:`
+|The same, with an empty value.
+
+|`:export-read-only: false`
+|Exports are editable.
+
+|`:export-read-only!:` or `:!export-read-only:`
+|The same, with the attribute unset.
+
+|Absent
+|Exports are made as before.
+|===
+
+Any other value, such as `TRUE`, `yes`, `1` or `on`, is an error that names the page and line, and the export writes nothing.
+The attribute's name is not case-sensitive, and when the header declares it more than once the last declaration wins.
+
+== Where it must be
+
+Only the page's own main header counts.
+That is the title, its author and revision lines, attribute entries and comments, up to the first blank line.
+
+A declaration anywhere else never counts.
+That includes the body, an included file (its header or its body), `antora.yml`, the playbook, a publication profile's `attributes` and an export's own attributes.
+
+A declaration inside `ifdef::`, `ifndef::` or `ifeval::`, or after an `include::` in the header, is an error at its line, because it cannot be decided without running the preprocessor.
+
+The decision uses the text being exported, so unsaved edits in an open page are included.
+
+== What each format does
+
+[cols="2,3,3"]
+|===
+|Export |A page, or a book whose pages all ask |A book that mixes pages that ask with pages that do not
+
+|Word
+|The document carries Word's enforced document protection, read-only, with no password.
+Word and LibreOffice open it read-only.
+The document is otherwise identical to an editable one.
+|Refused, naming both lists of pages.
+Export them separately.
+
+|PDF
+|Not available yet.
+The export is refused with a message naming the page and line.
+|Refused.
+
+|PDF/A (`[pdf] standards`, `--standard` or a profile's `standards`)
+|Always refused, because PDF/A forbids the encryption a restricted PDF needs.
+|Refused.
+
+|HTML (Export Page to HTML…)
+|Refused, because HTML has no editing restriction.
+|Not applicable.
+|===
+
+A book carries the restriction only when every page of it asks.
+
+== Refusals
+
+Every refusal happens before anything is written, so a file already at the output is left as it was.
+A refusal names the page and line that asked, or, for an invalid value, the page and line of the declaration.
+
+== In the application
+
+Before it asks where to save, Export Page or Export Component to PDF, Word or HTML says when the pages ask for a read-only export that the format cannot carry, and names the pages.
+It asks nothing more.
+
+When a Word export succeeds, its notification ends ", read-only".
+
+== On the command line
+
+`adocfoundry-cli docx` and `pdf`, with or without `--profile`, exit with status 1 on every refusal, whatever `--fail-on` says.
+They print the reason with the page and line.
+A protected Word export prints `protected: read-only` after the output line.
+See xref:command-line.adoc#docx[Command line].
+
+== In the MCP server
+
+`export_docx` and `export_pdf` stay write tools, so they need `--allow-write`.
+A refusal is an error with one of these stable codes.
+
+[cols="3,4"]
+|===
+|Code |Meaning
+
+|`export_protection_unsupported`
+|The format cannot carry the restriction.
+
+|`export_protection_mixed`
+|A book mixes pages that ask with pages that do not. `details.editable` lists the editable pages.
+
+|`export_protection_pdfa_conflict`
+|A PDF would claim PDF/A.
+
+|`export_protection_invalid_header`
+|A header gives an invalid value. `details.source` gives `{path, line}`.
+|===
+
+`details.requested_by` lists `{path, line}` for each page that asks.
+A successful answer has `protected: true` or `protected: false`.
+See xref:mcp-server.adoc#errors[MCP server].
+
+== Not in this version
+
+* PDF permissions, so a PDF cannot carry the restriction yet.
+* Mixed Word books, with some pages editable.
+* Passwords.
+
+For the formats themselves, see xref:word-export.adoc[Exporting to Word] and xref:pdf-export.adoc[Exporting to PDF].

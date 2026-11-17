@@ -261,8 +261,12 @@ pub fn export_pdf() -> Arc<JsonObject> {
             "output": { "type": "string" },
             "pages": { "type": "integer" },
             "warnings": list(json!({ "type": "string" })),
+            "protected": {
+                "type": "boolean",
+                "description": "The PDF carries the editing restriction its pages asked for (`:export-read-only:`).",
+            },
         }),
-        &["output", "pages", "warnings"],
+        &["output", "pages", "warnings", "protected"],
     )
 }
 
@@ -279,6 +283,10 @@ pub fn export_docx() -> Arc<JsonObject> {
                 "description": "A page exported, in the document's order.",
             })),
             "warnings": list(json!({ "type": "string" })),
+            "protected": {
+                "type": "boolean",
+                "description": "The document is enforced read-only, as its pages asked (`:export-read-only:`).",
+            },
             "look": {
                 "type": "object",
                 "description": "The look the document was exported in.",
@@ -293,7 +301,14 @@ pub fn export_docx() -> Arc<JsonObject> {
                 "required": ["kind", "name", "path"],
             },
         }),
-        &["output", "pages", "sources", "warnings", "look"],
+        &[
+            "output",
+            "pages",
+            "sources",
+            "warnings",
+            "look",
+            "protected",
+        ],
     )
 }
 

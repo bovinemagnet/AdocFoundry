@@ -836,6 +836,11 @@ Nothing in a page's text, and nothing in a client's request, can change this.
 
 See xref:pdf-export.adoc[Exporting to PDF] for themes and standards.
 
+A page's header may ask for a read-only export (`:export-read-only: true`).
+`export_docx` then writes the document with Word's read-only protection, and `export_pdf` refuses.
+Both answers gain `protected: true` or `protected: false`, and a refusal is one of the `export_protection_*` errors, listed under <<errors>>.
+See xref:read-only-exports.adoc[Read-only exports].
+
 `export_docx` exports to an editable Word document.
 Exactly one of `path`, `component` or `profile` is given.
 `path` exports a page as an article, `component` (`name` or `version@name`) exports a component version as a book in navigation order, and `profile` exports a `[docx.profiles]` publication; an unknown profile is `not_found`.
@@ -1069,6 +1074,18 @@ The codes are stable.
 
 |`result_too_large`
 |The answer is too big, for example an SVG over 200,000 bytes.
+
+|`export_protection_unsupported`
+|An export of a page that asks for a read-only export (see xref:read-only-exports.adoc[Read-only exports]) in a format that cannot carry it, such as PDF.
+
+|`export_protection_mixed`
+|A book mixes pages that ask for a read-only export with pages that do not. `details.editable` lists the editable pages, and `details.requested_by` lists `{path, line}` for those that ask.
+
+|`export_protection_pdfa_conflict`
+|A PDF that claims PDF/A for a page that asks for a read-only export.
+
+|`export_protection_invalid_header`
+|A page's `export-read-only` value is invalid. `details.source` gives `{path, line}`.
 
 |`internal_error`
 |An unexpected failure.

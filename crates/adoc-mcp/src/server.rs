@@ -1320,22 +1320,26 @@ impl Server {
                     })?,
                 );
             }
-            let summary = state.engine.export_blocking(
-                ExportArgs {
-                    target,
-                    output,
-                    theme: args.theme.clone(),
-                    standards,
-                    fonts_dir: None,
-                    typst: None,
-                    attributes: Vec::new(),
-                },
-                TIMEOUT,
-            )?;
+            let summary = state
+                .engine
+                .export_blocking(
+                    ExportArgs {
+                        target,
+                        output,
+                        theme: args.theme.clone(),
+                        standards,
+                        fonts_dir: None,
+                        typst: None,
+                        attributes: Vec::new(),
+                    },
+                    TIMEOUT,
+                )
+                .map_err(|error| export_failure(state, error))?;
             Ok(json!({
                 "output": state.shown(&summary.output),
                 "pages": summary.pages,
                 "warnings": summary.diagnostics.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "protected": summary.protected,
             }))
         })
         .await
@@ -1392,7 +1396,10 @@ impl Server {
                 }
                 None => return Err(Failure::invalid("give the `output` to write")),
             };
-            let summary = state.engine.export_docx_blocking(export, TIMEOUT)?;
+            let summary = state
+                .engine
+                .export_docx_blocking(export, TIMEOUT)
+                .map_err(|error| export_failure(state, error))?;
             let look = summary.look.as_ref().map(|look| {
                 json!({
                     "kind": look.kind.as_str(),
@@ -1410,10 +1417,41 @@ impl Server {
                 "sources": summary.sources.iter().map(|path| state.shown(path)).collect::<Vec<_>>(),
                 "warnings": summary.diagnostics.iter().map(ToString::to_string).collect::<Vec<_>>(),
                 "look": look,
+                "protected": summary.protected,
             }))
         })
         .await
     }
+}
+
+/// An export's failure: a read-only export's refusal with its code and the pages it names,
+/// root-relative (`requested_by` with their lines, `editable`), else as any engine error.
+fn export_failure(state: &State, error: adoc_engine::EngineError) -> Failure {
+    let adoc_engine::EngineError::ExportProtection(refusal) = &error else {
+        return Failure::from(error);
+    };
+    use adoc_engine::ProtectionRefusal;
+    let source = |source: &adoc_engine::ReadOnlySource| json!({ "path": state.shown(&source.path), "line": source.line });
+    let details = match refusal.as_ref() {
+        ProtectionRefusal::InvalidHeader(header) => json!({ "source": source(&header.source) }),
+        ProtectionRefusal::UnsupportedFormat { requested_by, .. }
+        | ProtectionRefusal::IncompatibleStandard { requested_by, .. } => json!({
+            "requested_by": requested_by.iter().map(source).collect::<Vec<_>>(),
+        }),
+        ProtectionRefusal::MixedDocument {
+            requested_by,
+            editable,
+            ..
+        } => json!({
+            "requested_by": requested_by.iter().map(source).collect::<Vec<_>>(),
+            "editable": editable.iter().map(|path| state.shown(path)).collect::<Vec<_>>(),
+        }),
+    };
+    Failure::new(
+        crate::responses::protection_code(refusal),
+        error.to_string(),
+    )
+    .with_details(details)
 }
 
 /// A Word export of `target` with the settings' paper and orientation; the output is set after.

@@ -307,6 +307,16 @@ Each work package records here where the implementation departs from this docume
 - **LibreOffice.** A protected page exported and opened in LibreOffice 26.8 (headless) converts to PDF, and saved back to Word keeps `w:documentProtection` read-only and enforced, which shows LibreOffice read it.
 - **Tests.** `docx_readonly_settings_enforced` (`crates/adoc-docx/tests/protection.rs`: one enforced read-only element, no password, every other part byte for byte the editable document's) and `docx_readonly_preserves_relationships` (`crates/adoc-engine/tests/docx_export.rs`: the reference book with every page protected passes every structural check and differs from the editable book only in its settings). The READONLY 2/5 tests now expect Word to protect an enabled page or an all-enabled book.
 
+### READONLY 5/5 (#701): the front ends, documentation and QA
+
+Ahead of READONLY 4/5 in the stack, so the Word protection reaches every front end while the PDF's feasibility gate is decided; protected PDF stays refused until then.
+
+- **App.** Export Page and Export Component to PDF, Word or HTML ask `Engine::export_protection` before the save dialog and, on a refusal, say why (naming the pages) and ask nothing more; the engine's decision when the export runs is the same one. A Word export's notification ends ", read-only" when `ExportSummary::protected` is set. The source and visual editors are untouched. `Engine::export_protection` reads `[pdf] standards` for a PDF, as the export does, so its PDF/A refusal reads the same.
+- **CLI.** A refusal fails `docx` and `pdf` (with or without `--profile`) with exit status 1 and the reason, whatever `--fail-on` says, as every engine error already did; a protected export prints `protected: read-only` after its output line.
+- **MCP.** Four stable codes in `ErrorCode`: `export_protection_unsupported`, `export_protection_mixed`, `export_protection_pdfa_conflict` and `export_protection_invalid_header`, from `responses::protection_code`. The export tools' `export_failure` adds root-relative details: `requested_by` (`{path, line}` of each page that asks), `editable` for a mixed book, `source` for an invalid header. `export_docx` and `export_pdf` answer `protected`, in their output schemas. `export_protection_credentials_required` is not needed: no front end is ever asked for a credential (READONLY 4/5 decides the PDF's owner key without one).
+- **Documentation.** `src/docs/modules/ROOT/pages/read-only-exports.adoc`, with pointers from the Word and PDF export pages, the command line and the MCP server pages; the manual checks in `docs/qa/readonly.md`.
+- **Tests.** `protection_cli_exit_codes` (`crates/adocfoundry-cli/tests/cli.rs`), `protection_mcp_errors` (`crates/adoc-mcp/tests/protection.rs`) and `protection_app_keeps_editors_editable` (`crates/adocfoundry/src/ui_tests.rs`).
+
 ## 15. References
 
 - Epic #685.
