@@ -131,6 +131,23 @@ def docx_export(directory):
               f"adocfoundry-cli docx writes a Word document {output.stderr.strip()}")
 
 
+def kindle_export(directory):
+    """The binaries are built with Kindle export: a page becomes an AZW3 (a BOOKMOBI database)
+    and a KFX (a CONT container), each its own format."""
+    page = os.path.join(FIXTURES, "pdf", "reference", "article.adoc")
+    for extension, offset, magic in (("azw3", 60, b"BOOKMOBI"), ("kfx", 0, b"CONT")):
+        with tempfile.TemporaryDirectory() as out:
+            book = os.path.join(out, "article." + extension)
+            output = subprocess.run(
+                [binary(directory, "adocfoundry-cli"), "kindle", page, "--output", book],
+                capture_output=True, text=True, timeout=TIMEOUT,
+            )
+            with open(book, "rb") if os.path.isfile(book) else open(os.devnull, "rb") as file:
+                head = file.read(offset + len(magic))[offset:]
+            check(output.returncode == 0 and head == magic,
+                  f"adocfoundry-cli kindle writes {extension} {output.stderr.strip()}")
+
+
 def lsp_message(payload):
     body = json.dumps(payload).encode()
     return b"Content-Length: %d\r\n\r\n%s" % (len(body), body)
@@ -249,6 +266,7 @@ def main():
     versions(directory, expected)
     pdf_export(directory)
     docx_export(directory)
+    kindle_export(directory)
     language_server(directory)
     mcp_server(directory)
     if "--no-app" not in sys.argv:

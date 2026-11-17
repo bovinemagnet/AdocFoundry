@@ -1,0 +1,151 @@
+= adoc-kindle
+Paul Snow
+:revnumber: 0.0.0
+:description: Kindle export: an export mapped to one book model, for AZW3 (KF8) and KFX (KF10) writers, in-house, with no PDF or Typst in between.
+
+`adoc-kindle` turns a rendered view tree into a Kindle book.
+It is at layer L2, beside `adoc-render`, which it reads.
+The specification is `docs/prd/PRD-AdocFoundry_Kindle_Export.md` in the repository, and the spike's record is `docs/qa/spike-kindle.md`; neither is part of this site.
+The engine calls the crate behind its `kindle` feature (`export.kindle_page`, `export.kindle_component` and `Engine::export_kindle_blocking`).
+`adocfoundry-cli kindle`, the app's Export Page to Kindle…, Export Component to Kindle… and Export Kindle Profile… and the MCP `export_kindle` tool call it through the engine; see xref:ROOT:kindle-export.adoc[Exporting to Kindle].
+
+== What it does
+
+The crate is given a `KindleDocument`, which is an article (a `KindlePage`) or a book (a `KindlePlan` of parts, headings and pages), and builds one `KindleBook` from it with `KindleBook::build`.
+Each writer then writes that one book, so the two formats never differ in content.
+It knows nothing of the engine, the workspace or a UI framework.
+
+The book holds:
+
+* chapters in reading order, with the ids `c1`, `c2` and so on, and their blocks and inlines;
+* a nested table of contents;
+* metadata: the title, authors, language, a stable `urn:uuid:` identifier derived from the title, authors and version, the publisher, the description, the date (from `revdate`) and the version (from `revnumber`);
+* assets.
+
+== Where it sits
+
+`adoc-kindle` is headless.
+It depends on `adoc-render`, an allowed same-layer pair listed in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`, and on `adoc-core`, `adoc-dom` and `sha2`.
+It must never build `adoc-pdf`, `adoc-docx`, Typst or the engine.
+It starts no process and uses no network: `cargo xtask layers` refuses `std::process`, `Command::new`, `std::net`, `TcpStream` and `UdpSocket` in its sources.
+It also checks that `adoc-kindle`, and the engine built with `--no-default-features --features kindle`, compile none of `adoc-pdf`, `adoc-docx`, `adoc-math` or Typst, which the test `kindle_builds_alone` holds.
+
+== Anchors and links
+
+* Anchors are generated, never taken from a path: `c<n>-a<m>` for an id a page defines, `c<n>-n<number>` for a footnote and `c<n>-r<number>` for its first mark.
+They are stable, and cannot collide across pages.
+* A cross reference becomes a link inside the book when its target page is in the book.
+Otherwise it is the page's published URL when a site URL is configured, and failing that it stays text with a warning at its source.
+
+== Content and fallbacks
+
+Both formats are written from the same `KindleBook`, so the chapters, the table of contents and the links agree.
+The tests `kindle_formats_agree`, `kindle_content_stays_text` and `kindle_unsupported_content_warns` (in `crates/adoc-kindle/tests/content.rs`) read both formats back independently.
+
+* Lists, code, description lists, admonitions, quotes, tables and footnotes are text, never pictures.
+* Tables stay tables, with header rows and spans.
+A table inside another table's cell becomes paragraphs, one line per row with the cells separated by ` | `, and a warning at its source line.
+* A part of a book is a chapter of its own at the top of the table of contents.
+A page's sections are nested under the page, two levels deep, and headings move down by the page's navigation depth.
+
+Anything a Kindle cannot show has a readable fallback and a warning located at its source:
+
+* A cross reference out of the book is emphasised text, or the target page's published address when a site URL is configured.
+* Audio and video become their addresses.
+* Passthrough content is text, never markup.
+* An unsupported block is its source.
+* A remote image is never fetched: it becomes a link to its address, with a warning.
+* A picture that is missing, unreadable, malformed, oversized or out of bounds is its description, with a warning at its line.
+* A diagram still pending when the book is written is its source, with a warning.
+* Without the engine's `typst` feature, a formula is its source as fixed-width text, with a warning.
+
+== Pictures and the cover
+
+Images, diagrams and formulas are embedded in both formats.
+The `media` module reads each picture through the export's `FileAccess`, and tells PNG, JPEG, GIF and SVG apart by their bytes, never by their names.
+
+* Raster pictures are checked whole and kept as they are.
+* SVG is drawn as a PNG in process with `resvg`, at twice its size on a white ground, and nothing is loaded from outside the file.
+* Each file is kept once however often it is shown, and identical bytes are kept once.
+* The limits are 16 MiB a file, 10,000 pixels a side, 40 megapixels, and 256 MiB of pictures a book.
+* Diagrams are embedded as the engine's diagram pipeline drew them.
+* Formulas drawn by the engine's STEM provider (the engine's `typst` feature) are embedded as pictures, and their alternative text is their source.
+* Pictures size for reflow, with no fixed sizes, and no fonts are embedded.
+
+The cover is `KindleOptions::cover`, else the document's `front-cover-image`, which for a book is the first page's.
+AZW3 names it in the EXTH 201 record, and KFX in its `cover_image` metadata.
+No cover page is added to the reading order.
+
+The tests are `kindle_media_is_embedded` and `kindle_bad_assets_are_reported`, in `crates/adoc-kindle/tests/media.rs`.
+
+== The API
+
+`write_kindle(&KindleDocument, KindleFormat, &KindleOptions)` writes the book in memory and checks the bytes before returning them.
+`KindleFormat::Azw3` is KF8, and `KindleFormat::Kfx` is KF10.
+Both are written from the same `KindleBook`, and a format is never written in place of another.
+A failure is a `KindleError`: `Unsupported`, `Invalid` or `TooLarge`.
+
+Both writers exist: AZW3 (Kindle 3/9) and KFX (Kindle 4/9).
+
+== The AZW3 writer
+
+The writer is the `azw3` module.
+It writes KF8 only, in a PalmDB/MOBI file with no MOBI7 part.
+
+* Record 0 holds the PalmDOC header, a 264-byte version 8 MOBI header, the EXTH metadata (authors, publisher, description, date, identifier, start reading position, resource count, cover, title, language, writing mode and page progression) and the full title.
+* The records after it are the text records, the fragment index and its CNCX strings, the skeleton index, the NCX index (the nested table of contents, with parent and child links), FDST (two flows: markup and stylesheet), the pictures, RESC (the spine), FLIS, FCIS and the end-of-file record.
+* Each chapter is one skeleton with an empty `<body aid="...">`, and fragments of its body's top-level elements grouped up to 8 KiB.
+* Internal links are `kindle:pos:fid:...:off:...`, written as fixed-width placeholders and filled in once every fragment is placed.
+A link to an anchor the book lacks fails the export.
+* Text records hold 4,096 bytes uncompressed, with only the multibyte trailing entry.
+There is no PalmDOC compression and there are no indexing trailing byte sequences, both of which are optional for KF8 readers.
+* The stylesheet sizes in `em` and names no font and no fixed width, so the reader's font, size and theme apply.
+* The writer reads its own file back (the record list, record 0, every pointer's magic, FDST against the text length and the end-of-file record) before returning the bytes.
+
+The tests use `adoc_kindle::testing::read_azw3` (feature `test-support`), a reader written apart from the writer.
+It reassembles the chapters from skeletons and fragments, decodes the indexes and CNCX strings, and follows `kindle:pos` links.
+The `mobi` crate (MIT, a dev-dependency only) reads the same files.
+The tests are `azw3_is_a_kf8_container`, `azw3_reads_back_complete` and `kindle_never_substitutes_a_format` in the crate, and `kindle_and_pdf_select_the_same_pages` in the engine's `tests/kindle_export.rs`.
+
+NOTE: The format facts come from epub3-kindle's MIT source (see the spike's record).
+The output has not yet been checked on a Kindle device.
+
+== The KFX writer
+
+The writer is the `kfx` module.
+KFX has no public specification: the entity types, symbol numbers and layout follow the MIT-licensed writer in ebook-rs 0.18.6, whose notice is `src/kfx/LICENSE-ebook-rs`, listed in the third-party notices.
+`ion.rs` encodes Amazon Ion binary from the public Ion specification.
+
+* The file is a version 2 `CONT` container: the entity index, the document's symbol table, the format capabilities, the container's description and kfxgen's trailer, then each entity as an `ENTY` header followed by its Ion binary value (raw bytes for pictures).
+* The symbol table is the shared `YJ_symbols` version 10 import, then the book's own symbols.
+The import names 842 symbols, so that the book's own symbols, which start at `$852`, follow it as the Ion specification counts.
+This is the one departure from ebook-rs.
+* Each chapter is a section with one page template naming a storyline of blocks: text, pictures and tables.
+Text is kept in content fragments of up to 8 KiB, and bold, italic, fixed-width and links are style events.
+* Anchors lead to a block's id and character offset, or to an address.
+The table of contents is the book navigation, nested, and position maps give each block its place.
+* The stylesheet sizes in `em` and names no font but `monospace`.
+Whether a Kindle honours those style properties is still to be checked on a device.
+
+Where KFX here has no structure, the content is kept as text:
+
+* list items have a bullet or number before them, and nested content is indented;
+* quotes and asides are their blocks;
+* superscript and subscript are plain text;
+* each table cell is one text run;
+* a footnote mark is `[n]`, linking to its note and back;
+* page breaks are dropped, since the reader lays out pages.
+
+The writer reads its container back before returning the bytes.
+The tests use `adoc_kindle::testing::read_kfx` (feature `test-support`), an independent reader with its own Ion decoder.
+They are `kfx_is_a_kfx_container`, which checks that every reference resolves, and `kfx_reads_back_complete`, which checks the chapters, contents, metadata, links and pictures.
+`ADOC_KINDLE_OUT=<dir> cargo test -p adoc-kindle --test kfx -- --ignored` writes a sample book in both formats for checking on a Kindle.
+
+NOTE: The KFX output has not yet been checked on a Kindle device, and KFX is the riskier of the two formats.
+
+== Related
+
+* xref:adoc-render.adoc[adoc-render], which builds the view tree
+* xref:adoc-dom.adoc[adoc-dom], for source spans
+* xref:adoc-docx.adoc[adoc-docx], the Word export, which this crate never builds
+* xref:index.adoc[Crates]

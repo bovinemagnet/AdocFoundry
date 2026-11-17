@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft, 2026-11-16; not yet approved for implementation. K1 (§13) is a feasibility gate for everything after it, and the open decisions in §15 are settled in the work package they affect |
+| Status | Approved for implementation, 2026-11-17, after the K1 spike (`docs/qa/spike-kindle.md`): both formats are written in-house. The open decisions in §15 are settled in the work package they affect, and recorded in §16 |
 | Date | 2026-11-16 |
 | Scope | A native publication backend that writes reflowable Kindle books, `.kfx` (KF10) and `.azw3` (KF8), for a page, an Antora component version or selected navigation files, entirely in Rust, through the engine, CLI, desktop app and MCP server |
 | Repository | [bovinemagnet/AdocFoundry](https://github.com/bovinemagnet/AdocFoundry) |
@@ -121,7 +121,7 @@ KFX and AZW3 are files a Kindle reads. They are not KDP manuscript formats: Amaz
 - `adoc-kindle`'s own source is held to a forbidden-paths list in `xtask/src/layers.rs` (no process, no network), as `adoc-audit` and `adoc-impact` are.
 - A third-party crate is accepted only after a review of its licence, the toolchain it needs (the workspace's `rust-version` is 1.99), safety, maintenance, features and build size, and it must pass `cargo deny check`. The licence check covers test dependencies too.
 - No GPL or other copyleft dependency. [`boko`](https://github.com/zacharydenton/boko) reads and writes both formats but is GPL-3.0; it is not added to this repository, as a dependency or as a test dependency, without a separate, explicit licensing decision.
-- [`ebook-rs`](https://github.com/SV-stark/ebook-rs) (MIT, a KFX writer) and [`epub3-kindle`](https://github.com/cbz-tools/Epub3-Kindle) (MIT, an AZW3 writer) are **candidates only**. Both are young projects with few users, and what a README claims is not evidence. K1 builds a constrained prototype with each and tests the result on real readers before either is chosen. An in-house writer remains an option where a dependency falls short.
+- [`ebook-rs`](https://github.com/SV-stark/ebook-rs) (MIT, a KFX writer) and [`epub3-kindle`](https://github.com/cbz-tools/Epub3-Kindle) (MIT, an AZW3 writer) were the candidates. K1 built a prototype with each and chose in-house writers for both formats (§16). Their MIT source is a reference for the format facts, not a dependency.
 - A dependency may take structured XHTML or EPUB-like parts in memory, as long as the conversion stays in Rust and those parts are internal data. No `.epub` file is written.
 - The workspace forbids `unsafe` code, so an in-house writer is written without it.
 
@@ -225,7 +225,7 @@ Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`
 | K6 | Embedded covers, images, diagrams, fonts and STEM | #632 (Kindle 6/9) |
 | K7 | `[kindle]` settings and profiles; engine, CLI, desktop and MCP entry points | #633 (Kindle 7/9) |
 | K8 | Conformance tests, device QA, performance and documentation | #634 (Kindle 8/9) |
-| K9 | Research: a native Rust KPF writer for KDP submission | #635 (Kindle 9/9) |
+| K9 | Research: a native Rust KPF writer for KDP submission. Deferred (§16) | #635 (Kindle 9/9) |
 
 Order: K1 first, since it decides whether and how each format is written. K2 follows, on K1 and on #619. K3 and K4 proceed independently of each other; K5 and K6 integrate with both; K7 once the engine's interface is stable (its scaffolding may start earlier); K8 verifies and documents the release. K9 runs at any time, may reuse K1's findings, and never blocks the KFX and AZW3 release.
 
@@ -259,7 +259,120 @@ Each is settled before work starts on the package it affects, and the outcome is
 
 ## 16. Implementation notes
 
-None yet. Each work package records here where the implementation departs from this document and how the open decisions of §15 were settled.
+Each work package records here where the implementation departs from this document and how the open decisions of §15 were settled.
+
+### K1 (#627): the spike
+
+The record is `docs/qa/spike-kindle.md`.
+
+- **Writer per format:** both in-house, in `adoc-kindle`, with no writer dependency. Both candidates produced real, repeatable containers, but each takes only a packaged EPUB. `epub3-kindle`'s `zip` dependency compiles three C libraries, and its build script compiles on every platform. `ebook-rs` brings 72 crates, `unsafe` code and string errors.
+- **Format facts:** KF8 comes from `epub3-kindle`'s MIT source. KFX comes from `ebook-rs`'s MIT source and the Amazon Ion binary specification. No GPL source is consulted; code derived from `ebook-rs` keeps its MIT notice.
+- **If KFX proves blocked:** it is not blocked, since a Rust writer exists and its container reads back. The decision returns to the maintainer only if the in-house KFX fails the reader checks in K8.
+- **Independent readback:** for AZW3, `mobi` 0.8.0 (MIT, a dev-dependency only), plus a KF8 index reader in `adoc-kindle`'s `testing` module. For KFX, an Ion and container reader in that module, written apart from the writer.
+- **Supported readers:** proposed in the spike record and confirmed by hand in K8. Nothing older than the Kindle Touch (4th generation).
+- **Budgets:** those of the DOCX exporter's large book, given in the spike record.
+- **Shared plan:** #619 is done (the DOCX epic), so K2 builds on the plan it extracted; the question of who extracts it does not arise.
+
+### K2 (#628): the crate, the book and the engine's feature
+
+- `adoc-kindle` (L2, on `adoc-render`) maps a `KindleDocument` to a `KindleBook` (`KindleBook::build`) and writes it with `write_kindle(document, KindleFormat, options)`, in memory, the bytes checked before they are returned. The book is public in the crate's API, for the engine and the tests, and never shown to users.
+- Anchors are named before anything is mapped: `c<n>` for a chapter, `c<n>-a<m>` for an id a page defines, `c<n>-n<k>` and `c<n>-r<k>` for a footnote and its first mark.
+- The engine's `kindle` feature adds `Request::Kindle` to the shared pipeline, with `KindleExportArgs` (no other format's options), `export.kindle_page`, `export.kindle_component` and `export_kindle_blocking`. The output's extension must be the format's. A page asking for `:export-read-only:` is refused, since a Kindle book carries no restriction (`ExportFormat::Kindle`).
+- Cancellation: the writers work in memory on the export's worker, and a timed-out or abandoned export is dropped by the job's `Commit` before its file is renamed into place, as for PDF and DOCX. The writers need no cancellation of their own.
+- Departure: `kindle_and_pdf_select_the_same_pages` (§12 test 1) needs a writer to export with, so it lands with K3, the first writer. K2 writes nothing yet: `write_kindle` returns `KindleError::Unsupported` for both formats until K3 and K4.
+- Images, diagrams and formulas are exported as their descriptions or sources, with a warning, until K6 embeds them.
+
+### K3 (#629): the AZW3 writer
+
+- `azw3/` writes KF8 only, in a PalmDB/MOBI file: record 0 (PalmDOC header, a 264-byte version 8 MOBI header, EXTH, the title, KindleGen's 8 KiB of padding), the text records, a two-byte separator, the fragment index and its `CNCX`, the skeleton index, the NCX index and its `CNCX`, `FDST` (markup and stylesheet flows), the pictures, `RESC` (the spine), `FLIS`, `FCIS` and the end-of-file record. The record layout and header fields follow `epub3-kindle`'s, the writer with device evidence.
+- Each chapter is one skeleton (`<body aid="…">` empty) and fragments of its body's top-level elements, grouped up to 8 KiB, all inserted under the body (`P-//*[@aid='…']`). An oversized element stays one fragment.
+- Internal links are `kindle:pos:fid:…:off:…`, written as fixed-width placeholders and filled in once every fragment is placed. A link to an anchor the book lacks fails the export rather than being written broken.
+- Text records hold 4,096 bytes uncompressed, with the multibyte trailing entry only (`extra_data_flags` 1), and no PalmDOC compression.
+- **Departure, unverified:** `epub3-kindle`, the writer with device evidence, sets `extra_data_flags` to 3 and writes the trailing byte sequences that index the table of contents by text record. This writer writes neither, on the reading that a reader uses the flags to know which entries a record has and the sequences only to speed up navigation. Whether a Kindle accepts the book without them, and navigates it as well, is a device check (`docs/qa/kindle.md`). If it does not, the sequences are written as `epub3-kindle` writes them.
+- The stylesheet sizes in `em` and names no font or fixed width.
+- `write` reads its own file back (`check`: the PalmDB list, record 0, every pointer's magic, the FDST against the text length, the end-of-file record) before returning it.
+- `adoc_kindle::testing::read_azw3` is the independent reader. It reassembles chapters from skeletons and fragments as a reader does, decodes the indexes and `CNCX`, and follows `kindle:pos` links. The `mobi` crate reads the same files in `azw3_is_a_kf8_container`.
+- `kindle_and_pdf_select_the_same_pages` is in the engine's `tests/kindle_export.rs`, as K2 recorded.
+- Not yet checked on a Kindle (`docs/qa/kindle.md`, K8).
+
+### K4 (#630): the KFX writer
+
+- `kfx/` writes a version 2 `CONT` container: the entity index, the document's symbol table (`YJ_symbols` version 10, then the book's own symbols), the format capabilities, the container's description and `kfxgen`'s trailer, then each entity as `ENTY` and its Ion. The entity types, symbol numbers and layout follow `ebook-rs` 0.18.6's MIT writer, whose notice is `src/kfx/LICENSE-ebook-rs`, listed in the third-party notices. `ion.rs` encodes Ion from the Amazon Ion specification.
+- Departure from `ebook-rs`: the `YJ_symbols` import names 842 symbols, not 851. With Ion's nine system symbols that ends at `$851`, so the book's own symbols starting at `$852` follow it as the Ion specification counts. `ebook-rs` starts them at `$852` too, which an import of 851 would overlap.
+- Each chapter is a section with one page template naming a storyline. Its blocks are text (characters in content fragments of up to 8 KiB, bold, italic and fixed-width runs and links as style events), pictures and tables.
+- What KFX here does not carry is kept as text. List items are text blocks with `•` or a number before them, and nested content is indented with spaces. Quotes and asides are their blocks. Superscript and subscript are plain text, and a definition's term is bold. A table cell is one text run, a line per block. A footnote mark is `[n]`, linking to its note, which links back. A page break is dropped, since the reader lays out pages. An inline picture is its alternative text.
+- Looks are styles with sizes in `em` (headings from 1.1 to 1.6) and no font named but `monospace`. The property symbols for weight, style, size and family are those `ebook-rs` names for fonts; that styles take them is not shown by any source and stays to be checked on a Kindle.
+- Identifiers (`asset_id`, `ASIN`, `book_id`) come from the book's identifier, and `cde_content_type` is `PDOC`, as `ebook-rs` writes it.
+- `write` reads its own container back (`check`) before returning it. `adoc_kindle::testing::read_kfx` is the independent reader: an Ion decoder and container reader written from the specification. `kfx_is_a_kfx_container` checks that every reference resolves, and `kfx_reads_back_complete` checks chapters, contents, metadata, links and pictures. `ADOC_KINDLE_OUT=<dir> cargo test -p adoc-kindle --test kfx -- --ignored` writes a sample in both formats for manual checks.
+- As a development check outside the repository, `ebook-rs`'s own reader read the sample KFX back: its title, author, language, both chapters' text and the nested table of contents. It is not a dependency.
+- Not yet checked on a Kindle (`docs/qa/kindle.md`, K8). KFX remains the riskier format: if a Kindle refuses it, §15's "If KFX proves blocked" comes back to the maintainer.
+
+### K5 (#631): meaning, references and navigation
+
+- **Tables (§15):** a table stays a table in both formats, with its header row and its spans. A table inside another's cell, which few readers lay out, becomes paragraphs instead: a line per row, its cells separated by ` | `, with a warning at its source line. Settled for both formats in the book, so they agree.
+- A picture in a KFX table cell is its alternative text, as KFX here writes a cell as one run of text.
+- The fallbacks of §6.2, each with a located warning from the mapping: a reference out of the book is emphasised text (or the published page's address when `page_urls` has one); audio and video are their addresses; passthrough content is text, never markup; an unsupported block is its source. Pictures, diagrams and formulas until K6, as K2 recorded.
+- A cross reference's target is compared after lexical normalisation, so `../other/page.adoc` from a page finds that page in the book.
+- The chapter structure follows the plan the engine shares with PDF and Word: a part is a chapter of its own, at the top of the table of contents, and a page's sections are nested below the page, two levels deep. Headings move down by the page's depth.
+- Tests: `kindle_formats_agree` (chapters, table of contents and links in both formats, read back independently), `kindle_content_stays_text` and `kindle_unsupported_content_warns`, in `crates/adoc-kindle/tests/content.rs`.
+
+### K6 (#632): covers, pictures, diagrams and formulas
+
+- `media.rs` reads each picture through the export's `FileAccess` and tells PNG, JPEG, GIF and SVG apart by their bytes. A raster picture is checked whole and kept as it is. A file appears once however often it is shown, and the same bytes from two files are kept once. Limits: 16 MiB a file, 10,000 pixels a side, 40 megapixels, and 256 MiB of pictures a book.
+- **Where SVG is rasterised (§15):** in `adoc-kindle`, with `resvg`, as the DOCX exporter does. An SVG is drawn as a PNG at twice its size on a white ground, with nothing loaded from outside the file.
+- **Diagrams drawn by external tools (§15):** a diagram is embedded as the engine's diagram pipeline drew it, Mermaid in process and the others by their optional tools, as for PDF and Word. §7 is read as covering the Kindle conversion itself: `adoc-kindle` runs nothing. A diagram still pending when the book is written is its source, with a warning. A failed one is its source, with the export's diagram warning.
+- **Formulas without Typst (§15):** as for Word, a formula is drawn by the engine's STEM provider (the `typst` feature) and embedded as a picture whose alternative text is its source. A build without `typst` exports the source as fixed-width text, with a warning. There is no native maths markup in either format.
+- The cover is `KindleOptions::cover`, else the document's `front-cover-image` (a book's from its first page, read with the book's attributes). It is named in AZW3's EXTH 201 and KFX's `cover_image`. A sideloaded book's library thumbnail is the device's choice, documented in K8. No cover page is added to the reading order.
+- Pictures are sized for reflow: the AZW3 stylesheet's `max-width: 100%`, and no size in KFX, so the reader fits them.
+- A remote image is never fetched: it is a link to its address, with a warning. A missing, unreadable, malformed, oversized or out-of-bounds picture is its description, with a warning at its line.
+- Embedded fonts: none. Both formats leave the font to the reader (§6.3), so there is no font licence to check.
+- Tests: `kindle_media_is_embedded` and `kindle_bad_assets_are_reported` in `crates/adoc-kindle/tests/media.rs`.
+
+### K7 (#633): settings, profiles and the front ends
+
+- `[kindle]` (`KindleSettings`, built without the `kindle` feature too) holds the default `format` (AZW3 unless set: more Kindles read it) and the metadata defaults `title`, `creator`, `language`, `identifier`, `publisher` and `cover`. `[kindle.profiles.<name>]` (`KindleProfile`) names its content with exactly one of `page`, `component` or `nav`, through the PDF and Word profiles' shared helpers, plus `format`, `output`, `attributes`, the metadata and `cover`. An output whose extension is not a Kindle book's, or disagrees with `format`, is refused when the settings are read.
+- **Profile sharing (§15):** as for Word, a Kindle profile repeats its content rather than naming another format's profile. Nothing is read from `[pdf]` or `[docx]`.
+- The engine adds `export.kindle_profile` (Export Kindle Profile…), `Engine::kindle_profile_export_args`, `kindle_profile_problems` and `kindle_profiles`. A profile's output must be inside the workspace, and its format comes from its output's extension, else its `format`, else `[kindle] format`. An export's own metadata wins over `[kindle]`'s, and `[kindle]`'s over the document's.
+- **Which builds include it (§15):** the app, the CLI and the MCP server name the engine's `kindle` feature; `adoc-ls` does not, and `cargo xtask layers` keeps it out of its build.
+- **The app:** Export Page to Kindle… and Export Component to Kindle… first offer the format (the default first), then the save dialog, then report as the other exports do. No preview is opened.
+- **The CLI:** `adocfoundry-cli kindle` takes the format from `--format`, else the output's extension, else `[kindle] format`. A format and an output that disagree are refused. `--fail-on` gates as for PDF and Word.
+- **The MCP server:** `export_kindle`, a write tool, takes a `path`, `component` or `profile`, an optional `format` and an `output` inside the roots, not a link, not a page, of the format's extension. It answers with the format written.
+- Tests: `kindle_profiles_resolve_and_validate` and `kindle_failed_export_keeps_existing_output` (engine), `kindle_cli_exports_and_gates` (CLI), `kindle_mcp_export_is_write_gated` (MCP) and `kindle_app_exports_through_engine` (the app). The manual checks are `docs/qa/kindle.md`.
+
+### K8 (#634): conformance, performance and documentation
+
+- `kindle_reference_book_is_complete` exports `tests/fixtures/docx/reference` with `tests/fixtures/kindle/reference` laid over it, in both formats. The overlay adds `[kindle]` settings, a profile and an extra page with Japanese and Greek text, an id another page defines too, page aliases, a missing picture and a listing never closed. Each book is read back by the independent readers: the pages of version 2.0 only, in order; links on elements' starts; contents entries on headings; the cover, pictures, diagram and formulas; the warnings located. The profile writes the same bytes.
+- `kindle_output_is_deterministic`: the same bytes from one engine twice, and from another engine with the workspace in another folder.
+- `kindle_large_book_is_bounded` (its own test binary, `tests/kindle_large.rs`): 600 pages of ten sections each, with 50 distinct pictures, in both formats. On a 2024 laptop in a debug build: AZW3 in 3.6 s and KFX in 4.0 s, the command returning in 0.34 s and no pump over 0.16 s, against the budgets of 90 s, 3 s and 3 s. Peak memory is checked where Linux reports it, against 2 GB.
+- `kindle_is_in_process` (`xtask`): `adoc-kindle`'s sources name no process or network path, and every package it builds may be used under a licence that is not copyleft. An `OR` choice that may be taken without copyleft is allowed, as `cargo deny` allows it. `cargo xtask layers` runs both checks.
+- Fuzzing: `fuzz/fuzz_targets/kindle_write.rs` writes any page in both formats, reads each back and follows every link. It is in the weekly fuzz workflow and seeded from the fixtures' pages. It ran 56,899 inputs in two minutes without a failure.
+- Compile size: the release binaries gain `adoc-kindle` and nothing else. `resvg` and `sha1_smol` were in the tree already. `mobi` and its encoding tables are dev-dependencies only. The crate is about 6,400 lines with its test readers.
+- The release smoke test (`packaging/smoke-test.py`) exports a page as AZW3 and as KFX with the packaged `adocfoundry-cli`, and checks each file's signature.
+- What tests cannot show remains in `docs/qa/kindle.md`, not yet run: the books on a Kindle e-reader and a Kindle app. Until then neither format is called ready, and the epic stays open.
+
+### K9 (#635): KPF for Kindle Direct Publishing
+
+**Decision: defer.** No KPF writer is planned, no `.kpf` output exists, and none is exposed or stubbed. The KFX and AZW3 export is neither blocked nor changed by this. The question reopens, as its own epic, only when the open questions below have answers that can be checked.
+
+Documented fact:
+
+- KDP accepts a manuscript as EPUB, DOCX or KPF, and KPF is what Kindle Create saves (Amazon's KDP help on supported formats, §17). KDP no longer accepts MOBI manuscripts.
+- KPF is a different format from KFX. Neither a `.kfx` nor an AZW3, relabelled, is a `.kpf`.
+- Amazon publishes no KPF specification, and no Rust crate on crates.io writes KPF. Neither MIT candidate of K1 (`ebook-rs`, `epub3-kindle`) reads or writes it, and the GPL `boko` is out of reach in any case (§7).
+- AdocFoundry already writes DOCX (#613), which KDP accepts, and EPUB export (#614) is planned. Those are the documented, supported routes to a KDP manuscript.
+
+Unverified (reported in the community, not confirmed here from any primary source):
+
+- That a KPF file is an archive holding the book as a database of KFX-like fragments, with JSON metadata beside it. Writing that would mean an embedded database format as well as the undocumented fragment schema; a pure-Rust writer of that database would be a large dependency or a large in-house effort.
+- What KDP checks in an uploaded KPF, and how it treats one not made by Kindle Create.
+
+What a writer would need before it could be approved:
+
+- A primary description of the container and its schema, or permission to rely on samples, with any licence or contract terms of Kindle Create and KDP reviewed for reverse engineering and redistribution.
+- A validation route that runs no Amazon program in tests (§7): an independent reader of the format, as for KFX, plus manual uploads to a KDP account recorded in `docs/qa`. An upload is outward-facing and needs the maintainer's account and consent each time.
+- Effort, judged from KFX: its writer here is about 1,600 lines, and its independent reader about 550 more. The database layer, KDP's acceptance rules and the upload checks are unknown, and are the larger part of the risk.
+
+Until then the user documentation says, wherever it describes Kindle export, that KFX and AZW3 are for reading and sideloading, and that a KDP manuscript is EPUB, DOCX or KPF from Kindle Create.
 
 ## 17. References
 

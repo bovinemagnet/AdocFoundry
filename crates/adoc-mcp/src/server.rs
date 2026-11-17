@@ -19,7 +19,8 @@ use adoc_core::{DiagnosticSeverity, LineIndex, SourceRange};
 use adoc_engine::{
     commands::ids, report::display_path, to_svg_laid_out, CommandArgs, CommandOutcome,
     DefinitionTarget, DocxExportArgs, Engine, EngineEvent, ExportArgs, ExportTarget, FileAccess,
-    GraphFilter, GraphScope, LookChoice, NavItem, SearchRequest, SvgStyle,
+    GraphFilter, GraphScope, KindleExportArgs, KindleFormat, LookChoice, NavItem, SearchRequest,
+    SvgStyle,
 };
 use rmcp::{
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
@@ -44,12 +45,13 @@ use crate::{
 };
 
 /// The tools that change files, listed and callable only with `--allow-write`.
-const WRITE_TOOLS: [&str; 10] = [
+const WRITE_TOOLS: [&str; 11] = [
     "edit_page",
     "revert_page",
     "rename_page",
     "export_pdf",
     "export_docx",
+    "export_kindle",
     "apply_changes",
     "create_page",
     "create_partial",
@@ -325,6 +327,22 @@ struct ExportDocxArgs {
     template: Option<String>,
     /// Or `true` for no theme: the export's own look and the `[docx]` settings.
     no_theme: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct ExportKindleArgs {
+    /// The page to export as an article.
+    path: Option<String>,
+    /// Or a component version to export as a book: `name` or `version@name`.
+    component: Option<String>,
+    /// Or a `[kindle.profiles.<name>]` of the workspace's settings, exported as it says.
+    profile: Option<String>,
+    /// `azw3` (KF8) or `kfx` (KF10); else the output's extension, the profile's format, or
+    /// `[kindle] format`. A format is never written under the other's extension.
+    format: Option<String>,
+    /// The `.azw3` or `.kfx` file to write, inside a root; with a profile, in place of the
+    /// profile's. A file there already is replaced only when it is a Kindle book's extension.
+    output: Option<String>,
 }
 
 /// A theme or template the client names: a name passes to the engine, which looks for it in
@@ -1346,6 +1364,85 @@ impl Server {
     }
 
     #[tool(
+        description = "Export a page as an article, a component version as a book, or a `[kindle.profiles]` publication, to a Kindle book: AZW3 (KF8) or KFX (KF10). These are files for Kindle readers and apps, not Kindle Direct Publishing manuscripts. Nothing is opened, sent or uploaded, and no external tool is run.",
+        output_schema = schemas::export_kindle(),
+        annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn export_kindle(&self, Parameters(args): Parameters<ExportKindleArgs>) -> Answer {
+        self.run(move |state| {
+            let asked = args
+                .format
+                .as_deref()
+                .map(|name| {
+                    KindleFormat::from_name(name).ok_or_else(|| {
+                        Failure::invalid(format!("`{name}` is not a Kindle format: azw3 or kfx"))
+                    })
+                })
+                .transpose()?;
+            let named = args.output.as_deref().and_then(|output| {
+                Path::new(output)
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .and_then(KindleFormat::from_name)
+            });
+            let mut export = match (&args.profile, &args.path, &args.component) {
+                (Some(profile), None, None) => state.engine.kindle_profile_export_args(profile)?,
+                (None, Some(path), None) => {
+                    let path = state.confine(path)?;
+                    KindleExportArgs::new(
+                        ExportTarget::Page(state.open(&path)?.0),
+                        KindleFormat::default(),
+                        PathBuf::new(),
+                    )
+                }
+                (None, None, Some(component)) => {
+                    let (version, name) = match component.split_once('@') {
+                        Some((version, name)) => (Some(version.to_owned()), name.to_owned()),
+                        None => (None, component.clone()),
+                    };
+                    KindleExportArgs::new(
+                        ExportTarget::Component { name, version },
+                        KindleFormat::default(),
+                        PathBuf::new(),
+                    )
+                }
+                _ => {
+                    return Err(Failure::invalid(
+                        "give one of a `path`, a `component` or a `profile`",
+                    ))
+                }
+            };
+            let fallback = if args.profile.is_some() {
+                export.format
+            } else {
+                state.engine.settings().kindle.format
+            };
+            export.format = asked.or(named).unwrap_or(fallback);
+            export.output = match &args.output {
+                Some(output) => state.kindle_output(Path::new(output), output, export.format)?,
+                None if args.profile.is_some() => {
+                    let output = export.output.with_extension(export.format.extension());
+                    let shown = state.shown(&output);
+                    state.kindle_output(&output, &shown, export.format)?
+                }
+                None => return Err(Failure::invalid("give the `output` to write")),
+            };
+            let summary = state
+                .engine
+                .export_kindle_blocking(export.clone(), TIMEOUT)
+                .map_err(|error| export_failure(state, error))?;
+            Ok(json!({
+                "output": state.shown(&summary.output),
+                "format": export.format.extension(),
+                "pages": summary.pages,
+                "sources": summary.sources.iter().map(|path| state.shown(path)).collect::<Vec<_>>(),
+                "warnings": summary.diagnostics.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            }))
+        })
+        .await
+    }
+
+    #[tool(
         description = "Export a page as an article, a component version as a book, or a `[docx.profiles]` publication, to an editable Word document (.docx). Nothing is opened and no external tool is run.",
         output_schema = schemas::export_docx(),
         annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = false)
@@ -1421,6 +1518,35 @@ impl Server {
             }))
         })
         .await
+    }
+}
+
+impl State {
+    /// `output` checked as a Kindle book to write in `format`: inside the roots (`shown` is how
+    /// the client named it), not a link, and a file of the format's extension that no page is.
+    fn kindle_output(
+        &self,
+        output: &Path,
+        shown: &str,
+        format: KindleFormat,
+    ) -> Result<PathBuf, Failure> {
+        let output = self.confine(&output.to_string_lossy())?;
+        if std::fs::symlink_metadata(&output).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            return Err(Failure::invalid(format!(
+                "{shown} is a link, which is not written through"
+            )));
+        }
+        let named = output
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .and_then(KindleFormat::from_name);
+        if named != Some(format) || self.engine.workspace().index.file(&output).is_some() {
+            return Err(Failure::invalid(format!(
+                "{shown} is not a `.{}` file; export to one",
+                format.extension()
+            )));
+        }
+        Ok(output)
     }
 }
 

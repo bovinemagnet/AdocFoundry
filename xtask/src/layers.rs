@@ -31,6 +31,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("adoc-git", 2),
     ("adoc-pdf", 2),
     ("adoc-docx", 2),
+    ("adoc-kindle", 2),
     ("adoc-audit", 2),
     ("adoc-impact", 2),
     ("adoc-engine", 3),
@@ -48,6 +49,7 @@ pub const SAME_LAYER_ALLOWED: &[(&str, &str)] = &[
     ("adoc-lang", "adoc-antora"),
     ("adoc-pdf", "adoc-render"),
     ("adoc-docx", "adoc-render"),
+    ("adoc-kindle", "adoc-render"),
 ];
 
 /// Crates whose logic the engine orchestrates: front ends reach them only through
@@ -125,6 +127,16 @@ const ADOC_AUDIT_FORBIDDEN_PATHS: &[&str] = &[
     "TcpStream",
     "UdpSocket",
     "std::thread",
+];
+
+/// What `adoc-kindle` must never name: every stage of a Kindle export runs in process, with no
+/// converter, reader or other program and no network (Kindle PRD §7).
+const ADOC_KINDLE_FORBIDDEN_PATHS: &[&str] = &[
+    "std::process",
+    "Command::new",
+    "std::net",
+    "TcpStream",
+    "UdpSocket",
 ];
 
 #[derive(Debug, Eq, PartialEq)]
@@ -262,6 +274,8 @@ pub fn check_sources(name: &str, files: &BTreeMap<PathBuf, String>) -> Vec<Strin
         "adoc-lang" => ADOC_LANG_FORBIDDEN_PATHS,
         // The impact rules are pure as the audit is: no files, processes, network or threads.
         "adoc-audit" | "adoc-impact" => ADOC_AUDIT_FORBIDDEN_PATHS,
+        // Kindle export runs in process: no process and no network (Kindle PRD §7).
+        "adoc-kindle" => ADOC_KINDLE_FORBIDDEN_PATHS,
         _ => return Vec::new(),
     };
     let mut violations = Vec::new();
@@ -411,7 +425,14 @@ fn cargo_metadata(root: &Path) -> Result<serde_json::Value, String> {
 
 /// What the language server's default build must not compile: Typst and Git come only with its
 /// `typst` and `git` features.
-const LEAN_EXCLUDED: &[&str] = &["adoc-pdf", "adoc-math", "adoc-git", "typst", "gix"];
+const LEAN_EXCLUDED: &[&str] = &[
+    "adoc-pdf",
+    "adoc-math",
+    "adoc-git",
+    "adoc-kindle",
+    "typst",
+    "gix",
+];
 
 /// The packages `cargo build -p <package>` compiles with its default features, from
 /// `cargo tree`; `cargo metadata` resolves features for the whole workspace at once.
@@ -479,6 +500,97 @@ fn docx_violations(packages: &BTreeSet<String>) -> Vec<String> {
         .collect()
 }
 
+/// The packages the engine compiles with Kindle export alone: `--no-default-features
+/// --features kindle`.
+fn kindle_engine_packages(root: &Path) -> Result<BTreeSet<String>, String> {
+    build_packages(
+        root,
+        "adoc-engine",
+        &["--no-default-features", "--features", "kindle"],
+    )
+}
+
+/// What Kindle export must never compile, in `adoc-kindle` or in the engine built with `kindle`
+/// alone: books are written from the view tree, never through another format's exporter or
+/// Typst (Kindle PRD §9).
+const KINDLE_EXCLUDED: &[&str] = &["adoc-pdf", "adoc-docx", "adoc-math", "typst"];
+
+/// A violation for each crate of [`KINDLE_EXCLUDED`] in a Kindle build.
+fn kindle_violations(packages: &BTreeSet<String>) -> Vec<String> {
+    KINDLE_EXCLUDED
+        .iter()
+        .filter(|name| packages.contains(**name))
+        .map(|name| format!("Kindle export builds {name}; it needs no other exporter or Typst"))
+        .collect()
+}
+
+/// Each package Kindle export builds, with its licence expression, from `cargo tree`.
+fn kindle_licences(root: &Path) -> Result<Vec<(String, String)>, String> {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let output = Command::new(cargo)
+        .current_dir(root)
+        // Every platform's dependencies, whichever the check runs on.
+        .args(["tree", "--locked", "--target", "all", "-p", "adoc-kindle"])
+        .args([
+            "-e",
+            "normal,build",
+            "--prefix",
+            "none",
+            "--format",
+            "{p}|{l}",
+        ])
+        .output()
+        .map_err(|error| format!("cargo tree: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo tree: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let mut licences: Vec<(String, String)> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let (package, licence) = line.split_once('|')?;
+            let name = package.split_whitespace().next()?;
+            // `(*)` marks a package `cargo tree` has shown already.
+            let licence = licence.trim().trim_end_matches("(*)").trim();
+            Some((name.to_owned(), licence.to_owned()))
+        })
+        .collect();
+    licences.sort();
+    licences.dedup();
+    Ok(licences)
+}
+
+/// Whether a licence expression may be used without copyleft: some `OR` alternative whose
+/// every `AND` part is permissive. None declared is not.
+fn permissive(licence: &str) -> bool {
+    let copyleft = |part: &str| {
+        let upper = part.to_ascii_uppercase();
+        upper.contains("GPL") || upper.contains("EUPL") || upper.contains("CDDL")
+    };
+    let expression = licence.replace(['(', ')'], " ");
+    !expression.trim().is_empty()
+        && expression.split(" OR ").any(|alternative| {
+            alternative
+                .split(" AND ")
+                .all(|part| !part.trim().is_empty() && !copyleft(part))
+        })
+}
+
+/// A violation for each package of Kindle export that may be used only under a copyleft
+/// licence, or declares none (Kindle PRD §7: no GPL or other copyleft dependency, `boko` among
+/// them).
+fn kindle_licence_violations(licences: &[(String, String)]) -> Vec<String> {
+    licences
+        .iter()
+        .filter(|(_, licence)| !permissive(licence))
+        .map(|(name, licence)| {
+            format!("Kindle export builds {name}, licensed `{licence}`; no copyleft is allowed")
+        })
+        .collect()
+}
+
 /// Runs every check over the workspace rooted at `root`.
 pub fn run(root: &Path) -> Result<Vec<String>, String> {
     let crates = root.join("crates");
@@ -510,6 +622,12 @@ pub fn run(root: &Path) -> Result<Vec<String>, String> {
     violations.extend(lean_violations(&default_build_packages(root, "adoc-ls")?));
     violations.extend(docx_violations(&default_build_packages(root, "adoc-docx")?));
     violations.extend(docx_violations(&docx_engine_packages(root)?));
+    violations.extend(kindle_violations(&default_build_packages(
+        root,
+        "adoc-kindle",
+    )?));
+    violations.extend(kindle_violations(&kindle_engine_packages(root)?));
+    violations.extend(kindle_licence_violations(&kindle_licences(root)?));
     Ok(violations)
 }
 
@@ -810,6 +928,64 @@ libc = "=0.2.0"
                 "DOCX export builds typst; it needs neither PDF nor Typst",
             ]
         );
+    }
+
+    /// Kindle PRD §12 test 2: Kindle export alone, in `adoc-kindle` and in the engine built
+    /// with `kindle` and no other format, compiles neither Typst nor another exporter.
+    #[test]
+    fn kindle_builds_alone() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let packages = default_build_packages(&root, "adoc-kindle").unwrap();
+        assert!(packages.contains("adoc-render"), "{packages:?}");
+        assert_eq!(kindle_violations(&packages), Vec::<String>::new());
+
+        let engine = kindle_engine_packages(&root).unwrap();
+        assert!(engine.contains("adoc-kindle"), "{engine:?}");
+        assert_eq!(kindle_violations(&engine), Vec::<String>::new());
+
+        let with_others: BTreeSet<String> = ["adoc-kindle", "adoc-docx", "typst"]
+            .map(str::to_owned)
+            .into();
+        assert_eq!(
+            kindle_violations(&with_others),
+            [
+                "Kindle export builds adoc-docx; it needs no other exporter or Typst",
+                "Kindle export builds typst; it needs no other exporter or Typst",
+            ]
+        );
+        // And its sources name no process or network.
+        let mut sources = BTreeMap::new();
+        sources.insert(
+            PathBuf::from("x.rs"),
+            "std::process::Command::new(\"x\")".to_owned(),
+        );
+        assert_eq!(check_sources("adoc-kindle", &sources).len(), 2);
+    }
+
+    /// Kindle PRD §12 test 19: `adoc-kindle` names no process and no network path, and nothing
+    /// it builds is under a copyleft licence (`cargo deny` checks the rest of the tree).
+    #[test]
+    fn kindle_is_in_process() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut sources = BTreeMap::new();
+        collect_sources(&root.join("crates/adoc-kindle/src"), &mut sources);
+        assert!(sources.len() > 5, "{}", sources.len());
+        assert_eq!(check_sources("adoc-kindle", &sources), Vec::<String>::new());
+
+        let licences = kindle_licences(&root).unwrap();
+        assert!(
+            licences.iter().any(|(name, _)| name == "resvg"),
+            "{licences:?}"
+        );
+        assert_eq!(kindle_licence_violations(&licences), Vec::<String>::new());
+        let copyleft = [
+            ("boko".to_owned(), "GPL-3.0-or-later".to_owned()),
+            ("both".to_owned(), "MIT AND LGPL-2.1".to_owned()),
+            ("unknown".to_owned(), String::new()),
+            // A choice that may be taken without copyleft is allowed.
+            ("either".to_owned(), "Apache-2.0 OR GPL-2.0-only".to_owned()),
+        ];
+        assert_eq!(kindle_licence_violations(&copyleft).len(), 3);
     }
 
     /// The Word looks PRD, §9 test 1: themes load without Typst, so Word export can read them

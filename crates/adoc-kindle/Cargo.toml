@@ -1,0 +1,27 @@
+[package]
+name = "adoc-kindle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+adoc-core.workspace = true
+adoc-dom.workspace = true
+adoc-render.workspace = true
+resvg.workspace = true
+sha1_smol.workspace = true
+sha2.workspace = true
+
+[features]
+# The readers in `testing`, for tests that read what was written.
+test-support = []
+
+[dev-dependencies]
+adoc-kindle = { path = ".", features = ["test-support"] }
+mobi.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

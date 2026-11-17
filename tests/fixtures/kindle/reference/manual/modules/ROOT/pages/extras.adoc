@@ -1,0 +1,16 @@
+= Extras
+:page-aliases: more.adoc
+
+Text in Japanese: 日本語のテキストを読む。 And in Greek: Καλημέρα.
+
+[[requirements]]
+== Requirements again
+
+This page defines an id the install page defines too; each keeps its own.
+See xref:install.adoc#requirements[the install page's requirements] and <<requirements>>.
+
+.A picture that is not there
+image::missing.png[A missing picture]
+
+----
+A listing whose delimiter is never closed

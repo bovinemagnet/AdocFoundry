@@ -468,6 +468,8 @@ pub struct Settings {
     pub pdf: PdfSettings,
     /// `[docx]`: Word documents' layout, styles and profiles, apart from `[pdf]`.
     pub docx: crate::DocxSettings,
+    /// `[kindle]`: Kindle books' defaults and profiles, apart from `[pdf]` and `[docx]`.
+    pub kindle: crate::KindleSettings,
     pub updates: UpdateSettings,
     pub sidebar: SidebarSettings,
     pub history: HistorySettings,
@@ -861,6 +863,14 @@ impl Settings {
                 // Either layer: a workspace publishes its own documents.
                 if section == "docx" {
                     for (name, problem) in crate::docx_settings::apply(&mut self.docx, key, value) {
+                        self.warn(&source, &name, &problem);
+                    }
+                    continue;
+                }
+                if section == "kindle" {
+                    for (name, problem) in
+                        crate::kindle_settings::apply(&mut self.kindle, key, value)
+                    {
                         self.warn(&source, &name, &problem);
                     }
                     continue;

@@ -2,7 +2,7 @@
 
 Run from anywhere with: python3 fuzz/seed.py
 
-The pages under tests/fixtures seed the parsers and the model; the targets of their xrefs,
+The pages under tests/fixtures seed the parsers, the model and the Kindle writers; the targets of their xrefs,
 includes and images seed the resource id parser; the formulas of tests/fixtures/stem seed the
 STEM check; and the pages' lines seed the string literal writer. Each seed is named by its
 hash, so running the script again adds nothing twice. The corpus folder is not committed.
@@ -42,7 +42,7 @@ def main():
     pages = sorted(FIXTURES.rglob("*.adoc"))
     for page in pages:
         data = page.read_bytes()
-        for target in ("parse_source", "parse_dom", "model_roundtrip"):
+        for target in ("parse_source", "parse_dom", "model_roundtrip", "kindle_write"):
             write(target, data)
         text = data.decode("utf-8", errors="replace")
         for match in TARGET.finditer(text):

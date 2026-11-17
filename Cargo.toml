@@ -44,6 +44,7 @@ adoc-engine = { path = "crates/adoc-engine", default-features = false }
 adoc-git = { path = "crates/adoc-git" }
 adoc-graph = { path = "crates/adoc-graph" }
 adoc-index = { path = "crates/adoc-index" }
+adoc-kindle = { path = "crates/adoc-kindle" }
 adoc-mcp = { path = "crates/adoc-mcp" }
 adoc-lang = { path = "crates/adoc-lang" }
 adoc-math = { path = "crates/adoc-math" }
@@ -88,6 +89,9 @@ gpui-kit-assets = "=0.9.0"
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico", "tiff"] }
 # Read-only PDFs: the finished PDF re-encrypted in memory (READONLY 4/5).
 lopdf = { version = "=0.47.0", default-features = false }
+# Reading AZW3 files back in adoc-kindle's tests: a reader that shares no code with the writer
+# (docs/qa/spike-kindle.md). A dev-dependency only.
+mobi = "=0.8.0"
 resvg = { version = "=0.46.0", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 # Rasterises PDFs for the visual regression tests; already in the tree through Typst.
 hayro = "=0.7.1"
@@ -131,6 +135,8 @@ getrandom = "=0.3.4"
 schemars = "=1.2.3"
 tokio = { version = "=1.54.1", features = ["rt", "macros", "io-std", "time", "net", "signal"] }
 sha2 = "=0.10.9"
+# The payload digest a KFX container names; already in the tree.
+sha1_smol = "=1.0.1"
 # Line diffs for crash recovery and local history; already in the tree through insta.
 similar = { version = "=2.7.0", default-features = false, features = ["text"] }
 # The app pump's wake channel and its race with a timer; already in the tree through gpui-component.

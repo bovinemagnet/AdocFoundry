@@ -1,12 +1,13 @@
-//! Export, as PDF or DOCX: one page as an article, or a component version (or navigation
-//! files) in navigation order as a book. Both formats share one pipeline: the plan of pages,
-//! each page parsed on a worker from its open buffer or its file, its view built and its
-//! diagrams rendered, and the views arranged as the plan says ([`arrange`]). Only then does the
-//! format matter: the document is typeset as PDF (the `typst` feature) or written as DOCX (the
-//! `docx` feature) on another worker. The result arrives as [`EngineEvent::ExportFinished`].
+//! Export, as PDF, DOCX or a Kindle book: one page as an article, or a component version (or
+//! navigation files) in navigation order as a book. Every format shares one pipeline: the plan
+//! of pages, each page parsed on a worker from its open buffer or its file, its view built and
+//! its diagrams rendered, and the views arranged as the plan says ([`arrange`]). Only then does
+//! the format matter: the document is typeset as PDF (the `typst` feature), written as DOCX
+//! (the `docx` feature) or written as AZW3 or KFX (the `kindle` feature) on another worker.
+//! The result arrives as [`EngineEvent::ExportFinished`].
 //!
-//! The pipeline is the `export` feature, which `typst` and `docx` each turn on; a front end
-//! names those, never `export` itself.
+//! The pipeline is the `export` feature, which `typst`, `docx` and `kindle` each turn on; a
+//! front end names those, never `export` itself.
 
 use std::path::PathBuf;
 
@@ -14,8 +15,11 @@ use adoc_core::DiagnosticSeverity;
 
 use crate::{DocumentId, PdfStandard};
 
-#[cfg(all(feature = "export", not(any(feature = "typst", feature = "docx"))))]
-compile_error!("the `export` feature is turned on by `typst` or `docx`, not on its own");
+#[cfg(all(
+    feature = "export",
+    not(any(feature = "typst", feature = "docx", feature = "kindle"))
+))]
+compile_error!("the `export` feature is turned on by `typst`, `docx` or `kindle`, not on its own");
 
 // Without either format only the request and result types remain.
 #[cfg(feature = "typst")]
@@ -100,6 +104,78 @@ pub struct DocxExportArgs {
     pub look: Option<crate::LookChoice>,
 }
 
+/// The Kindle formats (`docs/prd/PRD-AdocFoundry_Kindle_Export.md` §4). One is never written
+/// in place of the other.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum KindleFormat {
+    /// KF8, in a PalmDB/MOBI file: the default, read by more Kindles.
+    #[default]
+    Azw3,
+    /// KF10.
+    Kfx,
+}
+
+impl KindleFormat {
+    /// The file name extension the format is written with, and its name in settings.
+    #[must_use]
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Azw3 => "azw3",
+            Self::Kfx => "kfx",
+        }
+    }
+
+    /// The format a name or extension gives, in any letter case.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().as_str() {
+            "azw3" => Some(Self::Azw3),
+            "kfx" => Some(Self::Kfx),
+            _ => None,
+        }
+    }
+}
+
+/// A Kindle export request: `CommandArgs::ExportKindle`. It holds nothing of another format's.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KindleExportArgs {
+    pub target: ExportTarget,
+    pub format: KindleFormat,
+    /// The `.azw3` or `.kfx` file to write, its extension the format's. It is written to a
+    /// new file beside it and renamed over it only once the whole book is written and checked,
+    /// so a failed export leaves what was there; a link there is refused, never written
+    /// through.
+    pub output: PathBuf,
+    /// Attributes every page is read with before its own header, after Antora's, and that a
+    /// book's own attributes take.
+    pub attributes: Vec<(String, String)>,
+    /// Metadata in place of the document's and `[kindle]`'s: a profile's.
+    pub title: Option<String>,
+    pub creator: Option<String>,
+    pub language: Option<String>,
+    pub identifier: Option<String>,
+    /// The cover, in place of `[kindle] cover` and the document's `front-cover-image`.
+    pub cover: Option<PathBuf>,
+}
+
+impl KindleExportArgs {
+    /// An export of `target` in `format` to `output`, with nothing else given.
+    #[must_use]
+    pub fn new(target: ExportTarget, format: KindleFormat, output: PathBuf) -> Self {
+        Self {
+            target,
+            format,
+            output,
+            attributes: Vec::new(),
+            title: None,
+            creator: None,
+            language: None,
+            identifier: None,
+            cover: None,
+        }
+    }
+}
+
 /// A finished export.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExportSummary {
@@ -163,6 +239,21 @@ impl crate::Engine {
     }
 }
 
+#[cfg(not(feature = "kindle"))]
+impl crate::Engine {
+    /// Without the `kindle` feature there is no Kindle export: every request fails as an
+    /// unknown command.
+    pub fn export_kindle_blocking(
+        &mut self,
+        _: KindleExportArgs,
+        _: std::time::Duration,
+    ) -> Result<ExportSummary, crate::EngineError> {
+        Err(crate::EngineError::UnknownCommand(
+            crate::commands::ids::EXPORT_KINDLE_PAGE,
+        ))
+    }
+}
+
 /// The pages of an export and how they are arranged.
 #[cfg(feature = "export")]
 #[derive(Clone, Debug)]
@@ -215,6 +306,8 @@ enum Request {
     Pdf(ExportArgs),
     #[cfg(feature = "docx")]
     Docx(DocxExportArgs),
+    #[cfg(feature = "kindle")]
+    Kindle(KindleExportArgs),
 }
 
 #[cfg(feature = "export")]
@@ -226,6 +319,9 @@ impl Request {
             Self::Pdf(_) => false,
             #[cfg(feature = "docx")]
             Self::Docx(_) => true,
+            // A Kindle book shows formulas as pictures too.
+            #[cfg(feature = "kindle")]
+            Self::Kindle(_) => true,
         }
     }
 }
@@ -238,6 +334,8 @@ impl Request {
             Self::Pdf(args) => &args.target,
             #[cfg(feature = "docx")]
             Self::Docx(args) => &args.target,
+            #[cfg(feature = "kindle")]
+            Self::Kindle(args) => &args.target,
         }
     }
 
@@ -247,6 +345,8 @@ impl Request {
             Self::Pdf(args) => &args.output,
             #[cfg(feature = "docx")]
             Self::Docx(args) => &args.output,
+            #[cfg(feature = "kindle")]
+            Self::Kindle(args) => &args.output,
         }
     }
 
@@ -271,6 +371,8 @@ impl Request {
             }
             #[cfg(feature = "docx")]
             Self::Docx(_) => (crate::ExportFormat::Docx, None),
+            #[cfg(feature = "kindle")]
+            Self::Kindle(_) => (crate::ExportFormat::Kindle, None),
         }
     }
 
@@ -281,6 +383,8 @@ impl Request {
             Self::Pdf(_) => Ok(()),
             #[cfg(feature = "docx")]
             Self::Docx(args) => check_docx_output(&args.output),
+            #[cfg(feature = "kindle")]
+            Self::Kindle(args) => check_kindle_output(args.format, &args.output),
         }
     }
 
@@ -290,6 +394,8 @@ impl Request {
             Self::Pdf(args) => &args.attributes,
             #[cfg(feature = "docx")]
             Self::Docx(args) => &args.attributes,
+            #[cfg(feature = "kindle")]
+            Self::Kindle(args) => &args.attributes,
         }
     }
 }
@@ -393,6 +499,42 @@ pub(crate) struct ExportState {
 pub(crate) fn register_export(registry: &mut CommandRegistry) {
     #[cfg(feature = "typst")]
     register_pdf(registry);
+    #[cfg(feature = "kindle")]
+    {
+        register(
+            registry,
+            spec(
+                ids::EXPORT_KINDLE_PAGE,
+                "Export Page to Kindle…",
+                CommandCategory::Document,
+                None,
+                CommandContext::ActiveDocument,
+            ),
+            kindle_command,
+        );
+        register(
+            registry,
+            spec(
+                ids::EXPORT_KINDLE_COMPONENT,
+                "Export Component to Kindle…",
+                CommandCategory::Workspace,
+                None,
+                CommandContext::Antora,
+            ),
+            kindle_command,
+        );
+        register(
+            registry,
+            spec(
+                ids::EXPORT_KINDLE_PROFILE,
+                "Export Kindle Profile…",
+                CommandCategory::Workspace,
+                None,
+                CommandContext::Always,
+            ),
+            kindle_profile_command,
+        );
+    }
     #[cfg(feature = "docx")]
     {
         register(
@@ -453,6 +595,35 @@ pub(crate) fn register_export(registry: &mut CommandRegistry) {
             docx_themed_command,
         );
     }
+}
+
+#[cfg(feature = "kindle")]
+fn kindle_command(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::ExportKindle(args) = args else {
+        return Err(EngineError::InvalidArguments {
+            command: ids::EXPORT_KINDLE_PAGE,
+            expected: "an export target, a Kindle format and an .azw3 or .kfx output path",
+        });
+    };
+    engine.start_export(Request::Kindle(args), false)?;
+    Ok(CommandOutcome::Done)
+}
+
+/// Exports a Kindle publication profile to the output it names.
+#[cfg(feature = "kindle")]
+fn kindle_profile_command(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Profile(name) = args else {
+        return Err(EngineError::InvalidArguments {
+            command: ids::EXPORT_KINDLE_PROFILE,
+            expected: "a profile name",
+        });
+    };
+    let args = engine.kindle_profile_export_args(&name)?;
+    engine.start_export(Request::Kindle(args), false)?;
+    Ok(CommandOutcome::Done)
 }
 
 /// A Word export with the look it names: its arguments must choose one.
@@ -681,6 +852,56 @@ impl Engine {
     }
 }
 
+#[cfg(feature = "kindle")]
+impl Engine {
+    /// Exports a Kindle book and waits for the result, for front ends without an event loop
+    /// such as the CLI.
+    pub fn export_kindle_blocking(
+        &mut self,
+        args: KindleExportArgs,
+        timeout: Duration,
+    ) -> Result<ExportSummary, EngineError> {
+        let deadline = Instant::now() + timeout;
+        let job = self.start_export(Request::Kindle(args), true)?;
+        self.wait_for_export(job, deadline)
+    }
+}
+
+/// Refuses a Kindle output whose extension is not the format's, so that a `.kfx` is never an
+/// AZW3 or the other way round, and one that is a folder or a link.
+#[cfg(feature = "kindle")]
+fn check_kindle_output(format: KindleFormat, output: &Path) -> Result<(), EngineError> {
+    let matches = output
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .and_then(KindleFormat::from_name)
+        == Some(format);
+    if !matches {
+        return Err(EngineError::InvalidRequest(format!(
+            "{} is not a .{} file",
+            output.display(),
+            format.extension()
+        )));
+    }
+    check_not_link_or_folder(output)
+}
+
+/// Refuses an output that is a link, which would be written through, or a folder.
+#[cfg(any(feature = "docx", feature = "kindle"))]
+fn check_not_link_or_folder(output: &Path) -> Result<(), EngineError> {
+    match std::fs::symlink_metadata(output) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(EngineError::InvalidRequest(format!(
+            "{} is a link, which is not written through",
+            output.display()
+        ))),
+        Ok(meta) if meta.is_dir() => Err(EngineError::InvalidRequest(format!(
+            "{} is a folder",
+            output.display()
+        ))),
+        _ => Ok(()),
+    }
+}
+
 /// Refuses a DOCX output that is not a `.docx` file name, is a folder, or is a link, which
 /// would be written through.
 #[cfg(feature = "docx")]
@@ -694,17 +915,7 @@ fn check_docx_output(output: &Path) -> Result<(), EngineError> {
             output.display()
         )));
     }
-    match std::fs::symlink_metadata(output) {
-        Ok(meta) if meta.file_type().is_symlink() => Err(EngineError::InvalidRequest(format!(
-            "{} is a link, which is not written through",
-            output.display()
-        ))),
-        Ok(meta) if meta.is_dir() => Err(EngineError::InvalidRequest(format!(
-            "{} is a folder",
-            output.display()
-        ))),
-        _ => Ok(()),
-    }
+    check_not_link_or_folder(output)
 }
 
 #[cfg(feature = "export")]
@@ -1314,6 +1525,10 @@ impl Engine {
             Request::Pdf(args) => self.write_pdf(job, args, written, replace, commit, protection),
             #[cfg(feature = "docx")]
             Request::Docx(args) => self.write_docx(job, args, written, commit, protection),
+            #[cfg(feature = "kindle")]
+            Request::Kindle(args) => {
+                self.write_kindle(job, args, written, commit, &protection);
+            }
         }
     }
 
@@ -2078,4 +2293,169 @@ fn failed_diagrams(arranged: &Arranged) -> Vec<ExportDiagnostic> {
         });
     }
     out
+}
+
+#[cfg(feature = "kindle")]
+impl Engine {
+    /// Writes the job's Kindle book on a worker: mapped, written in memory and checked by
+    /// `adoc-kindle`, then put in place through the job's commit.
+    fn write_kindle(
+        &mut self,
+        job: u64,
+        args: KindleExportArgs,
+        written: Written,
+        commit: Commit,
+        protection: &crate::ExportProtection,
+    ) {
+        // A Kindle book carries no editing restriction, so pages asking for one were refused
+        // before anything was parsed; nothing is written that claims one.
+        if *protection != crate::ExportProtection::Off {
+            self.export_finished(
+                job,
+                Err("a Kindle book cannot carry an editing restriction".to_owned()),
+            );
+            return;
+        }
+        let Written {
+            sources,
+            arranged,
+            unread,
+        } = written;
+        let failed = failed_diagrams(&arranged);
+        let document = to_kindle(arranged);
+        // The export's own (a profile's), else `[kindle]`'s, else the document's.
+        let defaults = &self.settings.kindle;
+        let root = self.roots.first().cloned();
+        let cover = args.cover.clone().or_else(|| {
+            let cover = defaults.cover.as_deref()?;
+            Some(match &root {
+                Some(root) => crate::normalize_path(&root.join(cover)),
+                None => PathBuf::from(cover),
+            })
+        });
+        let options = adoc_kindle::KindleOptions {
+            title: args.title.clone().or_else(|| defaults.title.clone()),
+            creator: args.creator.clone().or_else(|| defaults.creator.clone()),
+            language: args.language.clone().or_else(|| defaults.language.clone()),
+            identifier: args
+                .identifier
+                .clone()
+                .or_else(|| defaults.identifier.clone()),
+            publisher: defaults.publisher.clone(),
+            cover,
+            page_urls: self
+                .site_url()
+                .map(|site| self.page_urls(&site))
+                .unwrap_or_default(),
+            access: self.file_access.clone(),
+        };
+        let sender = self.worker_sender.clone();
+        self.workers_running += 1;
+        let crashed = move |error| WorkerMessage::ExportFinished {
+            job,
+            result: Err(format!("writing the book crashed: {error}")),
+        };
+        crate::worker::spawn(sender, crashed, move |sender| {
+            let format = match args.format {
+                KindleFormat::Azw3 => adoc_kindle::KindleFormat::Azw3,
+                KindleFormat::Kfx => adoc_kindle::KindleFormat::Kfx,
+            };
+            let result = adoc_kindle::write_kindle(&document, format, &options)
+                .map_err(|error| format!("{}: {error}", args.output.display()))
+                .and_then(|output| {
+                    write_kindle_file(&output.bytes, args.format, &args.output, &commit)?;
+                    Ok(output.diagnostics)
+                })
+                .map(|book_diagnostics| {
+                    let mut diagnostics: Vec<ExportDiagnostic> = book_diagnostics
+                        .into_iter()
+                        .map(|diagnostic| ExportDiagnostic {
+                            severity: match diagnostic.severity {
+                                adoc_kindle::KindleSeverity::Error => DiagnosticSeverity::Error,
+                                adoc_kindle::KindleSeverity::Warning => DiagnosticSeverity::Warning,
+                            },
+                            message: diagnostic.message,
+                            location: diagnostic.source.map(|source| (source.path, source.line)),
+                        })
+                        .collect();
+                    diagnostics.extend(failed);
+                    diagnostics.extend(unread);
+                    ExportSummary {
+                        output: args.output.clone(),
+                        pages: sources.len(),
+                        sources,
+                        diagnostics,
+                        look: None,
+                        protected: false,
+                    }
+                });
+            let _ = sender.send(WorkerMessage::ExportFinished { job, result });
+        });
+    }
+}
+
+#[cfg(feature = "kindle")]
+fn to_kindle(arranged: Arranged) -> adoc_kindle::KindleDocument {
+    use adoc_kindle::{BookItem, KindleDocument, KindlePage, KindlePlan};
+    match arranged {
+        Arranged::Article(view) => KindleDocument::Article(KindlePage {
+            key: "p0".to_owned(),
+            view,
+            depth: 0,
+        }),
+        Arranged::Book {
+            title,
+            attributes,
+            items,
+        } => KindleDocument::Book(KindlePlan {
+            title,
+            subtitle: None,
+            attributes,
+            items: items
+                .into_iter()
+                .map(|item| match item {
+                    ArrangedItem::Part(title) => BookItem::Part(title),
+                    ArrangedItem::Heading { title, depth } => BookItem::Heading { title, depth },
+                    ArrangedItem::Page { key, view, depth } => {
+                        BookItem::Page(KindlePage { key, view, depth })
+                    }
+                })
+                .collect(),
+        }),
+    }
+}
+
+/// Writes a checked book's bytes to a new file beside `output` and renames it over `output`
+/// through the job's commit, so a failed or abandoned export leaves what was there. A link at
+/// `output` is refused again here, in case one appeared since the export was asked for.
+#[cfg(feature = "kindle")]
+fn write_kindle_file(
+    bytes: &[u8],
+    format: KindleFormat,
+    output: &Path,
+    commit: &Commit,
+) -> Result<(), String> {
+    use std::io::Write as _;
+    let failed = |error: &dyn std::fmt::Display| format!("{}: {error}", output.display());
+    check_kindle_output(format, output).map_err(|error| error.to_string())?;
+    // A profile may name a folder, such as `build/`, that does not exist yet.
+    let folder = match output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        Some(parent) => {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("{}: {error}", parent.display()))?;
+            parent
+        }
+        None => Path::new("."),
+    };
+    let mut file = tempfile::NamedTempFile::new_in(folder).map_err(|error| failed(&error))?;
+    file.write_all(bytes).map_err(|error| failed(&error))?;
+    file.flush().map_err(|error| failed(&error))?;
+    commit.replace(|| {
+        file.persist(output)
+            .map(drop)
+            .map_err(|error| failed(&error.error))
+    })
 }

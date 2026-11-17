@@ -281,6 +281,22 @@ pub const ASSETS: &[Asset] = &[
         files: &["base-theme", "default-"],
         notices: &["LICENSE-asciidoctor-pdf"],
     },
+    Asset {
+        name: "ebook-rs (KFX format facts the Kindle export's KFX writer follows)",
+        version: "0.18.6",
+        licence: "MIT",
+        folder: "crates/adoc-kindle/src/kfx",
+        files: &["mod.rs", "ion.rs"],
+        notices: &["LICENSE-ebook-rs"],
+    },
+    Asset {
+        name: "Epub3-Kindle (KF8 format facts the Kindle export's AZW3 writer follows)",
+        version: "0.5.1",
+        licence: "MIT",
+        folder: "crates/adoc-kindle/src/azw3",
+        files: &["mod.rs", "index.rs", "xhtml.rs"],
+        notices: &["LICENSE-epub3-kindle"],
+    },
 ];
 
 /// The standard texts of the licences of crates that ship no licence file, by SPDX identifier.

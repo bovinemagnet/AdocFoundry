@@ -470,6 +470,17 @@ It is used by the crate's tests and by `crates/adoc-engine/tests/docx_export.rs`
 `docx_problems_are_located` and `a_timed_out_export_leaves_the_output` cover failures.
 The manual checks are in `docs/qa/docx.md`.
 
+The Kindle export (AZW3 and KFX) has its own checks.
+The crate's tests read every book back with `adoc_kindle::testing::read_azw3` and `read_kfx`, which are written apart from the writers, and with the `mobi` crate for AZW3.
+`kindle_reference_book_is_complete` (`crates/adoc-engine/tests/kindle_export.rs`) exports `tests/fixtures/docx/reference` with `tests/fixtures/kindle/reference` laid over it in both formats, and checks each with the independent readers.
+The overlay holds `[kindle]` settings, a profile and an extra page with Japanese and Greek text, an id that another page defines too, page aliases, a missing picture and an unclosed listing.
+`kindle_output_is_deterministic` gives the same bytes from one engine twice, and from another engine with the workspace in another folder.
+`kindle_large_book_is_bounded` (`crates/adoc-engine/tests/kindle_large.rs`, a file of its own for its peak memory) exports 600 pages with 50 pictures in both formats within 90 seconds, the command within 3 seconds, no pump over 3 seconds, and peak memory under 2 GB where Linux reports it.
+A debug build on a 2024 laptop takes about 4 seconds for each format.
+`kindle_is_in_process` (in `xtask`) checks that the sources of `adoc-kindle` name no process or network path, and that every package it builds may be used under a non-copyleft licence.
+`ADOC_KINDLE_OUT=<dir> cargo test -p adoc-kindle --test kfx -- --ignored` writes a sample in both formats for the manual checks in `docs/qa/kindle.md`.
+The release smoke test (`packaging/smoke-test.py`) exports a page as AZW3 and as KFX with the packaged `adocfoundry-cli` and checks each file's signature.
+
 The fixtures are in `tests/fixtures/pdf/`: `reference/`, `book/` and `themes/`.
 The reference article includes an unsized 400×100 PNG (`images/wide.png`).
 `TypesetPage::images` (`PlacedImage`) gives where each image was laid out, for tests such as `unsized_raster_image_is_75_percent` (`tests/emit.rs`) and `front_cover_is_the_first_page` (`tests/running.rs`).
@@ -811,6 +822,10 @@ The first byte of an input chooses Typst markup, AsciiMath or LaTeX.
 
 `pdf_literal`::
 The Typst string literal writer of `adoc-pdf`, exposed only under its `fuzzing` feature, parses back as exactly one string holding the text, in code and behind `#` in markup, and two in a row stay two strings.
+
+`kindle_write`::
+For any page, the book is written in both formats without a panic, each file is read back whole by the independent readers of `adoc_kindle::testing`, and every link inside leads to a place the book holds.
+`fuzz/seed.py` seeds it from the fixtures' pages.
 
 Run one target from the repository root.
 

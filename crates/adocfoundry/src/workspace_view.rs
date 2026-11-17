@@ -15,7 +15,8 @@ use adoc_core::{LineIndex, SourceRange};
 use adoc_engine::{
     commands::ids, count_words, CommandArgs, CommandOutcome, DocumentId, DocxExportArgs,
     EditPreview, EditorMode, EngineEvent, ExportArgs, ExportSummary, ExportTarget,
-    NavigationPosition, OpenDisposition, ResourceFamily, SidebarPanel, TabItem, ThemePreference,
+    KindleExportArgs, KindleFormat, NavigationPosition, OpenDisposition, ResourceFamily,
+    SidebarPanel, TabItem, ThemePreference,
 };
 use gpui::{
     div, prelude::FluentBuilder as _, px, App, AppContext as _, Context, Entity, FocusHandle,
@@ -483,6 +484,29 @@ fn docx_export_in(
     })
 }
 
+/// A Kindle export of `target` to `output` in `format`.
+fn kindle_export(target: ExportTarget, format: KindleFormat, output: PathBuf) -> CommandArgs {
+    CommandArgs::ExportKindle(KindleExportArgs::new(target, format, output))
+}
+
+/// The Kindle formats as the format picker offers them, `default` first.
+fn kindle_formats(default: KindleFormat) -> Vec<(KindleFormat, String)> {
+    let label = |format: KindleFormat| match format {
+        KindleFormat::Azw3 => "AZW3 (KF8): read by most Kindles and Kindle apps".to_owned(),
+        KindleFormat::Kfx => "KFX (KF10): current Kindles' own format".to_owned(),
+    };
+    let mut formats = vec![default];
+    formats.extend(
+        [KindleFormat::Azw3, KindleFormat::Kfx]
+            .into_iter()
+            .filter(|format| *format != default),
+    );
+    formats
+        .into_iter()
+        .map(|format| (format, label(format)))
+        .collect()
+}
+
 /// How a picker shows a look: its name, and what kind of look it is and where.
 fn look_label(look: &adoc_engine::DocxLookItem) -> String {
     match (look.kind, &look.path) {
@@ -525,6 +549,7 @@ pub(crate) fn export_message(output: &Path, result: &Result<ExportSummary, Strin
             .is_some_and(|extension| extension.eq_ignore_ascii_case(wanted))
     };
     let (html, docx) = (is("html"), is("docx"));
+    let kindle = is("azw3") || is("kfx");
     match result {
         Ok(summary) => {
             let warnings = summary.diagnostics.len();
@@ -533,6 +558,10 @@ pub(crate) fn export_message(output: &Path, result: &Result<ExportSummary, Strin
                 .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
             let mut message = if html {
                 format!("Exported {name}")
+            } else if kindle {
+                // A Kindle lays out its own pages; these are the AsciiDoc pages it holds.
+                let plural = if summary.pages == 1 { "" } else { "s" };
+                format!("Exported {name} ({} AsciiDoc page{plural})", summary.pages)
             } else if docx {
                 // Word lays out its own pages; these are the AsciiDoc pages it holds.
                 let plural = if summary.pages == 1 { "" } else { "s" };
@@ -559,6 +588,7 @@ pub(crate) fn export_message(output: &Path, result: &Result<ExportSummary, Strin
         }
         Err(error) if html => format!("HTML export failed: {error}"),
         Err(error) if docx => format!("Word export failed: {error}"),
+        Err(error) if kindle => format!("Kindle export failed: {error}"),
         Err(error) => format!("PDF export failed: {error}"),
     }
 }
@@ -4181,6 +4211,85 @@ impl WorkspaceView {
         );
     }
 
+    /// Offers the Kindle formats, then asks where to write the active page in the one chosen.
+    /// No preview is opened: a Kindle book is read on a Kindle.
+    fn on_export_page_kindle(
+        &mut self,
+        _: &ExportPageKindle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let engine = &self.app.read(cx).engine;
+        if engine.active().is_none() {
+            window.push_notification("Open a page to export it.", cx);
+            return;
+        }
+        let formats = kindle_formats(engine.settings().kindle.format);
+        let labels = formats.iter().map(|(_, label)| label.clone()).collect();
+        self.pick(
+            "Choose a Kindle format…",
+            labels,
+            window,
+            cx,
+            move |this, index, window, cx| {
+                let format = formats[index].0;
+                this.export_page(
+                    ids::EXPORT_KINDLE_PAGE,
+                    format.extension(),
+                    move |target, output| kindle_export(target, format, output),
+                    window,
+                    cx,
+                );
+            },
+        );
+    }
+
+    /// Offers the Kindle formats, then asks where to write the component's book in the one
+    /// chosen.
+    fn on_export_component_kindle(
+        &mut self,
+        _: &ExportComponentKindle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let formats = kindle_formats(self.app.read(cx).engine.settings().kindle.format);
+        let labels = formats.iter().map(|(_, label)| label.clone()).collect();
+        self.pick(
+            "Choose a Kindle format…",
+            labels,
+            window,
+            cx,
+            move |this, index, window, cx| {
+                let format = formats[index].0;
+                this.export_component(
+                    ids::EXPORT_KINDLE_COMPONENT,
+                    format.extension(),
+                    move |target, output| kindle_export(target, format, output),
+                    window,
+                    cx,
+                );
+            },
+        );
+    }
+
+    /// Offers the workspace's Kindle publication profiles, then exports the one chosen.
+    fn on_export_kindle_profile(
+        &mut self,
+        _: &ExportKindleProfile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let profiles = self.app.read(cx).engine.kindle_profiles();
+        self.export_profile(
+            ids::EXPORT_KINDLE_PROFILE,
+            profiles,
+            "No Kindle profiles: add a [kindle.profiles.<name>] table to the workspace's .adocfoundry.toml.",
+            "Export a Kindle profile…",
+            window,
+            cx,
+        );
+    }
+
     /// Offers the workspace's Word publication profiles, then exports the one chosen.
     fn on_export_docx_profile(
         &mut self,
@@ -4459,6 +4568,7 @@ impl WorkspaceView {
             "pdf" => adoc_engine::ExportFormat::Pdf,
             "docx" => adoc_engine::ExportFormat::Docx,
             "html" => adoc_engine::ExportFormat::Html,
+            "azw3" | "kfx" => adoc_engine::ExportFormat::Kindle,
             _ => return false,
         };
         match self.app.read(cx).engine.export_protection(target, format) {
@@ -6124,6 +6234,9 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_export_page_docx))
             .on_action(cx.listener(Self::on_export_component_docx))
             .on_action(cx.listener(Self::on_export_docx_profile))
+            .on_action(cx.listener(Self::on_export_page_kindle))
+            .on_action(cx.listener(Self::on_export_component_kindle))
+            .on_action(cx.listener(Self::on_export_kindle_profile))
             .on_action(cx.listener(Self::on_export_page_docx_themed))
             .on_action(cx.listener(Self::on_export_component_docx_themed))
             .on_action(cx.listener(Self::on_export_page_pdf_with_theme))

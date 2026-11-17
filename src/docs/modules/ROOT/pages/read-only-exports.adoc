@@ -163,3 +163,4 @@ See xref:mcp-server.adoc#errors[MCP server].
 * Passwords.
 
 For the formats themselves, see xref:word-export.adoc[Exporting to Word] and xref:pdf-export.adoc[Exporting to PDF].
+A Kindle book carries no restriction, so a page that asks for a read-only export is refused for Kindle; see xref:kindle-export.adoc[Exporting to Kindle].
