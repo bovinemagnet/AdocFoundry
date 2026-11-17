@@ -276,6 +276,15 @@ Each is settled before work starts on the package it affects, and the outcome is
 
 Each work package records here where the implementation departs from this document and how the open decisions of §13 were settled.
 
+### READONLY 1/5 (#697): the page's own header
+
+- **Where the declaration is read (§13).** A scan of the page's own text, `adoc_parser::export_read_only`, reusing the line parse's `parse_attribute` for each entry and adding the one thing it lacked, the main header's end (`main_header_end`). Reading only the page's own text makes provenance true by construction: an included file, `antora.yml`, the playbook and a profile's attributes never reach it, so `adoc-lang`'s `effective.rs` is not needed. The export's parser (acdc) is the oracle for the boundary: `the_header_boundary_agrees_with_the_export_parser` checks the scan against the DOM's header attributes over sixteen header shapes. As Asciidoctor does, the two lines after the title, whatever they hold, are the author and revision lines, so `= Page` then `== Section` keeps the header going.
+- **Types.** `ExportReadOnly::{Unspecified, Disabled, Enabled}` and `HeaderReadOnly { policy, range }` in `adoc-parser`; in the engine, `PageReadOnly { policy, source }` with `ReadOnlySource { path, line, range }` (a path, a one-based line and the declaration's byte range, since the scan has no `SourceSpan`), and `ReadOnlyHeaderError`, whose `Display` is `<path>:<line>: <reason>`.
+- **Values (§13).** Asciidoctor gives attribute values no boolean meaning, so the attribute's values are its own: exactly `true` and `false`, or empty for true. `TRUE`, `True`, `yes`, `1` and `on` are errors, so a value that looks meant is never taken either way; this can be loosened later without breaking a page. Names compare ignoring case, as Asciidoctor's do. Both unset forms, `:export-read-only!:` and `:!export-read-only:`, are Disabled, and the last declaration in the header wins.
+- **Failing closed.** A declaration inside `ifdef::`, `ifndef::` or `ifeval::` (block or one-line), or after an `include::` in the header, is an error at its line rather than a guess at what the preprocessor will do. An earlier invalid declaration is not excused by a later valid one.
+- **The snapshot.** `Engine::export_read_only(path)` reads the text an export of the page renders, `parse_input_for_path` (the open buffer, unsaved edits included, else the file), behind the engine's `export` feature. READONLY 2/5 carries the same scan on each page the export parses.
+- **Tests.** `readonly_header_values`, `readonly_header_duplicate_and_unset`, `readonly_ignores_body_and_includes` (the playbook's and the component's attributes, a body declaration, a partial's in the body and in the header, and a protected page including an editable partial; a profile's attributes are READONLY 2/5's test 10) and `readonly_uses_unsaved_snapshot`, in `crates/adoc-engine/tests/read_only.rs`; unit tests in `adoc-parser`'s `header.rs`, half-written headers included.
+
 ## 15. References
 
 - Epic #685.
