@@ -225,7 +225,7 @@ Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`
 | K6 | Embedded covers, images, diagrams, fonts and STEM | #632 (Kindle 6/9) |
 | K7 | `[kindle]` settings and profiles; engine, CLI, desktop and MCP entry points | #633 (Kindle 7/9) |
 | K8 | Conformance tests, device QA, performance and documentation | #634 (Kindle 8/9) |
-| K9 | Research: a native Rust KPF writer for KDP submission | #635 (Kindle 9/9) |
+| K9 | Research: a native Rust KPF writer for KDP submission. Deferred (§16) | #635 (Kindle 9/9) |
 
 Order: K1 first, since it decides whether and how each format is written. K2 follows, on K1 and on #619. K3 and K4 proceed independently of each other; K5 and K6 integrate with both; K7 once the engine's interface is stable (its scaffolding may start earlier); K8 verifies and documents the release. K9 runs at any time, may reuse K1's findings, and never blocks the KFX and AZW3 release.
 
@@ -349,6 +349,30 @@ The record is `docs/qa/spike-kindle.md`.
 - Compile size: the release binaries gain `adoc-kindle` and nothing else. `resvg` and `sha1_smol` were in the tree already. `mobi` and its encoding tables are dev-dependencies only. The crate is about 6,400 lines with its test readers.
 - The release smoke test (`packaging/smoke-test.py`) exports a page as AZW3 and as KFX with the packaged `adocfoundry-cli`, and checks each file's signature.
 - What tests cannot show remains in `docs/qa/kindle.md`, not yet run: the books on a Kindle e-reader and a Kindle app. Until then neither format is called ready, and the epic stays open.
+
+### K9 (#635): KPF for Kindle Direct Publishing
+
+**Decision: defer.** No KPF writer is planned, no `.kpf` output exists, and none is exposed or stubbed. The KFX and AZW3 export is neither blocked nor changed by this. The question reopens, as its own epic, only when the open questions below have answers that can be checked.
+
+Documented fact:
+
+- KDP accepts a manuscript as EPUB, DOCX or KPF, and KPF is what Kindle Create saves (Amazon's KDP help on supported formats, §17). KDP no longer accepts MOBI manuscripts.
+- KPF is a different format from KFX. Neither a `.kfx` nor an AZW3, relabelled, is a `.kpf`.
+- Amazon publishes no KPF specification, and no Rust crate on crates.io writes KPF. Neither MIT candidate of K1 (`ebook-rs`, `epub3-kindle`) reads or writes it, and the GPL `boko` is out of reach in any case (§7).
+- AdocFoundry already writes DOCX (#613), which KDP accepts, and EPUB export (#614) is planned. Those are the documented, supported routes to a KDP manuscript.
+
+Unverified (reported in the community, not confirmed here from any primary source):
+
+- That a KPF file is an archive holding the book as a database of KFX-like fragments, with JSON metadata beside it. Writing that would mean an embedded database format as well as the undocumented fragment schema; a pure-Rust writer of that database would be a large dependency or a large in-house effort.
+- What KDP checks in an uploaded KPF, and how it treats one not made by Kindle Create.
+
+What a writer would need before it could be approved:
+
+- A primary description of the container and its schema, or permission to rely on samples, with any licence or contract terms of Kindle Create and KDP reviewed for reverse engineering and redistribution.
+- A validation route that runs no Amazon program in tests (§7): an independent reader of the format, as for KFX, plus manual uploads to a KDP account recorded in `docs/qa`. An upload is outward-facing and needs the maintainer's account and consent each time.
+- Effort, judged from KFX: its writer here is about 1,600 lines, and its independent reader about 550 more. The database layer, KDP's acceptance rules and the upload checks are unknown, and are the larger part of the risk.
+
+Until then the user documentation says, wherever it describes Kindle export, that KFX and AZW3 are for reading and sideloading, and that a KDP manuscript is EPUB, DOCX or KPF from Kindle Create.
 
 ## 17. References
 
