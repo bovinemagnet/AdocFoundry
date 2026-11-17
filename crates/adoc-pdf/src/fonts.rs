@@ -311,27 +311,7 @@ fn load(
     theme_dir: Option<&Path>,
     access: &FileAccess,
 ) -> Option<Font> {
-    match file {
-        FontFile::Bundled(name) => bundled(name),
-        FontFile::Path(path) if path.is_absolute() => read(path, access),
-        FontFile::Path(path) => {
-            for dir in dirs {
-                if dir.as_os_str() == "GEM_FONTS_DIR" {
-                    if let Some(font) = path.to_str().and_then(bundled) {
-                        return Some(font);
-                    }
-                    continue;
-                }
-                if let Some(font) = read(&dir.join(path), access) {
-                    return Some(font);
-                }
-            }
-            if let Some(font) = theme_dir.and_then(|dir| read(&dir.join(path), access)) {
-                return Some(font);
-            }
-            path.to_str().and_then(bundled)
-        }
-    }
+    crate::theme::resolve_font(file, dirs, theme_dir, bundled, |path| read(path, access))
 }
 
 /// A theme's font file as last read: when it was modified, its size, and the font.

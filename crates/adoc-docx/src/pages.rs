@@ -36,6 +36,8 @@ pub(crate) struct RunningPart {
     pub(crate) content_type: &'static str,
     pub(crate) data: Vec<u8>,
     pub(crate) part: Part,
+    /// A template's part's own relationships: `(id, picture index or link)`.
+    pub(crate) template: Vec<(String, crate::template::TemplateTarget)>,
 }
 
 /// A section's header or footer reference: the element, its type and its relationship id.
@@ -312,7 +314,15 @@ impl Writer<'_> {
             content_type,
             data: xml.into_bytes(),
             part,
+            template: Vec::new(),
         });
+        self.running_link(header, number)
+    }
+
+    /// The document's relationship to the `number`th header (`header`) or footer part, and
+    /// its id.
+    fn running_link(&mut self, header: bool, number: usize) -> String {
+        let kind = if header { "header" } else { "footer" };
         let id = format!("r{}{number}", if header { "Header" } else { "Footer" });
         self.document_links.push((
             id.clone(),
@@ -338,12 +348,64 @@ impl Writer<'_> {
                 "chapter-title" => {
                     self.field(&format!(" STYLEREF \"{chapter}\" "), "", Format::default());
                 }
+                // A part is the level above a chapter, a section the level below; Word's
+                // fields cannot fall back from one style to another.
+                "part-title" => self.field(" STYLEREF \"heading 1\" ", "", Format::default()),
+                "section-title" | "section-or-chapter-title" => {
+                    let level = chapter
+                        .rsplit(' ')
+                        .next()
+                        .and_then(|level| level.parse::<u8>().ok())
+                        .unwrap_or(1);
+                    let section = format!("heading {}", (level + 1).min(9));
+                    self.field(&format!(" STYLEREF \"{section}\" "), "", Format::default());
+                }
                 "logo" => self.logo(),
+                image if image.starts_with("image:") => {
+                    self.running_image(&image["image:".len()..]);
+                }
                 other => self.text(&format!("{{{other}}}"), Format::default()),
             }
             rest = &rest[end + 1..];
         }
         self.text(rest, Format::default());
+    }
+
+    /// A theme's running image: `<path>`, or `<path>|<width in points>`; a line high
+    /// without a width.
+    fn running_image(&mut self, spec: &str) {
+        let (path, width) = match spec.rsplit_once('|') {
+            Some((path, width)) => (path, width.parse::<f64>().ok()),
+            None => (spec, None),
+        };
+        let path = std::path::PathBuf::from(path);
+        match self.media.load(&path, &self.options.access) {
+            Ok(picture) => {
+                let ratio = picture.height / picture.width.max(1.0);
+                // A width in points, as EMUs; else a line high, in pixels at 96 to the inch.
+                let (width, height) = match width {
+                    Some(width) => (width * 12700.0, width * ratio * 12700.0),
+                    None => (
+                        LOGO_HEIGHT / ratio.max(f64::EPSILON) * 9525.0,
+                        LOGO_HEIGHT * 9525.0,
+                    ),
+                };
+                self.drawing(
+                    &picture,
+                    (width.round() as i64, height.round() as i64),
+                    "Logo",
+                    None,
+                    None,
+                );
+            }
+            Err(reason) => self.warn(
+                None,
+                format!(
+                    "the running content's image {} {reason}; it is left out",
+                    path.display()
+                ),
+            ),
+        }
     }
 
     /// The running content's logo, a line high.
@@ -372,19 +434,76 @@ impl Writer<'_> {
         }
     }
 
-    /// The body's header and footer references: each slot's part.
+    /// A template's header (`header`) or footer parts, as they are, and the body's references
+    /// to them.
+    fn template_references(
+        &mut self,
+        template: &crate::Template,
+        header: bool,
+        references: &mut Vec<Reference>,
+    ) {
+        let (element, content_type) = if header {
+            ("w:headerReference", HEADER_TYPE)
+        } else {
+            ("w:footerReference", FOOTER_TYPE)
+        };
+        for running in template.running.iter().filter(|part| part.header == header) {
+            let number = self
+                .running_parts
+                .iter()
+                .filter(|known| known.content_type == content_type)
+                .count()
+                + 1;
+            for (_, target) in &running.relationships {
+                if let crate::template::TemplateTarget::Picture(index) = target {
+                    self.template_media.insert(*index);
+                }
+            }
+            let part = self.new_part();
+            self.running_parts.push(RunningPart {
+                name: format!(
+                    "word/{}{number}.xml",
+                    if header { "header" } else { "footer" }
+                ),
+                content_type,
+                data: running.data.clone(),
+                part,
+                template: running.relationships.clone(),
+            });
+            let id = self.running_link(header, number);
+            references.push((element, running.kind, id));
+        }
+    }
+
+    /// The body's header and footer references: each slot's part, or a template's headers or
+    /// footers where it has them. Says whether the first page has its own.
     pub(crate) fn running_references(
         &mut self,
         title: &str,
         chapter: &str,
     ) -> (Vec<Reference>, bool) {
         let running = self.options.running.clone();
+        let template = self.options.look.template.clone();
         let mut references = Vec::new();
         let mut first_page = false;
         for (header, slots) in [(true, &running.header), (false, &running.footer)] {
+            if let Some(template) = template
+                .as_deref()
+                .filter(|template| template.has_running(header))
+            {
+                self.template_references(template, header, &mut references);
+                self.odd_even |= template.odd_even;
+                first_page |= template.title_page
+                    && template
+                        .running
+                        .iter()
+                        .any(|part| part.header == header && part.kind == "first");
+                continue;
+            }
             if slots_empty(slots) {
                 continue;
             }
+            self.odd_even |= running.odd_even;
             let element = if header {
                 "w:headerReference"
             } else {
@@ -402,6 +521,12 @@ impl Writer<'_> {
         if running.header.first.is_some() || running.footer.first.is_some() {
             first_page = true;
             for (header, slots) in [(true, &running.header), (false, &running.footer)] {
+                if template
+                    .as_deref()
+                    .is_some_and(|template| template.has_running(header))
+                {
+                    continue;
+                }
                 let element = if header {
                     "w:headerReference"
                 } else {
@@ -410,6 +535,27 @@ impl Writer<'_> {
                 let line = slots.first.clone().unwrap_or_default();
                 let id = self.running_part(header, &line, title, chapter);
                 references.push((element, "first", id));
+            }
+        }
+        // Odd and even pages, and a first page of its own, are the section's: with a template's
+        // header and the export's footer, each kind needs a part for every type of page in
+        // use, its default part where it has no other.
+        let odd_even = self.odd_even;
+        for element in ["w:headerReference", "w:footerReference"] {
+            let Some(default) = references
+                .iter()
+                .find(|(known, kind, _)| *known == element && *kind == "default")
+                .map(|(_, _, id)| id.clone())
+            else {
+                continue;
+            };
+            for (kind, needed) in [("even", odd_even), ("first", first_page)] {
+                let has = references
+                    .iter()
+                    .any(|(known, known_kind, _)| *known == element && *known_kind == kind);
+                if needed && !has {
+                    references.push((element, kind, default.clone()));
+                }
             }
         }
         (references, first_page)

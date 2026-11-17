@@ -1,6 +1,7 @@
 //! A Word export's look: the PDF theme, a Word template or none, chosen by the export, a
 //! profile or the settings. The Word looks PRD (`docs/prd/PRD-AdocFoundry_DOCX_Themes.md`),
-//! §9 tests 2 (`docx_look_follows_precedence`) and 3 (`docx_settings_apply_over_the_look`).
+//! §9 tests 2 (`docx_look_follows_precedence`), 3 (`docx_settings_apply_over_the_look`),
+//! 8 (`docx_template_is_used`) and 9 (`docx_template_is_untrusted`).
 
 #![cfg(feature = "docx")]
 
@@ -32,7 +33,11 @@ fn workspace(settings: &str, header: &str) -> (tempfile::TempDir, PathBuf, Engin
         "extends: default\npage:\n  layout: landscape\n",
     )
     .unwrap();
-    fs::write(root.join("themes/corporate.dotx"), b"PK\x05\x06").unwrap();
+    fs::write(
+        root.join("themes/corporate.dotx"),
+        adoc_docx::testing::template(|_| {}),
+    )
+    .unwrap();
     fs::write(root.join("page.adoc"), format!("= Page\n{header}\nText.\n")).unwrap();
     fs::write(root.join(".adocfoundry.toml"), settings).unwrap();
     let mut settings = Settings::load(None, Some(&root)).unwrap();
@@ -238,6 +243,251 @@ fn docx_settings_apply_over_the_look() {
         workspace("[pdf]\ntheme = \"narrow\"\nthemes_dir = \"themes\"\n", "");
     let (_, document) = export(&mut engine, &root, None).unwrap();
     assert!(document.contains(LETTER));
+
+    // A template's page and footer give way to what the settings wrote, key by key.
+    let settings = "[pdf]\nthemes_dir = \"themes\"\n\n[docx]\nlook = \"template\"\n\
+                    template = \"corporate\"\n\n[docx.margins]\ntop = \"30mm\"\n\n\
+                    [docx.footer]\ncenter = \"Written {page-number}\"\n";
+    let (_directory, root, mut engine) = workspace(settings, "");
+    let (summary, document) = export(&mut engine, &root, None).unwrap();
+    assert_eq!(look(&summary).0, LookKind::Template);
+    assert!(
+        document.contains(LETTER),
+        "the template's paper: {document}"
+    );
+    assert!(
+        document.contains(
+            r#"w:top="1701" w:right="1100" w:bottom="1200" w:left="1300" w:header="500" w:footer="600""#
+        ),
+        "{document}"
+    );
+    let entries =
+        adoc_docx::testing::assert_valid_package(&fs::read(root.join("page.docx")).unwrap());
+    let footers: Vec<&str> = entries
+        .keys()
+        .filter(|name| name.starts_with("word/footer"))
+        .map(|name| adoc_docx::testing::text(&entries, name))
+        .collect();
+    assert!(footers.iter().any(|footer| footer.contains("Written")));
+    assert!(footers.iter().all(|footer| !footer.contains("example.com")));
+    // The header nobody wrote is still the template's.
+    assert!(adoc_docx::testing::text(&entries, "word/header1.xml").contains("CORPORATE HEADER"));
+}
+
+#[test]
+fn docx_template_is_used() {
+    let settings = "[pdf]\nthemes_dir = \"themes\"\n";
+    let (_directory, root, mut engine) = workspace(settings, "");
+    fs::write(
+        root.join("page.adoc"),
+        "= Page\n\nText.\n\n== Steps\n\n. One\n. Two\n\n----\ncode\n----\n",
+    )
+    .unwrap();
+    let (summary, document) = export(
+        &mut engine,
+        &root,
+        Some(LookChoice::Template("corporate".to_owned())),
+    )
+    .unwrap();
+    assert_eq!(look(&summary), (LookKind::Template, "corporate".to_owned()));
+    assert_eq!(
+        summary.look.as_ref().unwrap().path.as_deref(),
+        Some(root.join("themes/corporate.dotx").as_path())
+    );
+    assert!(summary.diagnostics.is_empty(), "{:?}", summary.diagnostics);
+    let entries =
+        adoc_docx::testing::assert_valid_package(&fs::read(root.join("page.docx")).unwrap());
+    let text = |name: &str| adoc_docx::testing::text(&entries, name);
+
+    // Its styles, with the export's added where it has none; its numbering, then the export's.
+    let styles = text("word/styles.xml");
+    assert!(styles.contains(r#"<w:color w:val="1F4E79"/><w:sz w:val="36"/>"#));
+    assert!(styles.contains(r#"w:styleId="CorporateNote""#));
+    assert!(styles.contains(r#"w:styleId="SourceCode""#));
+    assert!(text("word/numbering.xml").contains(r#"<w:num w:numId="2">"#));
+    assert!(document.contains(r#"<w:numId w:val="2"/>"#));
+    // Its page, headers and footers, theme and font table; nothing of its body.
+    assert!(document.contains(LETTER), "{document}");
+    assert!(!document.contains("TEMPLATE BODY TEXT"));
+    assert!(text("word/header1.xml").contains("CORPORATE HEADER"));
+    assert!(entries.contains_key("word/media/template1.png"));
+    assert!(entries.contains_key("word/theme/theme1.xml"));
+    assert!(text("word/fontTable.xml").contains("Arial"));
+}
+
+#[test]
+fn docx_template_is_untrusted() {
+    let settings = "[pdf]\nthemes_dir = \"themes\"\n";
+    let (_directory, root, mut engine) = workspace(settings, "");
+    let write =
+        |name: &str, bytes: Vec<u8>| fs::write(root.join("themes").join(name), bytes).unwrap();
+    let edited = |name: &'static str, from: &'static str, to: &'static str| {
+        adoc_docx::testing::template(move |entries| {
+            let text = String::from_utf8(entries[name].clone())
+                .unwrap()
+                .replace(from, to);
+            entries.insert(name.to_owned(), text.into_bytes());
+        })
+    };
+    let failure = |engine: &mut Engine, name: &str| {
+        export(engine, &root, Some(LookChoice::Template(name.to_owned()))).unwrap_err()
+    };
+
+    // Refused, failing the export with the file and the reason.
+    write(
+        "macros.dotx",
+        edited(
+            "[Content_Types].xml",
+            "officedocument.wordprocessingml.template.main+xml",
+            "ms-word.template.macroEnabledTemplate.main+xml",
+        ),
+    );
+    let error = failure(&mut engine, "macros");
+    assert!(
+        error.contains("macros.dotx") && error.contains("macros"),
+        "{error}"
+    );
+    write(
+        "project.dotx",
+        adoc_docx::testing::template(|entries| {
+            entries.insert("word/vbaProject.bin".to_owned(), vec![1; 8]);
+        }),
+    );
+    assert!(failure(&mut engine, "project").contains("macros"));
+    write("huge.dotx", vec![0; adoc_docx::MAX_TEMPLATE_BYTES + 1]);
+    assert!(failure(&mut engine, "huge").contains("too large"));
+    write(
+        "broken.dotx",
+        edited("word/styles.xml", "</w:styles>", "</w:style>"),
+    );
+    let error = failure(&mut engine, "broken");
+    assert!(
+        error.contains("word/styles.xml") && error.contains("not well formed"),
+        "{error}"
+    );
+
+    // Left out with a warning: a picture linked from outside, an altChunk, a field that reads
+    // a file. Nothing of them reaches the export.
+    write(
+        "linked.dotx",
+        adoc_docx::testing::template(|entries| {
+            entries.insert(
+                "word/_rels/header1.xml.rels".to_owned(),
+                adoc_docx::testing::relationships(&[(
+                    "rIdLogo",
+                    "image",
+                    "https://tracker.example/pixel.png",
+                    true,
+                )])
+                .into_bytes(),
+            );
+            entries.insert(
+                "word/_rels/footer1.xml.rels".to_owned(),
+                adoc_docx::testing::relationships(&[
+                    ("rIdSite", "hyperlink", "https://example.com/", true),
+                    ("rIdChunk", "aFChunk", "chunk.html", false),
+                ])
+                .into_bytes(),
+            );
+            entries.insert("word/chunk.html".to_owned(), b"<p>chunk</p>".to_vec());
+        }),
+    );
+    let (summary, _) = export(
+        &mut engine,
+        &root,
+        Some(LookChoice::Template("linked".to_owned())),
+    )
+    .unwrap();
+    let messages: Vec<&str> = summary
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("tracker.example")),
+        "{messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("chunk.html")),
+        "{messages:?}"
+    );
+    let bytes = fs::read(root.join("page.docx")).unwrap();
+    let entries = adoc_docx::testing::assert_valid_package(&bytes);
+    for (name, data) in &entries {
+        let data = String::from_utf8_lossy(data);
+        assert!(
+            !data.contains("tracker.example") && !data.contains("chunk"),
+            "{name}"
+        );
+    }
+    assert!(!entries.contains_key("word/media/template1.png"));
+
+    // A link's id used as a picture to fetch.
+    write(
+        "fetching.dotx",
+        adoc_docx::testing::template(|entries| {
+            entries.insert(
+                "word/_rels/header1.xml.rels".to_owned(),
+                adoc_docx::testing::relationships(&[
+                    ("rIdLogo", "image", "media/logo.png", false),
+                    (
+                        "rIdTrack",
+                        "hyperlink",
+                        "https://tracker.example/p.png",
+                        true,
+                    ),
+                ])
+                .into_bytes(),
+            );
+            let header = String::from_utf8(entries["word/header1.xml"].clone())
+                .unwrap()
+                .replace(r#"r:id="rIdLogo""#, r#"r:id="rIdLogo" r:href="rIdTrack""#);
+            entries.insert("word/header1.xml".to_owned(), header.into_bytes());
+        }),
+    );
+    let (summary, _) = export(
+        &mut engine,
+        &root,
+        Some(LookChoice::Template("fetching".to_owned())),
+    )
+    .unwrap();
+    assert!(summary
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains("rIdTrack")));
+    let entries =
+        adoc_docx::testing::assert_valid_package(&fs::read(root.join("page.docx")).unwrap());
+    assert!(entries
+        .values()
+        .all(|data| !String::from_utf8_lossy(data).contains("tracker.example")));
+
+    write(
+        "including.dotx",
+        edited(
+            "word/footer1.xml",
+            "> PA<",
+            "> INCLUDETEXT \"C:/secret.txt\" <",
+        ),
+    );
+    let (summary, _) = export(
+        &mut engine,
+        &root,
+        Some(LookChoice::Template("including".to_owned())),
+    )
+    .unwrap();
+    assert!(summary
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains("INCLUDETEXT")));
+    let entries =
+        adoc_docx::testing::assert_valid_package(&fs::read(root.join("page.docx")).unwrap());
+    assert!(entries
+        .values()
+        .all(|data| !String::from_utf8_lossy(data).contains("secret")));
 }
 
 /// A book of two pages in `brand`'s look, from `tests/fixtures/docx/themes`, with `settings`
@@ -576,4 +826,446 @@ fn theme_images_outside_the_roots_are_not_embedded() {
         "{:?}",
         summary.diagnostics
     );
+}
+
+/// The Word looks PRD, §9 test 6: the theme's headers and footers, odd (recto) and even
+/// (verso), with their fields, attributes, image, font and rule; written `[docx]` lines win.
+#[test]
+fn docx_pdf_theme_running_content() {
+    let (_directory, root, mut engine) = brand_book("");
+    let entries = export_book(&mut engine, &root);
+    let document = adoc_docx::testing::text(&entries, "word/document.xml");
+    let settings = adoc_docx::testing::text(&entries, "word/settings.xml");
+    assert!(settings.contains("<w:evenAndOddHeaders/>"));
+    // Each reference of the body's section, by kind, to its part's text.
+    let rels = adoc_docx::testing::text(&entries, "word/_rels/document.xml.rels");
+    let part = |id: &str| {
+        let at = rels.find(&format!("Id=\"{id}\"")).unwrap();
+        let target = &rels[at..];
+        let start = target.find("Target=\"").unwrap() + 8;
+        let end = target[start..].find('"').unwrap();
+        adoc_docx::testing::text(&entries, &format!("word/{}", &target[start..start + end]))
+            .to_owned()
+    };
+    let xml = roxmltree::Document::parse(document).unwrap();
+    let body_section = xml
+        .descendants()
+        .filter(|node| node.has_tag_name((W, "sectPr")))
+        .find(|node| {
+            node.descendants()
+                .any(|child| child.has_tag_name((W, "pgNumType")))
+        })
+        .expect("the body's section");
+    let reference = |element: &str, kind: &str| {
+        body_section
+            .children()
+            .find(|node| {
+                node.has_tag_name((W, element)) && node.attribute((W, "type")) == Some(kind)
+            })
+            .and_then(|node| {
+                node.attribute((
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+                    "id",
+                ))
+            })
+            .map(part)
+            .unwrap_or_else(|| panic!("no {kind} {element}"))
+    };
+    let text = |part: &str| {
+        adoc_docx::testing::paragraphs(part)
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect::<String>()
+    };
+    let odd_header = reference("headerReference", "default");
+    assert!(text(&odd_header).contains("The Guide"), "{odd_header}");
+    assert!(
+        odd_header.contains("STYLEREF \"heading 1\""),
+        "{odd_header}"
+    );
+    let even_header = reference("headerReference", "even");
+    assert!(
+        even_header.contains("STYLEREF \"heading 2\""),
+        "{even_header}"
+    );
+    assert!(
+        even_header.contains("<w:drawing>"),
+        "the theme's image: {even_header}"
+    );
+    // An inch wide.
+    assert!(even_header.contains(r#"cx="914400""#), "{even_header}");
+    let odd_footer = reference("footerReference", "default");
+    assert!(
+        odd_footer.contains(" PAGE ") && odd_footer.contains(" NUMPAGES "),
+        "{odd_footer}"
+    );
+    let footer_text = text(&odd_footer);
+    assert!(footer_text.contains("of"), "{footer_text}");
+    assert!(
+        footer_text.contains("· v1.0"),
+        "the version and the character: {footer_text}"
+    );
+    assert!(
+        !footer_text.contains('*'),
+        "bold marks left out: {footer_text}"
+    );
+    assert!(
+        !footer_text.contains("Draft"),
+        "a line naming an unset attribute is dropped: {footer_text}"
+    );
+    let even_footer = reference("footerReference", "even");
+    assert!(
+        even_footer.contains(" PAGE ") && !text(&even_footer).contains('_'),
+        "{even_footer}"
+    );
+
+    // The Header and Footer styles: the theme's font colour and size, the header's rule.
+    let styles = adoc_docx::testing::text(&entries, "word/styles.xml");
+    assert_eq!(
+        style_value(styles, "Header", "color", "val").as_deref(),
+        Some("595959")
+    );
+    assert_eq!(
+        style_value(styles, "Header", "sz", "val").as_deref(),
+        Some("16")
+    );
+    assert_eq!(
+        style_value(styles, "Header", "bottom", "color").as_deref(),
+        Some("CC0000")
+    );
+    assert_eq!(
+        style_value(styles, "Header", "bottom", "sz").as_deref(),
+        Some("4")
+    );
+    assert_eq!(
+        style_value(styles, "Footer", "top", "color"),
+        None,
+        "no rule of width 0"
+    );
+    // The header sits in the middle of its 0.6 inch box: (43.2 - 8 * 1.2) / 2 points.
+    assert!(document.contains(r#"w:header="336""#), "{document}");
+
+    // A footer written in the settings wins over the theme's; the header stays the theme's.
+    let (_directory, root, mut engine) = brand_book("\n[docx.footer]\nright = \"Written\"\n");
+    let entries = export_book(&mut engine, &root);
+    let parts: Vec<String> = entries
+        .keys()
+        .filter(|name| name.starts_with("word/footer"))
+        .map(|name| adoc_docx::testing::text(&entries, name).to_owned())
+        .collect();
+    assert!(
+        parts.iter().any(|part| part.contains("Written")),
+        "{parts:?}"
+    );
+    assert!(
+        parts.iter().all(|part| !part.contains("NUMPAGES")),
+        "{parts:?}"
+    );
+    assert!(entries
+        .keys()
+        .filter(|name| name.starts_with("word/header"))
+        .any(|name| adoc_docx::testing::text(&entries, name).contains("The Guide")));
+}
+
+/// `font` with its `fsType` set to `value`, found through the font's table directory.
+fn with_fs_type(font: &[u8], value: u16) -> Vec<u8> {
+    let at = |offset: usize| u32::from_be_bytes(font[offset..offset + 4].try_into().unwrap());
+    let tables = usize::from(u16::from_be_bytes([font[4], font[5]]));
+    let record = (0..tables)
+        .map(|index| 12 + index * 16)
+        .find(|record| &font[*record..*record + 4] == b"OS/2")
+        .expect("an OS/2 table");
+    let os2 = at(record + 8) as usize;
+    let mut font = font.to_vec();
+    font[os2 + 8..os2 + 10].copy_from_slice(&value.to_be_bytes());
+    font
+}
+
+/// A workspace whose theme names its fonts under a family name of its own: the regular face
+/// a file of its own, the bold face bundled, the italic one a file whose licence forbids
+/// embedding, the bold italic one missing; and the bundled monospace font for code.
+fn fonts_workspace(settings: &str) -> (tempfile::TempDir, PathBuf, Engine) {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_engine::normalize_path(directory.path());
+    let regular = adoc_theme::bundled_font("notoserif-regular-subset.ttf").unwrap();
+    fs::create_dir_all(root.join("themes/fonts")).unwrap();
+    fs::write(root.join("themes/fonts/brand-regular.ttf"), regular).unwrap();
+    fs::write(
+        root.join("themes/fonts/brand-italic.ttf"),
+        with_fs_type(
+            adoc_theme::bundled_font("notoserif-italic-subset.ttf").unwrap(),
+            0x0002,
+        ),
+    )
+    .unwrap();
+    fs::write(
+        root.join("themes/brand-theme.yml"),
+        "extends: default\nfont:\n  catalog:\n    Brand Serif:\n      normal: fonts/brand-regular.ttf\n\
+         \x20     bold: GEM_FONTS_DIR/notoserif-bold-subset.ttf\n      italic: fonts/brand-italic.ttf\n\
+         \x20     bold_italic: fonts/missing.ttf\n    M+ 1mn:\n\
+         \x20     normal: GEM_FONTS_DIR/mplus1mn-regular-subset.ttf\nbase:\n  font_family: Brand Serif\n",
+    )
+    .unwrap();
+    fs::write(root.join("page.adoc"), "= Page\n\nText and `code`.\n").unwrap();
+    fs::write(
+        root.join(".adocfoundry.toml"),
+        format!("[pdf]\ntheme = \"brand\"\nthemes_dir = \"themes\"\n{settings}"),
+    )
+    .unwrap();
+    let mut settings = Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    (directory, root, engine)
+}
+
+/// The font table's families and, for each, the faces embedded in it.
+fn font_table(entries: &std::collections::BTreeMap<String, Vec<u8>>) -> Vec<(String, Vec<String>)> {
+    let Some(_) = entries.get("word/fontTable.xml") else {
+        return Vec::new();
+    };
+    let table = adoc_docx::testing::text(entries, "word/fontTable.xml");
+    let xml = roxmltree::Document::parse(table).unwrap();
+    xml.descendants()
+        .filter(|node| node.has_tag_name((W, "font")))
+        .map(|font| {
+            (
+                font.attribute((W, "name")).unwrap().to_owned(),
+                font.children()
+                    .filter(|node| node.is_element())
+                    .map(|node| node.tag_name().name().to_owned())
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+/// The Word looks PRD, §9 test 7: the fonts the look's styles name are embedded, obfuscated
+/// and read back through the font table, under the names the fonts give themselves; a face
+/// whose licence forbids it is named and not embedded, with a warning, as is a missing one;
+/// `embed_fonts = false` names the fonts only; no theme names none; the same export gives the
+/// same bytes.
+#[test]
+fn docx_fonts_are_embedded() {
+    let (_directory, root, mut engine) = fonts_workspace("");
+    let (summary, _) = export(&mut engine, &root, None).unwrap();
+    assert_eq!(look(&summary), (LookKind::PdfTheme, "brand".to_owned()));
+    let bytes = fs::read(root.join("page.docx")).unwrap();
+    let entries = adoc_docx::testing::assert_valid_package(&bytes);
+    let table = font_table(&entries);
+    // The theme's family is written under the font's own name, which the styles use too.
+    let names: Vec<&str> = table.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["Noto Serif", "M+ 1mn"]);
+    let styles = adoc_docx::testing::text(&entries, "word/styles.xml");
+    assert_eq!(
+        style_value(styles, "", "rFonts", "ascii").as_deref(),
+        Some("Noto Serif")
+    );
+    assert!(!styles.contains("Brand Serif"));
+    // Regular and bold embedded; the italic face's licence forbids it; bold italic is missing.
+    let faces = &table
+        .iter()
+        .find(|(name, _)| name == "Noto Serif")
+        .unwrap()
+        .1;
+    assert_eq!(faces, &["embedRegular", "embedBold"]);
+    let fonts = entries
+        .keys()
+        .filter(|name| name.starts_with("word/fonts/"))
+        .count();
+    assert_eq!(fonts, 3);
+    let warnings: Vec<&str> = summary
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("italic face") && warning.contains("licence")),
+        "{warnings:?}"
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("bold italic face") && warning.contains("missing.ttf")),
+        "{warnings:?}"
+    );
+    assert!(
+        adoc_docx::testing::text(&entries, "word/settings.xml").contains("w:embedTrueTypeFonts")
+    );
+    // The same export gives the same bytes.
+    export(&mut engine, &root, None).unwrap();
+    assert_eq!(fs::read(root.join("page.docx")).unwrap(), bytes);
+
+    // Not embedding names the fonts only.
+    let (_directory, root, mut engine) = fonts_workspace("[docx]\nembed_fonts = false\n");
+    export(&mut engine, &root, None).unwrap();
+    let entries =
+        adoc_docx::testing::assert_valid_package(&fs::read(root.join("page.docx")).unwrap());
+    let table = font_table(&entries);
+    assert_eq!(table.len(), 2, "{table:?}");
+    assert!(table.iter().all(|(_, faces)| faces.is_empty()), "{table:?}");
+    assert!(!entries.keys().any(|name| name.starts_with("word/fonts/")));
+
+    // No theme, no fonts.
+    export(&mut engine, &root, Some(LookChoice::None)).unwrap();
+    let entries =
+        adoc_docx::testing::assert_valid_package(&fs::read(root.join("page.docx")).unwrap());
+    assert!(!entries.contains_key("word/fontTable.xml"));
+}
+
+#[test]
+fn theme_fonts_outside_the_roots_are_not_embedded() {
+    let directory = tempfile::tempdir().unwrap();
+    let outside = adoc_engine::normalize_path(directory.path());
+    let root = outside.join("docs");
+    fs::create_dir_all(root.join("themes")).unwrap();
+    fs::write(
+        outside.join("secret.ttf"),
+        adoc_theme::bundled_font("notoserif-regular-subset.ttf").unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        root.join("themes/leak-theme.yml"),
+        "extends: default\nfont:\n  catalog:\n    Leak:\n      normal: ../../secret.ttf\n\
+         base:\n  font_family: Leak\n",
+    )
+    .unwrap();
+    fs::write(root.join("page.adoc"), "= Page\n\nText.\n").unwrap();
+    fs::write(
+        root.join(".adocfoundry.toml"),
+        "[pdf]\ntheme = \"leak\"\nthemes_dir = \"themes\"\n",
+    )
+    .unwrap();
+    let mut settings = Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine.set_file_access(adoc_engine::FileAccess::within([root.clone()]));
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    let (summary, _) = export(&mut engine, &root, None).unwrap();
+    let entries =
+        adoc_docx::testing::assert_valid_package(&fs::read(root.join("page.docx")).unwrap());
+    // Named, as the theme names it, and not embedded.
+    assert_eq!(font_table(&entries), [("Leak".to_owned(), Vec::new())]);
+    assert!(!entries.keys().any(|name| name.starts_with("word/fonts/")));
+    assert!(
+        summary
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("secret.ttf")),
+        "{:?}",
+        summary.diagnostics
+    );
+}
+
+/// What `Engine::docx_looks` lists is what each choice exports: a workspace theme by its file
+/// even where a page names a themes folder of its own, `acme.dotx` and `acme.docx` as two
+/// looks, and the themed commands run with a look and refuse to run without one.
+#[test]
+fn docx_looks_list_what_each_choice_exports() {
+    use adoc_engine::{commands::ids, CommandArgs, EngineEvent, ExportTarget};
+
+    let (directory, root, mut engine) = brand_book("");
+    fs::write(
+        root.join("themes/acme.dotx"),
+        adoc_docx::testing::template(|_| {}),
+    )
+    .unwrap();
+    fs::write(
+        root.join("themes/acme.docx"),
+        adoc_docx::testing::template(|entries| {
+            let header = String::from_utf8(entries["word/header1.xml"].clone())
+                .unwrap()
+                .replace("CORPORATE HEADER", "ACME DOCX HEADER");
+            entries.insert("word/header1.xml".to_owned(), header.into_bytes());
+        }),
+    )
+    .unwrap();
+    // The page names a themes folder that is not there.
+    fs::write(
+        root.join("guide/modules/ROOT/pages/index.adoc"),
+        "= Start\n:pdf-themesdir: elsewhere\n\nThe start.\n",
+    )
+    .unwrap();
+    let looks = engine.docx_looks();
+    let names: Vec<&str> = looks.iter().map(|look| look.name.as_str()).collect();
+    assert!(names.starts_with(&["default", "default-sans", "default-for-print", "base"]));
+    for name in ["brand", "acme.docx", "acme.dotx"] {
+        assert!(names.contains(&name), "{name}: {names:?}");
+    }
+    assert_eq!(names.last(), Some(&"No theme"));
+
+    let id = engine
+        .open(&root.join("guide/modules/ROOT/pages/index.adoc"))
+        .unwrap();
+    let mut export = |name: &str| {
+        let look = looks.iter().find(|look| look.name == name).unwrap();
+        let output = directory.path().join(format!("{name}.out.docx"));
+        let summary = engine
+            .export_docx_blocking(
+                DocxExportArgs {
+                    target: ExportTarget::Page(id),
+                    output: output.clone(),
+                    attributes: Vec::new(),
+                    paper: None,
+                    landscape: None,
+                    look: Some(look.choice.clone()),
+                },
+                WAIT,
+            )
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(summary.look.as_ref().unwrap().kind, look.kind, "{name}");
+        assert_eq!(summary.look.as_ref().unwrap().path, look.path, "{name}");
+        adoc_docx::testing::assert_valid_package(&fs::read(output).unwrap())
+    };
+    // The workspace theme, by its file, though the page looks for themes elsewhere.
+    let branded = export("brand");
+    assert!(adoc_docx::testing::text(&branded, "word/styles.xml").contains("Noto"));
+    // Each template is its own file.
+    let header = |entries: &std::collections::BTreeMap<String, Vec<u8>>| {
+        adoc_docx::testing::text(entries, "word/header1.xml").to_owned()
+    };
+    assert!(header(&export("acme.dotx")).contains("CORPORATE HEADER"));
+    assert!(header(&export("acme.docx")).contains("ACME DOCX HEADER"));
+
+    // The component command, with a look, writes the book in it.
+    let events = engine.subscribe();
+    let output = directory.path().join("book.docx");
+    let args = |look: Option<LookChoice>| {
+        CommandArgs::ExportDocx(DocxExportArgs {
+            target: ExportTarget::Component {
+                name: "guide".to_owned(),
+                version: Some("1.0".to_owned()),
+            },
+            output: output.clone(),
+            attributes: Vec::new(),
+            paper: None,
+            landscape: None,
+            look,
+        })
+    };
+    engine
+        .invoke(
+            ids::EXPORT_DOCX_COMPONENT_THEMED,
+            args(Some(LookChoice::None)),
+        )
+        .unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    let finished = events.try_iter().find_map(|event| match event {
+        EngineEvent::ExportFinished { result, .. } => Some(result),
+        _ => None,
+    });
+    let summary = finished.expect("the export finished").unwrap();
+    assert_eq!(summary.look.unwrap().kind, LookKind::None);
+    assert_eq!(summary.sources.len(), 2);
+    // Without a look, both themed commands refuse.
+    for command in [
+        ids::EXPORT_DOCX_PAGE_THEMED,
+        ids::EXPORT_DOCX_COMPONENT_THEMED,
+    ] {
+        assert!(engine.invoke(command, args(None)).is_err(), "{command:?}");
+    }
 }

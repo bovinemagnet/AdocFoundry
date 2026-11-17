@@ -1439,12 +1439,9 @@ fn docx_cli_exports_and_gates() {
             .success()
     );
 
-    // Nothing of PDF's: its flags are refused, and so is an output that is not a `.docx` file.
-    for extra in [
-        ["--theme", "default"],
-        ["--standard", "pdf-ua-1"],
-        ["--typst", "x.typ"],
-    ] {
+    // Nothing of PDF's but `--theme`, which chooses the Word look: its other flags are refused,
+    // and so is an output that is not a `.docx` file.
+    for extra in [["--standard", "pdf-ua-1"], ["--typst", "x.typ"]] {
         assert!(
             !run(&root, &[&page[..], &extra[..]].concat())
                 .status
@@ -1463,4 +1460,141 @@ fn docx_cli_exports_and_gates() {
     );
     assert!(!output.status.success());
     assert!(!root.join("install.pdf").exists());
+}
+
+/// The Word looks PRD's §9 test 10, for the command line: `--theme`, `--template` and
+/// `--no-theme`, and a profile's look, write the same bytes as the engine exporting with the
+/// same `LookChoice`, the reference every front end is held to (the app's and the MCP
+/// server's tests compare theirs with it too).
+#[test]
+fn docx_look_choice_everywhere() {
+    use adoc_engine::{DocxExportArgs, Engine, ExportTarget, LookChoice, Settings};
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_engine::normalize_path(&directory.path().join("book"));
+    copy_tree(&repository_root().join("tests/fixtures/pdf/book"), &root);
+    std::fs::create_dir_all(root.join("themes")).unwrap();
+    std::fs::write(
+        root.join("themes/sans-theme.yml"),
+        "extends: default-sans\nbase:\n  font-color: #112233\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("themes/corporate.dotx"),
+        adoc_docx::testing::template(|_| {}),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join(".adocfoundry.toml"),
+        "[pdf]\nthemes_dir = \"themes\"\n\n\
+         [docx.profiles.themed]\npage = \"guide/modules/ROOT/pages/install.adoc\"\ntheme = \"sans\"\n\n\
+         [docx.profiles.templated]\npage = \"guide/modules/ROOT/pages/install.adoc\"\ntemplate = \"corporate\"\n\n\
+         [docx.profiles.plain]\npage = \"guide/modules/ROOT/pages/install.adoc\"\nlook = \"none\"\n",
+    )
+    .unwrap();
+    let page = "guide/modules/ROOT/pages/install.adoc";
+    let run = |arguments: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+            .current_dir(&root)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    };
+    // The reference: the engine itself, with the settings the command line reads.
+    let mut settings = Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(60)));
+    let id = engine.open(&root.join(page)).unwrap();
+    let mut reference = |look: LookChoice, name: &str| {
+        let output = directory.path().join(name);
+        engine
+            .export_docx_blocking(
+                DocxExportArgs {
+                    target: ExportTarget::Page(id),
+                    output: output.clone(),
+                    attributes: Vec::new(),
+                    paper: None,
+                    landscape: None,
+                    look: Some(look),
+                },
+                std::time::Duration::from_secs(120),
+            )
+            .unwrap();
+        std::fs::read(output).unwrap()
+    };
+    let themed = reference(LookChoice::PdfTheme("sans".to_owned()), "themed.docx");
+    let templated = reference(
+        LookChoice::Template("corporate".to_owned()),
+        "templated.docx",
+    );
+    let plain = reference(LookChoice::None, "plain.docx");
+    assert!(themed != plain && templated != plain && themed != templated);
+
+    for (arguments, expected, look) in [
+        (vec!["--theme", "sans"], &themed, "look: pdf-theme sans"),
+        (
+            vec!["--template", "corporate"],
+            &templated,
+            "look: template corporate",
+        ),
+        (vec!["--no-theme"], &plain, "look: none"),
+        (vec!["--profile", "themed"], &themed, "look: pdf-theme sans"),
+        (
+            vec!["--profile", "templated"],
+            &templated,
+            "look: template corporate",
+        ),
+        (vec!["--profile", "plain"], &plain, "look: none"),
+        // An option given with a profile wins over the profile's look.
+        (
+            vec!["--profile", "themed", "--no-theme"],
+            &plain,
+            "look: none",
+        ),
+    ] {
+        let written = directory.path().join("cli.docx");
+        let written_name = written.to_string_lossy().into_owned();
+        let mut all = vec!["docx"];
+        if !arguments.contains(&"--profile") {
+            all.push(page);
+        }
+        all.extend(arguments.iter().copied());
+        all.extend(["--output", written_name.as_str()]);
+        let output = run(&all);
+        assert!(
+            stdout(&output).contains(look),
+            "{all:?}: {}",
+            stdout(&output)
+        );
+        assert!(
+            std::fs::read(&written).unwrap() == *expected,
+            "{all:?} wrote other bytes than the engine"
+        );
+    }
+
+    // At most one look; PDF export knows only `--theme`.
+    let refused = |arguments: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+            .current_dir(&root)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{arguments:?} was accepted");
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+    assert!(refused(&["docx", page, "--theme", "sans", "--no-theme"]).contains("at most one"));
+    assert!(
+        refused(&["docx", page, "--theme", "sans", "--template", "corporate"])
+            .contains("at most one")
+    );
+    assert!(refused(&["pdf", page, "--template", "corporate"]).contains("unknown option"));
+    assert!(refused(&["pdf", page, "--no-theme"]).contains("unknown option"));
 }

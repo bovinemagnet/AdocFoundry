@@ -5,11 +5,13 @@ mod common;
 
 use std::{collections::BTreeMap, fs, panic, path::Path};
 
-use adoc_docx::{write_docx, DocxDocument, DocxOptions, DocxPage, Line, Slots};
+use adoc_docx::{
+    write_docx, DocxDocument, DocxOptions, DocxPage, FontFamily, FontSource, Line, Slots,
+};
 use common::{assert_valid_package, entries, package, view};
 
-/// A document with a picture, a footnote, a bookmark and a link to it, a list, a table, and a
-/// header with fields: something of everything the checks look at.
+/// A document with a picture, a footnote, a bookmark and a link to it, a list, a table, a
+/// header with fields and an embedded font: something of everything the checks look at.
 fn valid() -> (BTreeMap<String, Vec<u8>>, tempfile::TempDir) {
     let folder = tempfile::tempdir().unwrap();
     fs::copy(
@@ -35,12 +37,25 @@ fn valid() -> (BTreeMap<String, Vec<u8>>, tempfile::TempDir) {
         even: None,
         first: None,
     };
+    options.look.defaults.font = Some("Noto Serif".to_owned());
+    options.look.fonts = vec![FontFamily {
+        name: "Noto Serif".to_owned(),
+        faces: [
+            Some(FontSource::Bundled(
+                adoc_theme::bundled_font("notoserif-regular-subset.ttf").unwrap(),
+            )),
+            None,
+            None,
+            None,
+        ],
+    }];
     let mut bytes = Vec::new();
     let report = write_docx(&document, &options, &mut bytes).unwrap();
     assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
     let entries = assert_valid_package(&bytes);
     assert!(entries.keys().any(|name| name.starts_with("word/media/")));
     assert!(entries.keys().any(|name| name.starts_with("word/header")));
+    assert!(entries.contains_key("word/fonts/font1.odttf"));
     (entries, folder)
 }
 
@@ -180,6 +195,35 @@ fn the_package_checks_catch_damage() {
                 ),
             ),
             "not written",
+        ),
+        (
+            "a font's key that does not open it",
+            changed(&entries, "word/fontTable.xml", |text| {
+                // The last digit, which the font's first bytes are opened with.
+                let key = text.find("w:fontKey=\"{").unwrap();
+                let at = key + text[key..].find('}').unwrap() - 1;
+                let digit = if &text[at..=at] == "0" { "1" } else { "0" };
+                Some(format!("{}{digit}{}", &text[..at], &text[at + 1..]))
+            }),
+            "does not open into a font",
+        ),
+        (
+            "a font key that is not a GUID",
+            changed(
+                &entries,
+                "word/fontTable.xml",
+                replace("w:fontKey=\"{", "w:fontKey=\"{X"),
+            ),
+            "is not a GUID",
+        ),
+        (
+            "fonts embedded that the settings do not say so",
+            changed(
+                &entries,
+                "word/settings.xml",
+                replace("<w:embedTrueTypeFonts/>", ""),
+            ),
+            "only when one is",
         ),
         (
             "a part with no content type",

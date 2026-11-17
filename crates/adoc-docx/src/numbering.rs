@@ -36,12 +36,26 @@ pub(crate) const DEEPEST_LEVEL: u32 = 8;
 
 #[derive(Default)]
 pub(crate) struct Numbering {
+    /// The first `abstractNumId` and the `numId` before the first this numbering gives: after a
+    /// template's.
+    first_abstract: u32,
+    last_number: u32,
     abstracts: Vec<ListStyle>,
     /// Each instance: its abstract definition, and the level and number it starts at.
     instances: Vec<(usize, Option<(u32, u32)>)>,
 }
 
 impl Numbering {
+    /// Numbering whose ids follow a template's, given as its first free `abstractNumId` and
+    /// its highest `numId`.
+    pub(crate) fn after((first_abstract, last_number): (u32, u32)) -> Self {
+        Self {
+            first_abstract,
+            last_number,
+            ..Self::default()
+        }
+    }
+
     /// A new list of `style` at `level`, starting at `start` when ordered; its `numId`.
     pub(crate) fn instance(&mut self, style: ListStyle, level: u32, start: u32) -> u32 {
         let index = match self.abstracts.iter().position(|known| *known == style) {
@@ -53,7 +67,9 @@ impl Numbering {
         };
         let restart = matches!(style, ListStyle::Ordered(_)).then_some((level, start));
         self.instances.push((index, restart));
-        u32::try_from(self.instances.len()).unwrap_or(u32::MAX)
+        u32::try_from(self.instances.len())
+            .unwrap_or(u32::MAX)
+            .saturating_add(self.last_number)
     }
 
     /// The part, when any list was written.
@@ -64,6 +80,9 @@ impl Numbering {
         let mut xml = Xml::part();
         xml.open("w:numbering", &[("xmlns:w", W)]);
         for (index, style) in self.abstracts.iter().enumerate() {
+            let index = u32::try_from(index)
+                .unwrap_or(u32::MAX)
+                .saturating_add(self.first_abstract);
             xml.open("w:abstractNum", &[("w:abstractNumId", &index.to_string())]);
             xml.empty("w:multiLevelType", &[("w:val", "hybridMultilevel")]);
             for level in 0..=DEEPEST_LEVEL {
@@ -92,7 +111,13 @@ impl Numbering {
             xml.close("w:abstractNum");
         }
         for (number, (index, restart)) in self.instances.iter().enumerate() {
-            xml.open("w:num", &[("w:numId", &(number + 1).to_string())]);
+            let number = u32::try_from(number + 1)
+                .unwrap_or(u32::MAX)
+                .saturating_add(self.last_number);
+            let index = u32::try_from(*index)
+                .unwrap_or(u32::MAX)
+                .saturating_add(self.first_abstract);
+            xml.open("w:num", &[("w:numId", &number.to_string())]);
             xml.empty("w:abstractNumId", &[("w:val", &index.to_string())]);
             if let Some((level, start)) = restart {
                 xml.open("w:lvlOverride", &[("w:ilvl", &level.to_string())]);

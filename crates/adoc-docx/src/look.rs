@@ -11,9 +11,14 @@
 //! `cover_front_image` and `cover_back_image` when the page names none. [`MAPPED_KEYS`] lists
 //! every key read.
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use adoc_theme::{LoadedTheme, ThemeValue};
+
+use crate::{Line, Slots};
 
 /// What a style sets, each property only when given; laid over the writer's own definition.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -72,8 +77,43 @@ pub struct Border {
     pub colour: String,
     /// In eighths of a point.
     pub width: u32,
-    /// Only on the left, as a quote's bar; all round otherwise.
-    pub left_only: bool,
+    pub sides: BorderSides,
+}
+
+/// Where a paragraph's border is drawn.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BorderSides {
+    /// All round, as round code.
+    All,
+    /// On the left, as a quote's bar.
+    Left,
+    /// Above, as a footer's rule.
+    Top,
+    /// Below, as a header's rule.
+    Bottom,
+}
+
+impl BorderSides {
+    pub(crate) fn names(self) -> &'static [&'static str] {
+        match self {
+            Self::All => &["top", "left", "bottom", "right"],
+            Self::Left => &["left"],
+            Self::Top => &["top"],
+            Self::Bottom => &["bottom"],
+        }
+    }
+}
+
+/// A theme's headers and footers. A periphery the theme does not have (no `header_height`) is
+/// `None`, and shown empty.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RunningLook {
+    pub header: Option<Slots>,
+    pub footer: Option<Slots>,
+    /// How far the header's text is from the page's top edge, and the footer's from its
+    /// bottom edge, in twentieths of a point.
+    pub header_distance: Option<u32>,
+    pub footer_distance: Option<u32>,
 }
 
 /// A box drawn as a table (a table, an admonition, a sidebar or an example).
@@ -110,9 +150,15 @@ pub struct WordLook {
     /// Table styles by id (`AdocTable`, `AdocAdmonition`, `AdocSidebar`, `AdocExample`).
     pub boxes: BTreeMap<String, BoxLook>,
     pub title_page: TitlePageLook,
+    /// The theme's headers and footers; `None` for a look without them.
+    pub running: Option<RunningLook>,
     /// The covers when the document names none.
     pub front_cover: Option<PathBuf>,
     pub back_cover: Option<PathBuf>,
+    /// The fonts the look's families are, embedded where its styles name them.
+    pub fonts: Vec<crate::FontFamily>,
+    /// A Word template's styles, numbering, theme, fonts, headers and footers.
+    pub template: Option<std::sync::Arc<crate::Template>>,
 }
 
 /// The theme keys a Word export reads, with the `<n>` of `heading_h<n>` written as `<n>`;
@@ -121,13 +167,18 @@ pub const MAPPED_KEYS: &[&str] = &[
     "page_size",
     "page_layout",
     "page_margin",
+    "extends",
+    "font_catalog",
     "base_font_family",
     "base_font_size",
     "base_font_color",
+    "base_font_style",
+    "base_border_color",
     "base_line_height",
     "base_text_align",
     "heading_font_family",
     "heading_font_color",
+    "heading_font_size",
     "heading_font_style",
     "heading_text_transform",
     "heading_margin_top",
@@ -144,18 +195,23 @@ pub const MAPPED_KEYS: &[&str] = &[
     "code_font_family",
     "code_font_size",
     "code_font_color",
+    "code_font_style",
     "code_background_color",
     "code_border_color",
     "code_border_width",
     "codespan_font_family",
     "codespan_font_color",
+    "codespan_font_size",
+    "codespan_font_style",
     "codespan_background_color",
     "caption_font_color",
+    "caption_font_family",
     "caption_font_size",
     "caption_font_style",
     "caption_text_align",
     "caption_align",
     "quote_font_color",
+    "quote_font_family",
     "quote_font_size",
     "quote_font_style",
     "quote_border_color",
@@ -185,12 +241,44 @@ pub const MAPPED_KEYS: &[&str] = &[
     "title_page_subtitle_font_size",
     "title_page_subtitle_font_color",
     "title_page_subtitle_font_style",
+    "title_page_authors_font_family",
     "title_page_authors_font_size",
+    "title_page_authors_font_style",
     "title_page_authors_font_color",
     "title_page_logo_image",
     "title_page_logo_align",
     "cover_front_image",
     "cover_back_image",
+    "header_height",
+    "header_font_family",
+    "header_font_size",
+    "header_font_color",
+    "header_font_style",
+    "header_border_color",
+    "header_border_width",
+    "header_padding",
+    "header_vertical_align",
+    "header_recto_left_content",
+    "header_recto_center_content",
+    "header_recto_right_content",
+    "header_verso_left_content",
+    "header_verso_center_content",
+    "header_verso_right_content",
+    "footer_height",
+    "footer_font_family",
+    "footer_font_size",
+    "footer_font_color",
+    "footer_font_style",
+    "footer_border_color",
+    "footer_border_width",
+    "footer_padding",
+    "footer_vertical_align",
+    "footer_recto_left_content",
+    "footer_recto_center_content",
+    "footer_recto_right_content",
+    "footer_verso_left_content",
+    "footer_verso_center_content",
+    "footer_verso_right_content",
 ];
 
 /// The theme's keys, read as Word wants them.
@@ -200,6 +288,8 @@ struct Keys<'a> {
 
 impl Keys<'_> {
     fn get(&self, key: &str) -> Option<&ThemeValue> {
+        #[cfg(test)]
+        tests::READ.with(|read| read.borrow_mut().insert(key.to_owned()));
         self.theme.keys.get(key)
     }
 
@@ -302,9 +392,20 @@ impl Keys<'_> {
 }
 
 impl WordLook {
-    /// The look of a PDF theme, as far as Word can show it.
+    /// The look of a Word template: its own styles, numbering, page, headers and footers,
+    /// with the export's styles added where it has none.
     #[must_use]
-    pub fn from_theme(theme: &LoadedTheme) -> Self {
+    pub fn from_template(template: crate::Template) -> Self {
+        Self {
+            template: Some(std::sync::Arc::new(template)),
+            ..Self::default()
+        }
+    }
+
+    /// The look of a PDF theme, as far as Word can show it; `attributes` are the document's,
+    /// which its running content may name.
+    #[must_use]
+    pub fn from_theme(theme: &LoadedTheme, attributes: &BTreeMap<String, String>) -> Self {
         let keys = Keys { theme };
         let mut look = Self {
             defaults: StyleLook {
@@ -356,7 +457,7 @@ impl WordLook {
                 keys.eighths("code_border_width").map(|width| Border {
                     colour,
                     width,
-                    left_only: false,
+                    sides: BorderSides::All,
                 })
             }),
             ..keys.font("code")
@@ -389,7 +490,7 @@ impl WordLook {
                     .map(|(colour, width)| Border {
                         colour,
                         width,
-                        left_only: true,
+                        sides: BorderSides::Left,
                     }),
                 ..keys.font("quote")
             },
@@ -426,6 +527,7 @@ impl WordLook {
             logo: keys.image("title_page_logo_image"),
             logo_align: keys.align("title_page_logo_align"),
         };
+        look.running = Some(running(&keys, attributes, &mut look.styles));
         look.front_cover = keys.image("cover_front_image");
         look.back_cover = keys.image("cover_back_image");
 
@@ -474,5 +576,437 @@ impl WordLook {
     /// The look of style `id`, if it has one.
     pub(crate) fn style(&self, id: &str) -> Option<&StyleLook> {
         self.styles.get(id)
+    }
+}
+
+/// Attributes running content can name that change from page to page; the writer shows them
+/// as fields or as the document's title.
+const DYNAMIC: &[&str] = &[
+    "page-number",
+    "page-count",
+    "document-title",
+    "part-title",
+    "chapter-title",
+    "section-title",
+    "section-or-chapter-title",
+];
+
+/// The theme's headers and footers, and their styles in `styles` (`Header`, `Footer`).
+fn running(
+    keys: &Keys<'_>,
+    attributes: &BTreeMap<String, String>,
+    styles: &mut BTreeMap<String, StyleLook>,
+) -> RunningLook {
+    let mut look = RunningLook::default();
+    for periphery in ["header", "footer"] {
+        // As the PDF: a periphery with no height is not drawn.
+        let Some(height) = keys.number(&format!("{periphery}_height")) else {
+            continue;
+        };
+        let line = |side: &str| Line {
+            left: slot(
+                keys,
+                attributes,
+                &format!("{periphery}_{side}_left_content"),
+            ),
+            centre: slot(
+                keys,
+                attributes,
+                &format!("{periphery}_{side}_center_content"),
+            ),
+            right: slot(
+                keys,
+                attributes,
+                &format!("{periphery}_{side}_right_content"),
+            ),
+        };
+        // Even (verso) pages show their own content only, as the PDF does.
+        let slots = Slots {
+            odd: line("recto"),
+            even: Some(line("verso")),
+            first: None,
+        };
+        let size = keys
+            .number(&format!("{periphery}_font_size"))
+            .or_else(|| keys.number("base_font_size"))
+            .unwrap_or(10.0);
+        let padding = adoc_theme::sides(keys.get(&format!("{periphery}_padding")), 0.0);
+        let text = size * 1.2;
+        let align = keys.text(&format!("{periphery}_vertical_align"));
+        // From the page's edge to the text's nearer side, as the PDF places it in its box.
+        let distance = match (periphery, align.as_deref()) {
+            ("header", Some("top")) => padding[0],
+            ("header", Some("bottom")) => height - padding[2] - text,
+            ("footer", Some("top")) => height - padding[0] - text,
+            ("footer", Some("bottom")) => padding[2],
+            _ => (height - text) / 2.0,
+        };
+        let distance = Some((distance.max(0.0) * 20.0).round() as u32);
+        let drawn = keys
+            .number(&format!("{periphery}_border_width"))
+            .is_some_and(|width| width > 0.0);
+        let rule = keys
+            .colour(&format!("{periphery}_border_color"))
+            .or_else(|| keys.colour("base_border_color"))
+            .zip(keys.eighths(&format!("{periphery}_border_width")))
+            .filter(|_| drawn)
+            .map(|(colour, width)| Border {
+                colour,
+                width,
+                sides: if periphery == "header" {
+                    BorderSides::Bottom
+                } else {
+                    BorderSides::Top
+                },
+            });
+        let style = StyleLook {
+            border: rule,
+            ..keys.font(periphery)
+        };
+        if periphery == "header" {
+            look.header = Some(slots);
+            look.header_distance = distance;
+            styles.insert("Header".to_owned(), style);
+        } else {
+            look.footer = Some(slots);
+            look.footer_distance = distance;
+            styles.insert("Footer".to_owned(), style);
+        }
+    }
+    look
+}
+
+/// A slot's content in the writer's own placeholders: `{page-number}` and the other page
+/// values as they are, the document's attributes substituted (a line naming one that is not set
+/// is dropped, as asciidoctor-pdf drops it), bold, italic and monospace marks left out with
+/// their text kept, character references as characters, and an `image:` macro standing alone
+/// as `{image:<path>|<width in points>}`, found beside the theme.
+fn slot(keys: &Keys<'_>, attributes: &BTreeMap<String, String>, key: &str) -> String {
+    let Some(content) = keys
+        .get(key)
+        .filter(|value| !value.is_null())
+        .map(ToString::to_string)
+    else {
+        return String::new();
+    };
+    let content = content.trim();
+    if let Some(image) = image_macro(content, keys.theme.dir.as_deref(), attributes) {
+        return image;
+    }
+    content
+        .split('\n')
+        .filter_map(|line| line_text(line, attributes))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `image:<target>[<attributes>]` standing alone, as the writer's image placeholder.
+fn image_macro(
+    content: &str,
+    theme_dir: Option<&Path>,
+    attributes: &BTreeMap<String, String>,
+) -> Option<String> {
+    let rest = content.strip_prefix("image:")?;
+    let (target, attrs) = rest.strip_suffix(']')?.split_once('[')?;
+    // `{imagesdir}/logo.png` and the like: a leading attribute reference is the theme's folder.
+    let target = match target
+        .strip_prefix('{')
+        .and_then(|rest| rest.split_once("}/"))
+    {
+        Some((_, target)) => target,
+        None => target,
+    };
+    let target = substitute(target, attributes);
+    if target.is_empty() || target.contains(char::is_whitespace) || target.contains("://") {
+        return None;
+    }
+    let path = PathBuf::from(&target);
+    let path = match theme_dir {
+        Some(dir) if path.is_relative() => dir.join(path),
+        _ => path,
+    };
+    let width = ["pdfwidth", "scaledwidth", "width"]
+        .into_iter()
+        .find_map(|name| {
+            attrs.split(',').find_map(|attribute| {
+                let (key, value) = attribute.split_once('=')?;
+                (key.trim() == name).then(|| points(value.trim())).flatten()
+            })
+        });
+    Some(match width {
+        Some(width) => format!("{{image:{}|{width}}}", path.display()),
+        None => format!("{{image:{}}}", path.display()),
+    })
+}
+
+/// A length with an absolute unit (`in`, `mm`, `cm`, `pt`, `px`, `pc`), in points.
+fn points(value: &str) -> Option<f64> {
+    let split = value
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(value.len());
+    let (number, unit) = value.split_at(split);
+    adoc_theme::to_pt(number.parse().ok()?, unit)
+        .filter(|points| points.is_finite() && *points > 0.0)
+}
+
+/// Attribute references replaced; unknown ones left as they are.
+fn substitute(text: &str, attributes: &BTreeMap<String, String>) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find('{') {
+        let Some(end) = rest[start..].find('}').map(|end| start + end) else {
+            break;
+        };
+        out.push_str(&rest[..start]);
+        match attributes.get(&rest[start + 1..end]) {
+            Some(value) => out.push_str(value),
+            None => out.push_str(&rest[start..=end]),
+        }
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// One line of running content in the writer's placeholders, or `None` when it names an
+/// attribute that is not set.
+fn line_text(line: &str, attributes: &BTreeMap<String, String>) -> Option<String> {
+    let mut out = String::new();
+    let mut rest = line;
+    while let Some(start) = rest.find('{') {
+        let Some(end) = rest[start..].find('}').map(|end| start + end) else {
+            break;
+        };
+        out.push_str(&rest[..start]);
+        let name = &rest[start + 1..end];
+        let is_name = !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        if !is_name || DYNAMIC.contains(&name) {
+            out.push_str(&rest[start..=end]);
+        } else {
+            out.push_str(attributes.get(name)?);
+        }
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    Some(without_marks(&character_references(&out)))
+}
+
+/// `&#169;` and `&#xA9;` as the characters they name.
+fn character_references(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("&#") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let decoded = after.find(';').and_then(|end| {
+            let code = &after[..end];
+            let value = match code.strip_prefix(['x', 'X']) {
+                Some(hex) => u32::from_str_radix(hex, 16).ok(),
+                None => code.parse().ok(),
+            };
+            value.and_then(char::from_u32).map(|c| (c, end))
+        });
+        match decoded {
+            Some((c, end)) => {
+                out.push(c);
+                rest = &after[end + 1..];
+            }
+            None => {
+                out.push_str("&#");
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Constrained `*bold*`, `_italic_` and `` `monospace` `` with their marks left out.
+fn without_marks(text: &str) -> String {
+    let mut chars: Vec<char> = text.chars().collect();
+    for mark in ['*', '_', '`'] {
+        let mut index = 0;
+        while index < chars.len() {
+            let opens = chars[index] == mark
+                && (index == 0 || !chars[index - 1].is_alphanumeric())
+                && chars
+                    .get(index + 1)
+                    .is_some_and(|next| !next.is_whitespace() && *next != mark);
+            if !opens {
+                index += 1;
+                continue;
+            }
+            let close = (index + 2..chars.len()).find(|&end| {
+                chars[end] == mark
+                    && !chars[end - 1].is_whitespace()
+                    && chars
+                        .get(end + 1)
+                        .is_none_or(|next| !next.is_alphanumeric())
+            });
+            match close {
+                Some(close) => {
+                    chars.remove(close);
+                    chars.remove(index);
+                }
+                None => index += 1,
+            }
+        }
+    }
+    chars.into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        cell::RefCell,
+        collections::{BTreeMap, BTreeSet},
+        path::Path,
+    };
+
+    use super::{image_macro, line_text, without_marks, WordLook, MAPPED_KEYS};
+
+    thread_local! {
+        /// The keys `Keys::get` was asked for on this thread.
+        pub(super) static READ: RefCell<BTreeSet<String>> = const { RefCell::new(BTreeSet::new()) };
+    }
+
+    /// Keys a Word look takes that other code reads: `extends` (the theme loader), the page's
+    /// (`adoc_theme::page_geometry`) and the font catalogue's (the engine's `theme_fonts`).
+    const READ_ELSEWHERE: &[&str] = &[
+        "extends",
+        "page_size",
+        "page_layout",
+        "page_margin",
+        "font_catalog",
+    ];
+
+    /// A value of the kind `key` holds.
+    fn value(key: &str) -> &'static str {
+        match key {
+            _ if key.ends_with("_color") => "'C00000'",
+            _ if key.ends_with("_font_family") => "Noto Serif",
+            _ if key.ends_with("_font_style") => "bold",
+            _ if key.ends_with("_text_transform") => "uppercase",
+            _ if key.ends_with("_text_decoration") => "underline",
+            _ if key.ends_with("_align") => "center",
+            _ if key.ends_with("_content") => "'{page-number}'",
+            _ if key.ends_with("_image") => "image:logo.png[width=20]",
+            _ if key.ends_with("_padding") => "[2, 4]",
+            _ => "6",
+        }
+    }
+
+    #[test]
+    fn every_key_read_is_mapped_and_every_mapped_key_is_read() {
+        let mapped: Vec<String> = MAPPED_KEYS
+            .iter()
+            .filter(|key| !READ_ELSEWHERE.contains(key))
+            .flat_map(|key| {
+                if key.contains("<n>") {
+                    (1..=6)
+                        .map(|level| key.replace("<n>", &level.to_string()))
+                        .collect()
+                } else {
+                    vec![(*key).to_owned()]
+                }
+            })
+            .collect();
+        let yaml: String = mapped
+            .iter()
+            .map(|key| format!("{key}: {}\n", value(key)))
+            .collect();
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("every-theme.yml");
+        std::fs::write(&file, yaml).unwrap();
+        let theme = adoc_theme::load_theme(&adoc_theme::ThemeSource::File(file)).unwrap();
+        READ.with(|read| read.borrow_mut().clear());
+        let _ = WordLook::from_theme(&theme, &BTreeMap::new());
+        let is_mapped = |key: &str| {
+            MAPPED_KEYS.iter().any(|mapped| {
+                *mapped == key
+                    || (1..=6).any(|level| mapped.replace("<n>", &level.to_string()) == key)
+            })
+        };
+        // `base_border_color` is read only for a header or footer rule with no colour of its own.
+        let file = directory.path().join("rule-theme.yml");
+        std::fs::write(&file, "header_height: 20\nheader_border_width: 1\n").unwrap();
+        let theme = adoc_theme::load_theme(&adoc_theme::ThemeSource::File(file)).unwrap();
+        let _ = WordLook::from_theme(&theme, &BTreeMap::new());
+        let read = READ.with(|read| read.borrow().clone());
+        let unlisted: Vec<&String> = read.iter().filter(|key| !is_mapped(key)).collect();
+        assert!(
+            unlisted.is_empty(),
+            "read but not in MAPPED_KEYS: {unlisted:?}"
+        );
+        let unread: Vec<&String> = mapped.iter().filter(|key| !read.contains(*key)).collect();
+        assert!(
+            unread.is_empty(),
+            "in MAPPED_KEYS but never read: {unread:?}"
+        );
+    }
+
+    #[test]
+    fn running_content_is_read_as_the_pdf_reads_it() {
+        let attributes: BTreeMap<String, String> =
+            [("revnumber".to_owned(), "2.0".to_owned())].into();
+        // Page values kept as placeholders, attributes substituted, marks left out.
+        assert_eq!(
+            line_text("*{page-number}* of {page-count}, v{revnumber}", &attributes).as_deref(),
+            Some("{page-number} of {page-count}, v2.0")
+        );
+        // A line naming an attribute that is not set is dropped.
+        assert_eq!(line_text("Draft {unset}", &attributes), None);
+        // Half-written or odd text is kept as it is, never a panic.
+        for text in [
+            "{",
+            "{page-number",
+            "a } b",
+            "{ spaced }",
+            "&#;",
+            "&#xZZ;",
+            "*",
+            "_x",
+            "`",
+        ] {
+            assert!(line_text(text, &attributes).is_some(), "{text}");
+        }
+        assert_eq!(
+            line_text("&#169; &#xA9;", &attributes).as_deref(),
+            Some("© ©")
+        );
+        // Marks inside a word are text.
+        assert_eq!(
+            without_marks("snake_case_name and *bold* 2*3*4"),
+            "snake_case_name and bold 2*3*4"
+        );
+
+        // An image macro standing alone, beside the theme, with an absolute width.
+        let dir = Path::new("/themes");
+        // As the platform joins paths.
+        let logo = dir.join("logo.png").display().to_string();
+        assert_eq!(
+            image_macro("image:logo.png[pdfwidth=1in]", Some(dir), &attributes),
+            Some(format!("{{image:{logo}|72}}"))
+        );
+        assert_eq!(
+            image_macro("image:{imagesdir}/logo.png[]", Some(dir), &attributes),
+            Some(format!("{{image:{logo}}}"))
+        );
+        // A relative width is not a size Word can take; a remote image is not drawn.
+        assert_eq!(
+            image_macro("image:logo.png[pdfwidth=50%]", Some(dir), &attributes),
+            Some(format!("{{image:{logo}}}"))
+        );
+        assert_eq!(
+            image_macro("image:https://example.com/a.png[]", Some(dir), &attributes),
+            None
+        );
+        assert_eq!(
+            image_macro("text image:a.png[]", Some(dir), &attributes),
+            None
+        );
     }
 }

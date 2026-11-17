@@ -63,6 +63,78 @@ pub struct ExportLook {
     pub path: Option<PathBuf>,
 }
 
+/// A look a picker offers (Export Page to Word with Theme…): its kind, the name to show, the
+/// file it is, and the choice that exports with it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocxLookItem {
+    pub kind: LookKind,
+    pub name: String,
+    pub path: Option<PathBuf>,
+    pub choice: LookChoice,
+}
+
+impl crate::Engine {
+    /// The looks a Word export can be given: the bundled and the workspace's PDF themes, each
+    /// `.dotx` and `.docx` in `[pdf] themes_dir`, and no theme. Files are listed by name and
+    /// never opened; a workspace theme or a template is chosen by its path, so it is the one
+    /// exported whatever a page's `pdf-themesdir` says.
+    #[must_use]
+    pub fn docx_looks(&self) -> Vec<DocxLookItem> {
+        let mut looks: Vec<DocxLookItem> = self
+            .pdf_themes()
+            .into_iter()
+            .map(|theme| DocxLookItem {
+                kind: LookKind::PdfTheme,
+                choice: LookChoice::PdfTheme(
+                    theme
+                        .file
+                        .as_ref()
+                        .map_or_else(|| theme.name.clone(), |file| file.display().to_string()),
+                ),
+                name: theme.name,
+                path: theme.file,
+            })
+            .collect();
+        let dir = self
+            .settings
+            .pdf
+            .themes_dir
+            .as_deref()
+            .zip(self.roots.first())
+            .map(|(dir, root)| crate::normalize_path(&root.join(dir)));
+        let mut templates: Vec<DocxLookItem> = dir
+            .as_deref()
+            .and_then(|dir| std::fs::read_dir(dir).ok())
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+            .filter_map(|entry| {
+                let path = crate::normalize_path(&entry.path());
+                let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+                if extension != "dotx" && extension != "docx" {
+                    return None;
+                }
+                Some(DocxLookItem {
+                    kind: LookKind::Template,
+                    name: path.file_name()?.to_string_lossy().into_owned(),
+                    choice: LookChoice::Template(path.display().to_string()),
+                    path: Some(path),
+                })
+            })
+            .collect();
+        templates.sort_by(|left, right| left.name.cmp(&right.name));
+        looks.extend(templates);
+        looks.push(DocxLookItem {
+            kind: LookKind::None,
+            name: "No theme".to_owned(),
+            path: None,
+            choice: LookChoice::None,
+        });
+        looks
+    }
+}
+
 #[cfg(feature = "docx")]
 mod resolve {
     use std::{
@@ -70,7 +142,9 @@ mod resolve {
         path::{Path, PathBuf},
     };
 
-    use adoc_theme::{LoadedTheme, PageGeometry, ThemeSource};
+    use adoc_core::FileAccess;
+    use adoc_docx::{FontFamily, FontSource};
+    use adoc_theme::{FontFile, LoadedTheme, PageGeometry, ThemeSource};
 
     use super::{DocxLook, ExportLook, LookChoice, LookKind};
     use crate::{DocxExportArgs, Engine};
@@ -86,6 +160,7 @@ mod resolve {
         Template {
             name: String,
             path: PathBuf,
+            template: Box<adoc_docx::Template>,
         },
     }
 
@@ -105,7 +180,7 @@ mod resolve {
                         ThemeSource::Bundled(_) => None,
                     },
                 },
-                Self::Template { name, path } => ExportLook {
+                Self::Template { name, path, .. } => ExportLook {
                     kind: LookKind::Template,
                     name: name.clone(),
                     path: Some(path.clone()),
@@ -113,22 +188,95 @@ mod resolve {
             }
         }
 
-        /// What the look gives the writer's styles, title page and covers.
-        pub(crate) fn word_look(&self) -> adoc_docx::WordLook {
+        /// What the look gives the writer's styles, title page, covers, running content and
+        /// fonts; `attributes` are the document's, which running content may name. A theme's
+        /// fonts are found as PDF export finds them: in `fonts_dirs`, then the theme's folder,
+        /// then among the bundled fonts, a file only where `access` permits.
+        pub(crate) fn word_look(
+            &self,
+            attributes: &BTreeMap<String, String>,
+            fonts_dirs: &[PathBuf],
+            access: &FileAccess,
+        ) -> adoc_docx::WordLook {
             match self {
-                Self::PdfTheme { theme, .. } => adoc_docx::WordLook::from_theme(theme),
-                Self::None | Self::Template { .. } => adoc_docx::WordLook::default(),
+                Self::PdfTheme { theme, .. } => {
+                    let mut look = adoc_docx::WordLook::from_theme(theme, attributes);
+                    look.fonts = theme_fonts(theme, fonts_dirs, access);
+                    look
+                }
+                Self::Template { template, .. } => {
+                    adoc_docx::WordLook::from_template(template.as_ref().clone())
+                }
+                Self::None => adoc_docx::WordLook::default(),
             }
         }
 
         /// The page the look gives: a PDF theme's, with the page's `pdf-page-size`,
-        /// `pdf-page-layout` and `pdf-page-margin` over it, as PDF export reads them.
+        /// `pdf-page-layout` and `pdf-page-margin` over it, as PDF export reads them, or a
+        /// template's last section's.
         pub(crate) fn page(&self, attributes: &BTreeMap<String, String>) -> Option<PageGeometry> {
             match self {
                 Self::PdfTheme { theme, .. } => Some(adoc_theme::page_geometry(theme, attributes)),
-                Self::None | Self::Template { .. } => None,
+                Self::Template { template, .. } => template.page().map(|page| {
+                    let points = |twips: u32| f64::from(twips) / 20.0;
+                    let (width, height) = if page.landscape {
+                        (page.height, page.width)
+                    } else {
+                        (page.width, page.height)
+                    };
+                    let margins = page.margins;
+                    PageGeometry {
+                        width: points(width),
+                        height: points(height),
+                        margin: [margins.top, margins.right, margins.bottom, margins.left]
+                            .map(points),
+                        landscape: page.landscape,
+                        warnings: Vec::new(),
+                    }
+                }),
+                Self::None => None,
             }
         }
+    }
+
+    /// Each family of `theme`'s font catalogue with where its faces are.
+    fn theme_fonts(
+        theme: &LoadedTheme,
+        fonts_dirs: &[PathBuf],
+        access: &FileAccess,
+    ) -> Vec<FontFamily> {
+        let source = |file: &FontFile| {
+            adoc_theme::resolve_font(
+                file,
+                fonts_dirs,
+                theme.dir.as_deref(),
+                |name| adoc_theme::bundled_font(name).map(FontSource::Bundled),
+                |path| {
+                    (access.permits(path) && path.is_file())
+                        .then(|| FontSource::File(path.to_path_buf()))
+                },
+            )
+            .unwrap_or_else(|| {
+                FontSource::Missing(match file {
+                    FontFile::Bundled(name) => format!("GEM_FONTS_DIR/{name}"),
+                    FontFile::Path(path) => path.display().to_string(),
+                })
+            })
+        };
+        theme
+            .fonts
+            .iter()
+            .map(|(name, faces)| FontFamily {
+                name: name.clone(),
+                faces: [
+                    &faces.normal,
+                    &faces.bold,
+                    &faces.italic,
+                    &faces.bold_italic,
+                ]
+                .map(|file| file.as_ref().map(source)),
+            })
+            .collect()
     }
 
     impl Engine {
@@ -180,9 +328,35 @@ mod resolve {
                 }
                 LookChoice::Template(name) => {
                     let path = self.template_path(&name, attributes, page)?;
-                    Ok(ResolvedLook::Template { name, path })
+                    let template = self.read_template(&path)?;
+                    Ok(ResolvedLook::Template {
+                        name,
+                        path,
+                        template: Box::new(template),
+                    })
                 }
             }
+        }
+
+        /// The template at `path`, read through the engine's file access, its size checked
+        /// before it is read.
+        fn read_template(&self, path: &Path) -> Result<adoc_docx::Template, String> {
+            let failed = |why: &dyn std::fmt::Display| {
+                format!("the Word template {} cannot be used: {why}", path.display())
+            };
+            let size = std::fs::metadata(path)
+                .map_err(|error| failed(&error))?
+                .len();
+            if size > adoc_docx::MAX_TEMPLATE_BYTES as u64 {
+                return Err(failed(&adoc_docx::TemplateError::TooLarge(
+                    usize::try_from(size).unwrap_or(usize::MAX),
+                )));
+            }
+            let bytes = self
+                .file_access
+                .read(path)
+                .map_err(|error| failed(&error))?;
+            adoc_docx::Template::read(&bytes).map_err(|error| failed(&error))
         }
 
         /// The Word template `name` means: a path when it ends in `.dotx` or `.docx` (relative

@@ -10,7 +10,7 @@ use adoc_core::FileAccess;
 use resvg::{tiny_skia, usvg};
 
 /// The largest file a picture may come from.
-const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
 /// The most pixels on a side, and in all, a picture may have.
 const MAX_SIDE: u32 = 10_000;
 const MAX_PIXELS: u64 = 40_000_000;

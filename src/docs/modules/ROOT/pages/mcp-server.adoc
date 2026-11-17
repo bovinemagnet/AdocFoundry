@@ -826,8 +826,8 @@ Nothing in a page's text, and nothing in a client's request, can change this.
 |Moves the page and rewrites the xrefs, nav entries and includes that name it. Then it saves every file it changed. `new_name` is a file name or a path relative to the page's directory.
 
 |`export_docx`
-|`path`, `component` or `profile`, `output?`
-|Exports a page as an article, a component version as a book, or a `[docx.profiles]` publication, as an editable Word document. `output` is required unless a profile is given. It returns the output, the page count, the pages exported and any warnings. See below.
+|`path`, `component` or `profile`, `output?`, `theme?`, `template?`, `no_theme?`
+|Exports a page as an article, a component version as a book, or a `[docx.profiles]` publication, as an editable Word document. `output` is required unless a profile is given. At most one of `theme`, `template` and `no_theme` chooses the look. It returns the output, the page count, the pages exported, the look and any warnings. See below.
 
 |`export_pdf`
 |`path` or `component`, `output`, `theme?`, `standards?`
@@ -843,7 +843,11 @@ Exactly one of `path`, `component` or `profile` is given.
 It must be inside a root, or the call fails with `outside_workspace`, and it must not be a link or a page, or the call fails with `invalid_argument`.
 It must be a `.docx` file name, and a `.docx` file there already is replaced.
 The paper, margins, headers and footers and styles come from the `[docx]` settings and never from `[pdf]`.
-It returns `output`, `pages` (the number of AsciiDoc pages exported), `sources` (those pages in the document's order, as workspace-relative paths) and `warnings`, which are strings.
+At most one of `theme`, `template` and `no_theme: true` chooses the look; see xref:word-export.adoc#look[Choosing the look].
+`theme` and `template` are each a name in the themes folder or a path inside a root.
+The path is confined like every path a tool is given: a theme or template outside the roots, or reached through a link out of them, is refused.
+It returns `output`, `pages` (the number of AsciiDoc pages exported), `sources` (those pages in the document's order, as workspace-relative paths), `look` and `warnings`, which are strings.
+`look` is `{ kind, name, path }`: `kind` is `pdf-theme`, `template` or `none`, `name` is as the client gave it (or the look's name), and `path` is the file relative to the root, or null for a bundled theme or none.
 STEM formulas are typeset as pictures, with their source as the picture's alternative text.
 The tool never opens Word or runs an external tool.
 See xref:settings.adoc#docx-settings[Word export settings].

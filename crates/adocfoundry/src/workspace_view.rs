@@ -464,14 +464,50 @@ fn export_args(target: ExportTarget, theme: Option<String>) -> ExportArgs {
 
 /// A Word export of `target` to `output`, with the settings' paper and orientation.
 fn docx_export(target: ExportTarget, output: PathBuf) -> CommandArgs {
+    docx_export_in(target, output, None)
+}
+
+/// A Word export of `target` to `output` in `look`, or the default look.
+fn docx_export_in(
+    target: ExportTarget,
+    output: PathBuf,
+    look: Option<adoc_engine::LookChoice>,
+) -> CommandArgs {
     CommandArgs::ExportDocx(DocxExportArgs {
         target,
         output,
         attributes: Vec::new(),
         paper: None,
         landscape: None,
-        look: None,
+        look,
     })
+}
+
+/// How a picker shows a look: its name, and what kind of look it is and where.
+fn look_label(look: &adoc_engine::DocxLookItem) -> String {
+    match (look.kind, &look.path) {
+        (adoc_engine::LookKind::PdfTheme, Some(path)) => {
+            format!("{} — PDF theme, {}", look.name, path.display())
+        }
+        (adoc_engine::LookKind::PdfTheme, None) => format!("{} (bundled PDF theme)", look.name),
+        (adoc_engine::LookKind::Template, Some(path)) => {
+            format!("{} — Word template, {}", look.name, path.display())
+        }
+        _ => look.name.clone(),
+    }
+}
+
+/// How a finished export names the look it used.
+fn look_phrase(look: &adoc_engine::ExportLook) -> String {
+    let name = look.path.as_deref().and_then(Path::file_name).map_or_else(
+        || look.name.clone(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    match look.kind {
+        adoc_engine::LookKind::PdfTheme => format!("with the PDF theme {name}"),
+        adoc_engine::LookKind::Template => format!("with the Word template {name}"),
+        adoc_engine::LookKind::None => "with no theme".to_owned(),
+    }
 }
 
 /// A PDF or HTML export of `target` in `theme` to `output`.
@@ -500,7 +536,14 @@ pub(crate) fn export_message(output: &Path, result: &Result<ExportSummary, Strin
             } else if docx {
                 // Word lays out its own pages; these are the AsciiDoc pages it holds.
                 let plural = if summary.pages == 1 { "" } else { "s" };
-                format!("Exported {name} ({} AsciiDoc page{plural})", summary.pages)
+                let look = summary
+                    .look
+                    .as_ref()
+                    .map_or_else(String::new, |look| format!(" {}", look_phrase(look)));
+                format!(
+                    "Exported {name} ({} AsciiDoc page{plural}){look}",
+                    summary.pages
+                )
             } else {
                 format!("Exported {name} ({} pages)", summary.pages)
             };
@@ -3978,6 +4021,67 @@ impl WorkspaceView {
         self.export_page(ids::EXPORT_DOCX_PAGE, "docx", docx_export, window, cx);
     }
 
+    /// Offers the looks a Word export can have, then asks where to write the active page in
+    /// the one chosen.
+    fn on_export_page_docx_themed(
+        &mut self,
+        _: &ExportPageDocxThemed,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let engine = &self.app.read(cx).engine;
+        if engine.active().is_none() {
+            window.push_notification("Open a page to export it.", cx);
+            return;
+        }
+        let looks = engine.docx_looks();
+        let labels = looks.iter().map(look_label).collect();
+        self.pick(
+            "Choose a look for the Word document…",
+            labels,
+            window,
+            cx,
+            move |this, index, window, cx| {
+                let look = looks[index].choice.clone();
+                this.export_page(
+                    ids::EXPORT_DOCX_PAGE_THEMED,
+                    "docx",
+                    move |target, output| docx_export_in(target, output, Some(look)),
+                    window,
+                    cx,
+                );
+            },
+        );
+    }
+
+    /// Offers the looks a Word export can have, then asks where to write the component's book
+    /// in the one chosen.
+    fn on_export_component_docx_themed(
+        &mut self,
+        _: &ExportComponentDocxThemed,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let looks = self.app.read(cx).engine.docx_looks();
+        let labels = looks.iter().map(look_label).collect();
+        self.pick(
+            "Choose a look for the Word book…",
+            labels,
+            window,
+            cx,
+            move |this, index, window, cx| {
+                let look = looks[index].choice.clone();
+                this.export_component(
+                    ids::EXPORT_DOCX_COMPONENT_THEMED,
+                    "docx",
+                    move |target, output| docx_export_in(target, output, Some(look)),
+                    window,
+                    cx,
+                );
+            },
+        );
+    }
+
     /// Asks where to write the active page, suggesting its name with `extension` beside it,
     /// then runs `command` with the arguments `args` makes of the page and the path chosen.
     fn export_page(
@@ -5987,6 +6091,8 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_export_page_docx))
             .on_action(cx.listener(Self::on_export_component_docx))
             .on_action(cx.listener(Self::on_export_docx_profile))
+            .on_action(cx.listener(Self::on_export_page_docx_themed))
+            .on_action(cx.listener(Self::on_export_component_docx_themed))
             .on_action(cx.listener(Self::on_export_page_pdf_with_theme))
             .on_action(cx.listener(Self::on_save_and_commit))
             .on_action(cx.listener(Self::on_open_settings))

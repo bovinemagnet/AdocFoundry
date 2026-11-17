@@ -1,7 +1,10 @@
 //! The parts every document has: the main document around its body, the styles and the core
 //! properties.
 
+use std::{borrow::Cow, collections::BTreeSet};
+
 use crate::{
+    fonts::Fonts,
     look::{BoxLook, StyleLook, WordLook},
     xml::Xml,
     StyleOverrides,
@@ -21,6 +24,9 @@ pub(crate) const NUMBERING_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml";
 pub(crate) const FOOTNOTES_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml";
+pub(crate) const FONT_TABLE_TYPE: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml";
+pub(crate) const FONT_TYPE: &str = "application/vnd.openxmlformats-officedocument.obfuscatedFont";
 
 pub(crate) const OFFICE_DOCUMENT: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
@@ -38,6 +44,10 @@ pub(crate) const HYPERLINK: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
 pub(crate) const IMAGE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+pub(crate) const FONT_TABLE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable";
+pub(crate) const FONT: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/font";
 
 /// The namespaces of a part holding body content: WordprocessingML, relationships, and the
 /// DrawingML its pictures are written in.
@@ -248,10 +258,17 @@ fn set_attribute(props: &mut Vec<Prop>, name: &str, key: &str, value: &str) {
 
 /// A run's properties with `look` laid over them.
 fn run_props(props: &[Property<'_>], look: Option<&StyleLook>) -> Vec<Prop> {
-    let mut props: Vec<Prop> = props
-        .iter()
-        .map(|(name, attributes)| Prop::new(name, attributes))
-        .collect();
+    run_look(
+        props
+            .iter()
+            .map(|(name, attributes)| Prop::new(name, attributes))
+            .collect(),
+        look,
+    )
+}
+
+/// `props` with `look` laid over them, in the schema's order.
+fn run_look(mut props: Vec<Prop>, look: Option<&StyleLook>) -> Vec<Prop> {
     if let Some(look) = look {
         if let Some(font) = &look.font {
             let font = font.as_str();
@@ -308,10 +325,17 @@ fn shading(fill: &str) -> Prop {
 
 /// A paragraph's properties with `look` laid over them.
 fn paragraph_props(props: &[Property<'_>], look: Option<&StyleLook>) -> Vec<Prop> {
-    let mut props: Vec<Prop> = props
-        .iter()
-        .map(|(name, attributes)| Prop::new(name, attributes))
-        .collect();
+    paragraph_look(
+        props
+            .iter()
+            .map(|(name, attributes)| Prop::new(name, attributes))
+            .collect(),
+        look,
+    )
+}
+
+/// `props` with `look` laid over them, in the schema's order.
+fn paragraph_look(mut props: Vec<Prop>, look: Option<&StyleLook>) -> Vec<Prop> {
     if let Some(look) = look {
         if let Some(before) = look.before {
             set_attribute(&mut props, "w:spacing", "w:before", &before.to_string());
@@ -331,11 +355,7 @@ fn paragraph_props(props: &[Property<'_>], look: Option<&StyleLook>) -> Vec<Prop
         }
         if let Some(border) = &look.border {
             let width = border.width.to_string();
-            let sides: &[&str] = if border.left_only {
-                &["left"]
-            } else {
-                &["top", "left", "bottom", "right"]
-            };
+            let sides = border.sides.names();
             let mut box_prop = Prop::new("w:pBdr", &[]);
             for side in sides {
                 box_prop.children.push(Prop::new(
@@ -505,7 +525,7 @@ fn write_style(
 }
 
 /// The look written `[docx.styles]` keys give each style, laid over a theme's.
-fn written_look(overrides: &StyleOverrides, id: &str) -> StyleLook {
+pub(crate) fn written_look(overrides: &StyleOverrides, id: &str) -> StyleLook {
     let heading = id == "Title"
         || id == "Subtitle"
         || id == "TOCHeading"
@@ -537,7 +557,64 @@ fn written_look(overrides: &StyleOverrides, id: &str) -> StyleLook {
 /// is named for what it holds, so a reader can restyle it in Word. `width` is the text's, in
 /// twentieths of a point: headers and footers have their centre and right tab stops by it, and
 /// the table of contents its page numbers.
-pub(crate) fn styles(width: u32, overrides: &StyleOverrides, look: &WordLook) -> Vec<u8> {
+/// The font families the styles name: the look's, and those `[docx.styles]` wrote.
+pub(crate) fn fonts_named<'a>(
+    overrides: &'a StyleOverrides,
+    look: &'a WordLook,
+) -> BTreeSet<&'a str> {
+    std::iter::once(&look.defaults)
+        .chain(look.styles.values())
+        .filter_map(|style| style.font.as_deref())
+        .chain(
+            [
+                &overrides.body_font,
+                &overrides.heading_font,
+                &overrides.code_font,
+            ]
+            .into_iter()
+            .filter_map(Option::as_deref),
+        )
+        .collect()
+}
+
+/// `look` and `overrides` with each font under the name the font gives itself.
+fn renamed<'a>(
+    overrides: &'a StyleOverrides,
+    look: &'a WordLook,
+    fonts: &Fonts,
+) -> (Cow<'a, StyleOverrides>, Cow<'a, WordLook>) {
+    if fonts.is_empty() {
+        return (Cow::Borrowed(overrides), Cow::Borrowed(look));
+    }
+    let rename = |font: &mut Option<String>| {
+        if let Some(name) = font {
+            *name = fonts.name(name).to_owned();
+        }
+    };
+    let mut overrides = overrides.clone();
+    for font in [
+        &mut overrides.body_font,
+        &mut overrides.heading_font,
+        &mut overrides.code_font,
+    ] {
+        rename(font);
+    }
+    let mut look = look.clone();
+    rename(&mut look.defaults.font);
+    for style in look.styles.values_mut() {
+        rename(&mut style.font);
+    }
+    (Cow::Owned(overrides), Cow::Owned(look))
+}
+
+pub(crate) fn styles(
+    width: u32,
+    overrides: &StyleOverrides,
+    look: &WordLook,
+    fonts: &Fonts,
+) -> Vec<u8> {
+    let (overrides, look) = renamed(overrides, look, fonts);
+    let (overrides, look) = (overrides.as_ref(), look.as_ref());
     // Each style's look: the theme's, then what `[docx.styles]` wrote.
     let style = |xml: &mut Xml, style: &Style<'_>| {
         let theme = look.style(style.id).cloned().unwrap_or_default();
@@ -822,20 +899,32 @@ pub(crate) fn styles(width: u32, overrides: &StyleOverrides, look: &WordLook) ->
         xml.empty("w:basedOn", &[("w:val", "Normal")]);
         xml.empty("w:uiPriority", &[("w:val", "99")]);
         xml.empty("w:unhideWhenUsed", &[]);
-        xml.open("w:pPr", &[]);
-        xml.open("w:tabs", &[]);
-        xml.empty("w:tab", &[("w:val", "center"), ("w:pos", &centre)]);
-        xml.empty("w:tab", &[("w:val", "right"), ("w:pos", &right)]);
-        xml.close("w:tabs");
-        xml.empty(
+        // Its tab stops, its spacing and the look's rule; its font, size and colour.
+        let mut tabs = Prop::new("w:tabs", &[]);
+        tabs.children = vec![
+            Prop::new("w:tab", &[("w:val", "center"), ("w:pos", &centre)]),
+            Prop::new("w:tab", &[("w:val", "right"), ("w:pos", &right)]),
+        ];
+        let spacing = Prop::new(
             "w:spacing",
             &[("w:after", "0"), ("w:line", "240"), ("w:lineRule", "auto")],
         );
-        xml.close("w:pPr");
-        xml.open("w:rPr", &[]);
-        xml.empty("w:sz", &[("w:val", "18")]);
-        xml.empty("w:szCs", &[("w:val", "18")]);
-        xml.close("w:rPr");
+        let own = look.style(id);
+        let paragraph = paragraph_look(vec![tabs, spacing], own);
+        let run = run_look(
+            vec![
+                Prop::new("w:sz", &[("w:val", "18")]),
+                Prop::new("w:szCs", &[("w:val", "18")]),
+            ],
+            own,
+        );
+        for (element, properties) in [("w:pPr", &paragraph), ("w:rPr", &run)] {
+            xml.open(element, &[]);
+            for property in properties {
+                property.write(&mut xml);
+            }
+            xml.close(element);
+        }
         xml.close("w:style");
     }
     // The table of contents: its heading (not itself listed), and an entry style per level,
@@ -991,13 +1080,22 @@ pub(crate) fn styles(width: u32, overrides: &StyleOverrides, look: &WordLook) ->
     xml.into_bytes()
 }
 
-/// `word/settings.xml`: odd and even pages' own headers and footers, when asked for; whether
+/// `word/settings.xml`: whether fonts are embedded; odd and even pages' own headers and
+/// footers, when asked for; whether
 /// Word updates the fields on opening (when there is a table of contents, whose page numbers
 /// only Word can work out, it asks); the footnotes' separators; and Word's current
 /// compatibility mode, so it opens the document without "compatibility mode".
-pub(crate) fn settings(footnotes: bool, odd_even: bool, update_fields: bool) -> Vec<u8> {
+pub(crate) fn settings(
+    footnotes: bool,
+    odd_even: bool,
+    update_fields: bool,
+    embed_fonts: bool,
+) -> Vec<u8> {
     let mut xml = Xml::part();
     xml.open("w:settings", &[("xmlns:w", W)]);
+    if embed_fonts {
+        xml.empty("w:embedTrueTypeFonts", &[]);
+    }
     if odd_even {
         xml.empty("w:evenAndOddHeaders", &[]);
     }

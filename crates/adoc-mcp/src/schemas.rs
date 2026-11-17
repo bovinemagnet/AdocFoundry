@@ -279,8 +279,21 @@ pub fn export_docx() -> Arc<JsonObject> {
                 "description": "A page exported, in the document's order.",
             })),
             "warnings": list(json!({ "type": "string" })),
+            "look": {
+                "type": "object",
+                "description": "The look the document was exported in.",
+                "properties": {
+                    "kind": { "type": "string", "enum": ["pdf-theme", "template", "none"] },
+                    "name": { "type": "string" },
+                    "path": {
+                        "type": ["string", "null"],
+                        "description": "The theme's or template's file; null for a bundled theme or none.",
+                    },
+                },
+                "required": ["kind", "name", "path"],
+            },
         }),
-        &["output", "pages", "sources", "warnings"],
+        &["output", "pages", "sources", "warnings", "look"],
     )
 }
 

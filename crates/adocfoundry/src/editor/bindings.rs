@@ -134,6 +134,8 @@ actions!(
         ExportPageDocx,
         ExportComponentDocx,
         ExportDocxProfile,
+        ExportPageDocxThemed,
+        ExportComponentDocxThemed,
         ExportPagePdfWithTheme,
         ShowGraph,
         ShowLocalGraph,
@@ -294,6 +296,10 @@ fn binding_for(id: CommandId, keys: &str, cx: &App) -> Option<KeyBinding> {
         ids::EXPORT_DOCX_PAGE => key_binding(keys, ExportPageDocx, workspace, cx),
         ids::EXPORT_DOCX_COMPONENT => key_binding(keys, ExportComponentDocx, workspace, cx),
         ids::EXPORT_DOCX_PROFILE => key_binding(keys, ExportDocxProfile, workspace, cx),
+        ids::EXPORT_DOCX_PAGE_THEMED => key_binding(keys, ExportPageDocxThemed, workspace, cx),
+        ids::EXPORT_DOCX_COMPONENT_THEMED => {
+            key_binding(keys, ExportComponentDocxThemed, workspace, cx)
+        }
         ids::SETTINGS_OPEN => key_binding(keys, OpenSettings, workspace, cx),
         ids::APP_CHECK_FOR_UPDATES => key_binding(keys, CheckForUpdates, workspace, cx),
         ids::APP_DIAGNOSTICS => key_binding(keys, ShowDiagnostics, workspace, cx),
@@ -409,6 +415,8 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::EXPORT_DOCX_PAGE => Box::new(ExportPageDocx),
         ids::EXPORT_DOCX_COMPONENT => Box::new(ExportComponentDocx),
         ids::EXPORT_DOCX_PROFILE => Box::new(ExportDocxProfile),
+        ids::EXPORT_DOCX_PAGE_THEMED => Box::new(ExportPageDocxThemed),
+        ids::EXPORT_DOCX_COMPONENT_THEMED => Box::new(ExportComponentDocxThemed),
         ids::SETTINGS_OPEN => Box::new(OpenSettings),
         ids::APP_CHECK_FOR_UPDATES => Box::new(CheckForUpdates),
         ids::APP_DIAGNOSTICS => Box::new(ShowDiagnostics),

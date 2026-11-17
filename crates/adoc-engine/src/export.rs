@@ -400,6 +400,48 @@ pub(crate) fn register_export(registry: &mut CommandRegistry) {
             ),
             docx_profile_command,
         );
+        // The same exports with a look chosen from `Engine::docx_looks`, which front ends offer
+        // first.
+        register(
+            registry,
+            spec(
+                ids::EXPORT_DOCX_PAGE_THEMED,
+                "Export Page to Word with Theme…",
+                CommandCategory::Document,
+                None,
+                CommandContext::ActiveDocument,
+            ),
+            docx_themed_command,
+        );
+        register(
+            registry,
+            spec(
+                ids::EXPORT_DOCX_COMPONENT_THEMED,
+                "Export Component to Word with Theme…",
+                CommandCategory::Workspace,
+                None,
+                CommandContext::Antora,
+            ),
+            docx_themed_command,
+        );
+    }
+}
+
+/// A Word export with the look it names: its arguments must choose one.
+#[cfg(feature = "docx")]
+fn docx_themed_command(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    match args {
+        CommandArgs::ExportDocx(args) if args.look.is_some() => {
+            engine.start_export(Request::Docx(args), false)?;
+            Ok(CommandOutcome::Done)
+        }
+        _ => Err(EngineError::InvalidArguments {
+            command: ids::EXPORT_DOCX_PAGE_THEMED,
+            expected: "an export target, a .docx output path and a look",
+        }),
     }
 }
 
@@ -1307,7 +1349,10 @@ impl Engine {
             access: self.file_access.clone(),
         }
     }
+}
 
+#[cfg(feature = "export")]
+impl Engine {
     /// The directories the theme's fonts are looked for in: the export's own, else the page's
     /// `pdf-fontsdir`, else `[pdf] fonts_dir`, and the bundled fonts last.
     pub(crate) fn fonts_dirs(
@@ -1343,10 +1388,7 @@ impl Engine {
         fonts_dirs.push(PathBuf::from("GEM_FONTS_DIR"));
         fonts_dirs
     }
-}
 
-#[cfg(feature = "export")]
-impl Engine {
     /// Where named themes, and Word templates beside them, are looked for: the page's
     /// `pdf-themesdir`, relative to it, else `[pdf] themes_dir`, relative to the first root.
     pub(crate) fn themes_dir(
@@ -1570,7 +1612,11 @@ impl Engine {
                 self.docx_options(
                     &args,
                     resolved.page(&attributes).as_ref(),
-                    resolved.word_look(),
+                    resolved.word_look(
+                        &attributes,
+                        &self.fonts_dirs(None, &attributes, sources.first().map(PathBuf::as_path)),
+                        &self.file_access,
+                    ),
                 ),
                 resolved.report(),
             ),
@@ -1668,6 +1714,18 @@ impl Engine {
             (None, _) => settings.landscape,
         };
         let margins = settings.margins;
+        let mut look = look;
+        // A template's headers or footers give way to those `[docx]` wrote.
+        if let Some(template) = look.template.as_mut() {
+            for (header, key) in [(true, "header"), (false, "footer")] {
+                if written(key) && template.has_running(header) {
+                    std::sync::Arc::make_mut(template).without_running(header);
+                }
+            }
+        }
+        let template_page = look.template.as_ref().and_then(|template| template.page());
+        let running = look.running.clone();
+        let running = running.as_ref();
         let side = |key: &str, written_value: u32, index: usize| match page {
             Some(page) if !written(key) => twips(page.margin[index]),
             _ => written_value,
@@ -1682,13 +1740,40 @@ impl Engine {
                 right: side("margins.right", margins.right, 1),
                 bottom: side("margins.bottom", margins.bottom, 2),
                 left: side("margins.left", margins.left, 3),
-                header: margins.header,
-                footer: margins.footer,
+                header: match running
+                    .and_then(|running| running.header_distance)
+                    .or(template_page.map(|page| page.margins.header))
+                {
+                    Some(distance) if !written("margins.header") => distance,
+                    _ => margins.header,
+                },
+                footer: match running
+                    .and_then(|running| running.footer_distance)
+                    .or(template_page.map(|page| page.margins.footer))
+                {
+                    Some(distance) if !written("margins.footer") => distance,
+                    _ => margins.footer,
+                },
             },
             running: adoc_docx::Running {
-                header: slots(&settings.header),
-                footer: slots(&settings.footer),
-                odd_even: settings.odd_even,
+                // The look's headers and footers where `[docx]` wrote none; a theme without
+                // one shows none.
+                header: match running {
+                    Some(running) if !written("header") => {
+                        running.header.clone().unwrap_or_default()
+                    }
+                    _ => slots(&settings.header),
+                },
+                footer: match running {
+                    Some(running) if !written("footer") => {
+                        running.footer.clone().unwrap_or_default()
+                    }
+                    _ => slots(&settings.footer),
+                },
+                odd_even: match running {
+                    Some(_) if !written("odd_even") => true,
+                    _ => settings.odd_even,
+                },
                 logo: settings
                     .logo
                     .as_deref()
@@ -1708,8 +1793,9 @@ impl Engine {
                 .site_url()
                 .map(|site| self.page_urls(&site))
                 .unwrap_or_default(),
-            // Images, diagrams and formulas are read as the PDF's are.
+            // Images, diagrams, formulas and fonts are read as the PDF's are.
             access: self.file_access.clone(),
+            fonts_named_only: !settings.embed_fonts,
         }
     }
 }

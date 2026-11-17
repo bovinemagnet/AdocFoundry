@@ -1,0 +1,19 @@
+= Word theme keys
+Paul Snow
+:revnumber: 0.0.0
+:description: Which asciidoctor-pdf 2.3 theme keys a Word export applies and which it ignores, key by key.
+
+A Word export with a PDF theme applies the keys below.
+This page lists every key in asciidoctor-pdf 2.3's https://docs.asciidoctor.org/pdf-converter/latest/theme/keys/[Theme Keys Reference] and whether Word uses it.
+For choosing a look, see xref:word-export.adoc#look[Choosing the look].
+
+A key marked ignored is one that Word cannot express, or that this version does not map, such as Prawn's spacing rules, keep rules, background images behind text and icons.
+The theme's value for an ignored key has no effect on the Word document.
+The same theme's PDF still uses it; see xref:pdf-theme-keys.adoc[PDF theme keys].
+
+The content of headers and footers is read by the same code as the PDF export reads it.
+Fonts named in `font_catalog` are embedded in the document where their licences allow.
+
+== Keys by category
+
+include::partial$word-theme-keys.adoc[]

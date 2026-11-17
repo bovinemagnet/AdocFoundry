@@ -93,6 +93,41 @@ pub fn bundled_font(name: &str) -> Option<&'static [u8]> {
         .map(|(_, bytes)| *bytes)
 }
 
+/// The font a catalogue entry names, found as asciidoctor-pdf finds it: a bundled font by
+/// name; an absolute path as it is; a relative one in each of `dirs` in order (the export's
+/// `pdf-fontsdir`, where `GEM_FONTS_DIR` means the bundled fonts), then in the theme's
+/// directory, then among the bundled fonts. `bundled` gives a bundled font by file name and
+/// `read` the font at a path, each `None` to look further; whatever they give is returned.
+pub fn resolve_font<T>(
+    file: &FontFile,
+    dirs: &[PathBuf],
+    theme_dir: Option<&Path>,
+    mut bundled: impl FnMut(&str) -> Option<T>,
+    mut read: impl FnMut(&Path) -> Option<T>,
+) -> Option<T> {
+    match file {
+        FontFile::Bundled(name) => bundled(name),
+        FontFile::Path(path) if path.is_absolute() => read(path),
+        FontFile::Path(path) => {
+            for dir in dirs {
+                if dir.as_os_str() == "GEM_FONTS_DIR" {
+                    if let Some(font) = path.to_str().and_then(&mut bundled) {
+                        return Some(font);
+                    }
+                    continue;
+                }
+                if let Some(font) = read(&dir.join(path)) {
+                    return Some(font);
+                }
+            }
+            if let Some(font) = theme_dir.and_then(|dir| read(&dir.join(path))) {
+                return Some(font);
+            }
+            path.to_str().and_then(bundled)
+        }
+    }
+}
+
 /// The themes bundled with asciidoctor-pdf that are bundled here, by name.
 const BUNDLED_THEMES: &[(&str, &str)] = &[
     ("base", include_str!("../themes/base-theme.yml")),
@@ -1031,7 +1066,61 @@ fn quote_hex_colours(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::quote_hex_colours;
+    use std::path::{Path, PathBuf};
+
+    use super::{quote_hex_colours, resolve_font, FontFile};
+
+    #[test]
+    fn fonts_are_found_as_asciidoctor_pdf_finds_them() {
+        let found = |file: &FontFile, dirs: &[&str], theme_dir: Option<&str>, present: &[&str]| {
+            let dirs: Vec<PathBuf> = dirs.iter().map(PathBuf::from).collect();
+            resolve_font(
+                file,
+                &dirs,
+                theme_dir.map(Path::new),
+                |name| (name == "bundled.ttf").then(|| format!("bundled {name}")),
+                |path| {
+                    let path = path.to_string_lossy().replace('\\', "/");
+                    present.contains(&path.as_str()).then_some(path)
+                },
+            )
+        };
+        let relative = FontFile::Path(PathBuf::from("a.ttf"));
+        // The fonts directories in order, then the theme's directory.
+        assert_eq!(
+            found(
+                &relative,
+                &["one", "two"],
+                Some("theme"),
+                &["two/a.ttf", "theme/a.ttf"]
+            ),
+            Some("two/a.ttf".to_owned())
+        );
+        assert_eq!(
+            found(&relative, &["one"], Some("theme"), &["theme/a.ttf"]),
+            Some("theme/a.ttf".to_owned())
+        );
+        assert_eq!(found(&relative, &["one"], None, &[]), None);
+        // `GEM_FONTS_DIR` among the directories, and a bundled name as a last resort.
+        let bundled = FontFile::Path(PathBuf::from("bundled.ttf"));
+        assert_eq!(
+            found(
+                &bundled,
+                &["GEM_FONTS_DIR", "one"],
+                None,
+                &["one/bundled.ttf"]
+            ),
+            Some("bundled bundled.ttf".to_owned())
+        );
+        assert_eq!(
+            found(&bundled, &["one"], None, &[]),
+            Some("bundled bundled.ttf".to_owned())
+        );
+        assert_eq!(
+            found(&FontFile::Bundled("bundled.ttf".to_owned()), &[], None, &[]),
+            Some("bundled bundled.ttf".to_owned())
+        );
+    }
 
     #[test]
     fn hex_colours_are_quoted() {

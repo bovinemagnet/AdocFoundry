@@ -6689,6 +6689,88 @@ fn export_page_with_theme_offers_the_bundled_and_workspace_themes(cx: &mut TestA
     assert!(!bytes.contains("NotoSerif"), "the default theme was used");
 }
 
+#[gpui::test]
+fn export_page_to_word_with_theme_offers_the_looks(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let (root, app, events, mut cx) = profile_workspace(
+        directory.path(),
+        "[pdf]\nthemes_dir = \"themes\"\n",
+        "guide/modules/ROOT/pages/use.adoc",
+        cx,
+    );
+    std::fs::create_dir_all(root.join("themes")).unwrap();
+    std::fs::write(
+        root.join("themes/sans-theme.yml"),
+        "extends: default-sans\nbase:\n  font-color: #112233\n",
+    )
+    .unwrap();
+    // The picker lists the bundled themes, the workspace's and no theme.
+    let looks = cx.update(|_, cx| app.read(cx).engine.docx_looks());
+    assert!(looks
+        .iter()
+        .any(|look| look.name == "default" && look.path.is_none()));
+    assert!(looks
+        .iter()
+        .any(|look| look.name == "sans" && look.path.is_some()));
+    assert_eq!(looks.last().unwrap().choice, adoc_engine::LookChoice::None);
+
+    cx.dispatch_action(crate::editor::bindings::ExportPageDocxThemed);
+    cx.run_until_parked();
+    cx.simulate_input("sans —");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    let output = directory.path().join("themed.docx");
+    let summary = finish_export(&app, &events, &output, &mut cx).unwrap();
+    let look = summary
+        .look
+        .clone()
+        .expect("a Word export reports its look");
+    assert_eq!(look.kind, adoc_engine::LookKind::PdfTheme);
+    assert_eq!(
+        look.path.as_deref(),
+        Some(root.join("themes/sans-theme.yml").as_path())
+    );
+    let message = crate::workspace_view::export_message(&output, &Ok(summary));
+    assert!(
+        message.contains("with the PDF theme sans-theme.yml"),
+        "{message}"
+    );
+
+    // The same look chosen through the engine writes the same bytes.
+    let from_app = std::fs::read(&output).unwrap();
+    let again = directory.path().join("again.docx");
+    let page = root.join("guide/modules/ROOT/pages/use.adoc");
+    let summary = cx.update(|_, cx| {
+        app.update(cx, |state, _| {
+            let id = state.engine.open(&page).unwrap();
+            state.engine.export_docx_blocking(
+                adoc_engine::DocxExportArgs {
+                    target: adoc_engine::ExportTarget::Page(id),
+                    output: again.clone(),
+                    attributes: Vec::new(),
+                    paper: None,
+                    landscape: None,
+                    look: Some(
+                        looks
+                            .iter()
+                            .find(|look| look.name == "sans")
+                            .unwrap()
+                            .choice
+                            .clone(),
+                    ),
+                },
+                std::time::Duration::from_secs(120),
+            )
+        })
+    });
+    assert!(summary.is_ok(), "{summary:?}");
+    assert!(
+        std::fs::read(&again).unwrap() == from_app,
+        "the app's Word document differs from the engine's"
+    );
+}
+
 /// The Antora workspace with two components, copied, with Alpha's page `page` open.
 fn drag_workspace(
     page: &str,

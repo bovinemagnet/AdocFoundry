@@ -19,7 +19,7 @@ use adoc_core::{DiagnosticSeverity, LineIndex, SourceRange};
 use adoc_engine::{
     commands::ids, report::display_path, to_svg_laid_out, CommandArgs, CommandOutcome,
     DefinitionTarget, DocxExportArgs, Engine, EngineEvent, ExportArgs, ExportTarget, FileAccess,
-    GraphFilter, GraphScope, NavItem, SearchRequest, SvgStyle,
+    GraphFilter, GraphScope, LookChoice, NavItem, SearchRequest, SvgStyle,
 };
 use rmcp::{
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
@@ -316,6 +316,30 @@ struct ExportDocxArgs {
     /// The `.docx` file to write, inside a root; with a profile, in place of the profile's.
     /// A file there already is replaced only when it is a `.docx`.
     output: Option<String>,
+    /// The look: a PDF theme by name (found in the themes folder) or by its `.yml` path inside
+    /// a root. At most one of `theme`, `template` and `no_theme`; none takes the profile's or
+    /// the settings'.
+    theme: Option<String>,
+    /// Or a Word template by name (`<name>.dotx`, else `.docx`, in the themes folder) or by
+    /// its path inside a root.
+    template: Option<String>,
+    /// Or `true` for no theme: the export's own look and the `[docx]` settings.
+    no_theme: Option<bool>,
+}
+
+/// A theme or template the client names: a name passes to the engine, which looks for it in
+/// the themes folder; a path (a separator, or the file's extension) is confined to the roots
+/// first, as every path a tool is given is, and passed on whole.
+fn look_file(state: &State, value: &str, extensions: &[&str]) -> Result<String, Failure> {
+    let lower = value.to_ascii_lowercase();
+    let is_path = value.contains(['/', '\\'])
+        || extensions
+            .iter()
+            .any(|extension| lower.ends_with(extension));
+    if !is_path {
+        return Ok(value.to_owned());
+    }
+    Ok(state.confine(value)?.display().to_string())
 }
 
 impl State {
@@ -1343,6 +1367,23 @@ impl Server {
                     ))
                 }
             };
+            export.look = match (&args.theme, &args.template, args.no_theme == Some(true)) {
+                (None, None, false) => export.look,
+                (Some(theme), None, false) => {
+                    Some(LookChoice::PdfTheme(look_file(state, theme, &[".yml"])?))
+                }
+                (None, Some(template), false) => Some(LookChoice::Template(look_file(
+                    state,
+                    template,
+                    &[".dotx", ".docx"],
+                )?)),
+                (None, None, true) => Some(LookChoice::None),
+                _ => {
+                    return Err(Failure::invalid(
+                        "give at most one of `theme`, `template` and `no_theme`",
+                    ))
+                }
+            };
             export.output = match &args.output {
                 Some(output) => docx_output(state, Path::new(output), output)?,
                 None if args.profile.is_some() => {
@@ -1352,11 +1393,23 @@ impl Server {
                 None => return Err(Failure::invalid("give the `output` to write")),
             };
             let summary = state.engine.export_docx_blocking(export, TIMEOUT)?;
+            let look = summary.look.as_ref().map(|look| {
+                json!({
+                    "kind": look.kind.as_str(),
+                    // A theme or template chosen by path is named as the client named it.
+                    "name": match (&args.theme, &args.template) {
+                        (Some(name), _) | (_, Some(name)) => name.clone(),
+                        _ => look.name.clone(),
+                    },
+                    "path": look.path.as_deref().map(|path| state.shown(path)),
+                })
+            });
             Ok(json!({
                 "output": state.shown(&summary.output),
                 "pages": summary.pages,
                 "sources": summary.sources.iter().map(|path| state.shown(path)).collect::<Vec<_>>(),
                 "warnings": summary.diagnostics.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "look": look,
             }))
         })
         .await
