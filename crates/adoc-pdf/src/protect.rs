@@ -7,13 +7,15 @@
 //! password is. Reading, copying, printing and the permission assistive technology needs are
 //! kept; modifying, annotating, filling forms and assembling pages are not. The PDF's version
 //! (1.7) declares Adobe's extension level 8, which brings AES-256. Nothing unencrypted is
-//! written: the bytes are encrypted before they reach a file.
+//! written: the bytes are encrypted before they reach a file. Every string is then written in
+//! hexadecimal, since ciphertext in a literal string can hold line breaks that a reader may
+//! read wrongly (`hex_strings`).
 
 use std::{collections::BTreeMap, sync::Arc};
 
 use lopdf::{
     encryption::crypt_filters::{Aes256CryptFilter, CryptFilter},
-    Dictionary, Document, EncryptionState, EncryptionVersion, Object, Permissions,
+    Dictionary, Document, EncryptionState, EncryptionVersion, Object, Permissions, StringFormat,
 };
 
 /// An editing restriction a PDF carries.
@@ -80,11 +82,39 @@ pub(crate) fn restrict_modification(
     document
         .encrypt(&state)
         .map_err(|error| format!("encrypting the PDF: {error}"))?;
+    for object in document.objects.values_mut() {
+        hex_strings(object);
+    }
+    for (_, value) in document.trailer.iter_mut() {
+        hex_strings(value);
+    }
     let mut encrypted = Vec::new();
     document
         .save_to(&mut encrypted)
         .map_err(|error| format!("writing the encrypted PDF: {error}"))?;
     Ok(encrypted)
+}
+
+/// Every string in `object`, at any depth, written in hexadecimal. In a literal string an
+/// unescaped line feed is a line feed, but readers differ on a run of them (`hayro-syntax`
+/// 0.7.2 reads consecutive line feeds as one), and ciphertext holds such runs by chance; a
+/// hexadecimal string holds no line break.
+fn hex_strings(object: &mut Object) {
+    match object {
+        Object::String(_, format) => *format = StringFormat::Hexadecimal,
+        Object::Array(items) => items.iter_mut().for_each(hex_strings),
+        Object::Dictionary(dictionary) => {
+            for (_, value) in dictionary.iter_mut() {
+                hex_strings(value);
+            }
+        }
+        Object::Stream(stream) => {
+            for (_, value) in stream.dict.iter_mut() {
+                hex_strings(value);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Whether `pdf` carries the restriction: read back from its bytes, encrypted with AES-256
