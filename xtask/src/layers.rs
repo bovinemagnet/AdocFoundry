@@ -529,15 +529,16 @@ fn kindle_licences(root: &Path) -> Result<Vec<(String, String)>, String> {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let output = Command::new(cargo)
         .current_dir(root)
+        // Every platform's dependencies, whichever the check runs on.
+        .args(["tree", "--locked", "--target", "all", "-p", "adoc-kindle"])
         .args([
-            "tree",
-            "--locked",
-            "-p",
-            "adoc-kindle",
             "-e",
             "normal,build",
+            "--prefix",
+            "none",
+            "--format",
+            "{p}|{l}",
         ])
-        .args(["--prefix", "none", "--format", "{p}|{l}"])
         .output()
         .map_err(|error| format!("cargo tree: {error}"))?;
     if !output.status.success() {
@@ -551,7 +552,9 @@ fn kindle_licences(root: &Path) -> Result<Vec<(String, String)>, String> {
         .filter_map(|line| {
             let (package, licence) = line.split_once('|')?;
             let name = package.split_whitespace().next()?;
-            Some((name.to_owned(), licence.trim().to_owned()))
+            // `(*)` marks a package `cargo tree` has shown already.
+            let licence = licence.trim().trim_end_matches("(*)").trim();
+            Some((name.to_owned(), licence.to_owned()))
         })
         .collect();
     licences.sort();
