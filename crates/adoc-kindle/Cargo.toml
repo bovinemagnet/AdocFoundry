@@ -10,6 +10,7 @@ repository.workspace = true
 adoc-core.workspace = true
 adoc-dom.workspace = true
 adoc-render.workspace = true
+sha1_smol.workspace = true
 sha2.workspace = true
 
 [features]

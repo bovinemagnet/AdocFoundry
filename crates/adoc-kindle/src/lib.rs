@@ -25,6 +25,7 @@ pub use book::{
 
 mod azw3;
 mod book;
+mod kfx;
 mod map;
 mod metadata;
 #[cfg(feature = "test-support")]
@@ -227,9 +228,6 @@ pub fn write_kindle(
 pub fn write_book(book: &KindleBook, format: KindleFormat) -> Result<Vec<u8>, KindleError> {
     match format {
         KindleFormat::Azw3 => azw3::write(book),
-        KindleFormat::Kfx => Err(KindleError::Unsupported {
-            format,
-            reason: "no writer for this format yet".to_owned(),
-        }),
+        KindleFormat::Kfx => kfx::write(book),
     }
 }

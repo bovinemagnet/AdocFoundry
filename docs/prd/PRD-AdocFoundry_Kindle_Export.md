@@ -295,6 +295,18 @@ The record is `docs/qa/spike-kindle.md`.
 - `kindle_and_pdf_select_the_same_pages` is in the engine's `tests/kindle_export.rs`, as K2 recorded.
 - Not yet checked on a Kindle (`docs/qa/kindle.md`, K8).
 
+### K4 (#630): the KFX writer
+
+- `kfx/` writes a version 2 `CONT` container: the entity index, the document's symbol table (`YJ_symbols` version 10, then the book's own symbols), the format capabilities, the container's description and `kfxgen`'s trailer, then each entity as `ENTY` and its Ion. The entity types, symbol numbers and layout follow `ebook-rs` 0.18.6's MIT writer, whose notice is `src/kfx/LICENSE-ebook-rs`, listed in the third-party notices. `ion.rs` encodes Ion from the Amazon Ion specification.
+- Departure from `ebook-rs`: the `YJ_symbols` import names 842 symbols, not 851. With Ion's nine system symbols that ends at `$851`, so the book's own symbols starting at `$852` follow it as the Ion specification counts. `ebook-rs` starts them at `$852` too, which an import of 851 would overlap.
+- Each chapter is a section with one page template naming a storyline. Its blocks are text (characters in content fragments of up to 8 KiB, bold, italic and fixed-width runs and links as style events), pictures and tables.
+- What KFX here does not carry is kept as text. List items are text blocks with `•` or a number before them, and nested content is indented with spaces. Quotes and asides are their blocks. Superscript and subscript are plain text, and a definition's term is bold. A table cell is one text run, a line per block. A footnote mark is `[n]`, linking to its note, which links back. A page break is dropped, since the reader lays out pages. An inline picture is its alternative text.
+- Looks are styles with sizes in `em` (headings from 1.1 to 1.6) and no font named but `monospace`. The property symbols for weight, style, size and family are those `ebook-rs` names for fonts; that styles take them is not shown by any source and stays to be checked on a Kindle.
+- Identifiers (`asset_id`, `ASIN`, `book_id`) come from the book's identifier, and `cde_content_type` is `PDOC`, as `ebook-rs` writes it.
+- `write` reads its own container back (`check`) before returning it. `adoc_kindle::testing::read_kfx` is the independent reader: an Ion decoder and container reader written from the specification. `kfx_is_a_kfx_container` checks that every reference resolves, and `kfx_reads_back_complete` checks chapters, contents, metadata, links and pictures. `ADOC_KINDLE_OUT=<dir> cargo test -p adoc-kindle --test kfx -- --ignored` writes a sample in both formats for manual checks.
+- As a development check outside the repository, `ebook-rs`'s own reader read the sample KFX back: its title, author, language, both chapters' text and the nested table of contents. It is not a dependency.
+- Not yet checked on a Kindle (`docs/qa/kindle.md`, K8). KFX remains the riskier format: if a Kindle refuses it, §15's "If KFX proves blocked" comes back to the maintainer.
+
 ## 17. References
 
 - Amazon KDP, [supported eBook formats](https://kdp.amazon.com/en_US/help/topic/G200634390)

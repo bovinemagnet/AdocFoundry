@@ -93,7 +93,7 @@ The tool runs in a process group of its own and is stopped with everything it st
 
 |L2
 |`adoc-kindle`
-|Kindle export, headless. `KindleBook::build` maps a `KindleDocument` (an article, or a book of parts, headings and pages) to one `KindleBook`, which `write_kindle` writes as AZW3 (KF8); the KFX (KF10) writer is to come (Kindle 4/9). It depends on `adoc-render` (an allowed same-layer pair), `adoc-core`, `adoc-dom` and `sha2`, starts no process and uses no network, and never builds `adoc-pdf`, `adoc-docx`, Typst or the engine, which `cargo xtask layers` checks. The engine calls it behind its `kindle` feature. See xref:crates:adoc-kindle.adoc[adoc-kindle].
+|Kindle export, headless. `KindleBook::build` maps a `KindleDocument` (an article, or a book of parts, headings and pages) to one `KindleBook`, which `write_kindle` writes as AZW3 (KF8) or KFX (KF10), each by an in-house writer. It depends on `adoc-render` (an allowed same-layer pair), `adoc-core`, `adoc-dom` and `sha2`, starts no process and uses no network, and never builds `adoc-pdf`, `adoc-docx`, Typst or the engine, which `cargo xtask layers` checks. The engine calls it behind its `kindle` feature. See xref:crates:adoc-kindle.adoc[adoc-kindle].
 
 |L2
 |`adoc-audit`

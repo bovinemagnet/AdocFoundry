@@ -44,8 +44,7 @@ Otherwise it is the page's published URL when a site URL is configured, and fail
 Both are written from the same `KindleBook`, and a format is never written in place of another.
 A failure is a `KindleError`: `Unsupported`, `Invalid` or `TooLarge`.
 
-The AZW3 writer exists (Kindle 3/9).
-The KFX writer is still to come (Kindle 4/9), so writing KFX returns `KindleError::Unsupported`.
+Both writers exist: AZW3 (Kindle 3/9) and KFX (Kindle 4/9).
 
 == The AZW3 writer
 
@@ -69,6 +68,39 @@ The tests are `azw3_is_a_kf8_container`, `azw3_reads_back_complete` and `kindle_
 
 NOTE: The format facts come from epub3-kindle's MIT source (see the spike's record).
 The output has not yet been checked on a Kindle device.
+
+== The KFX writer
+
+The writer is the `kfx` module.
+KFX has no public specification: the entity types, symbol numbers and layout follow the MIT-licensed writer in ebook-rs 0.18.6, whose notice is `src/kfx/LICENSE-ebook-rs`, listed in the third-party notices.
+`ion.rs` encodes Amazon Ion binary from the public Ion specification.
+
+* The file is a version 2 `CONT` container: the entity index, the document's symbol table, the format capabilities, the container's description and kfxgen's trailer, then each entity as an `ENTY` header followed by its Ion binary value (raw bytes for pictures).
+* The symbol table is the shared `YJ_symbols` version 10 import, then the book's own symbols.
+The import names 842 symbols, so that the book's own symbols, which start at `$852`, follow it as the Ion specification counts.
+This is the one departure from ebook-rs.
+* Each chapter is a section with one page template naming a storyline of blocks: text, pictures and tables.
+Text is kept in content fragments of up to 8 KiB, and bold, italic, fixed-width and links are style events.
+* Anchors lead to a block's id and character offset, or to an address.
+The table of contents is the book navigation, nested, and position maps give each block its place.
+* The stylesheet sizes in `em` and names no font but `monospace`.
+Whether a Kindle honours those style properties is still to be checked on a device.
+
+Where KFX here has no structure, the content is kept as text:
+
+* list items have a bullet or number before them, and nested content is indented;
+* quotes and asides are their blocks;
+* superscript and subscript are plain text;
+* each table cell is one text run;
+* a footnote mark is `[n]`, linking to its note and back;
+* page breaks are dropped, since the reader lays out pages.
+
+The writer reads its container back before returning the bytes.
+The tests use `adoc_kindle::testing::read_kfx` (feature `test-support`), an independent reader with its own Ion decoder.
+They are `kfx_is_a_kfx_container`, which checks that every reference resolves, and `kfx_reads_back_complete`, which checks the chapters, contents, metadata, links and pictures.
+`ADOC_KINDLE_OUT=<dir> cargo test -p adoc-kindle --test kfx -- --ignored` writes a sample book in both formats for checking on a Kindle.
+
+NOTE: The KFX output has not yet been checked on a Kindle device, and KFX is the riskier of the two formats.
 
 == Related
 

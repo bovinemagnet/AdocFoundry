@@ -571,7 +571,7 @@ The entry points are the app's three Word commands (`export.docx_page`, `export.
 A Kindle output's extension must be the format's, `.azw3` or `.kfx`, and a folder or a link there is refused.
 The book is written to a temporary file beside the output and renamed over it through the job's commit, so a failed export leaves what was there.
 A page that asks for `:export-read-only:` is refused for Kindle, since `ExportFormat::Kindle` carries no restriction.
-The AZW3 writer exists; the KFX writer is to come (Kindle 4/9), so a KFX export reports `KindleError::Unsupported`; front ends get Kindle export in Kindle 7/9.
+Both writers exist, AZW3 and KFX; front ends get Kindle export in Kindle 7/9.
 
 A blocking export that times out abandons its job through a per-job commit lock (`Commit`), which each writer takes to rename its file over the output.
 A timed-out export therefore never replaces the output afterwards, and one whose file was already in place reports success.
