@@ -74,6 +74,46 @@ fn pdf_protected_has_encrypt_dictionary() {
     assert_eq!(plain, both().0);
 }
 
+/// Every string of a protected PDF is hexadecimal. Ciphertext is random bytes, and in a literal
+/// string a run of them that is a line break can be read wrongly: `hayro-syntax` 0.7.2 reads
+/// consecutive line feeds as one, which lost a byte of a string about once in fifteen exports.
+/// In hexadecimal no line break is ever part of a string.
+#[test]
+fn pdf_protected_strings_are_hexadecimal() {
+    let (_, protected) = both();
+    let mut at = 0;
+    let mut literals = Vec::new();
+    while at < protected.len() {
+        let rest = &protected[at..];
+        if rest.starts_with(b"stream") && matches!(rest.get(6), Some(b'\r' | b'\n')) {
+            // Stream data is not strings; skip to its end.
+            let end = rest
+                .windows(9)
+                .position(|window| window == b"endstream")
+                .expect("every stream ends");
+            at += end + 9;
+            continue;
+        }
+        match rest[0] {
+            b'%' => {
+                at += rest
+                    .iter()
+                    .position(|&byte| matches!(byte, b'\r' | b'\n'))
+                    .unwrap_or(rest.len());
+            }
+            b'(' => {
+                literals.push(at);
+                at += 1;
+            }
+            _ => at += 1,
+        }
+    }
+    assert!(
+        literals.is_empty(),
+        "literal strings at offsets {literals:?}"
+    );
+}
+
 #[test]
 fn pdf_protected_preserves_links_images_fonts() {
     let (plain, protected) = both();
