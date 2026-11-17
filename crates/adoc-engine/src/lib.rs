@@ -59,6 +59,7 @@ mod place_images;
 mod preview;
 mod problems;
 mod profiles;
+mod protection;
 mod quality;
 mod quick_open;
 mod read_only;
@@ -147,6 +148,7 @@ pub use preview::{
 };
 pub use problems::{Problem, ProblemFilter, ProblemPlace};
 pub use profiles::{PdfProfile, PdfThemeChoice, ProfileContent, BUNDLED_THEMES};
+pub use protection::{ExportFormat, ExportProtection, ProtectionRefusal, ProtectionRequest};
 pub use quick_open::{QuickOpenItem, QUICK_OPEN_LIMIT};
 pub use read_only::{ExportReadOnly, PageReadOnly, ReadOnlyHeaderError, ReadOnlySource};
 pub use recovery::{Recoverable, RECOVERY_DIR, RECOVERY_SETTLE};

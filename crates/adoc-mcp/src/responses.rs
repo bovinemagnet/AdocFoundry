@@ -120,6 +120,11 @@ impl From<EngineError> for Failure {
             | EngineError::SaveConflict { .. }
             | EngineError::GroupBlocked { .. } => ErrorCode::Conflict,
             EngineError::PreviewStale { .. } => ErrorCode::StalePreview,
+            // Read-only exports' own codes arrive with READONLY 5/5.
+            EngineError::ExportProtection(refusal) => match refusal.as_ref() {
+                adoc_engine::ProtectionRefusal::InvalidHeader(_) => ErrorCode::InvalidArgument,
+                _ => ErrorCode::Conflict,
+            },
         };
         Self::new(code, error.to_string())
     }

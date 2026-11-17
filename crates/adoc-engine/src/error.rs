@@ -41,6 +41,9 @@ pub enum EngineError {
         path: PathBuf,
         redo: bool,
     },
+    /// The export's pages ask for a read-only export it cannot carry, or one gives no policy:
+    /// nothing was written.
+    ExportProtection(Box<crate::ProtectionRefusal>),
 }
 
 /// What is in the way of a file, folder or module a request would make.
@@ -97,6 +100,7 @@ impl fmt::Display for EngineError {
                 "{} was edited after this change to several files was undone, so it cannot be redone from here",
                 path.display()
             ),
+            Self::ExportProtection(refusal) => refusal.fmt(formatter),
         }
     }
 }

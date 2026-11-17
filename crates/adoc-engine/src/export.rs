@@ -112,6 +112,8 @@ pub struct ExportSummary {
     pub diagnostics: Vec<ExportDiagnostic>,
     /// The look a Word export used; `None` for PDF and HTML.
     pub look: Option<crate::ExportLook>,
+    /// The output carries an editing restriction its pages asked for (`:export-read-only:`).
+    pub protected: bool,
 }
 
 /// A problem found while exporting, at a line of a page when known.
@@ -245,6 +247,30 @@ impl Request {
             Self::Pdf(args) => &args.output,
             #[cfg(feature = "docx")]
             Self::Docx(args) => &args.output,
+        }
+    }
+
+    /// The format the request writes, with the PDF/A standard it claims (from `[pdf]
+    /// standards` and its own), if any.
+    #[allow(unused_variables)]
+    fn format(&self, settings: &crate::Settings) -> (crate::ExportFormat, Option<String>) {
+        match self {
+            #[cfg(feature = "typst")]
+            Self::Pdf(args) => {
+                let standards: Vec<crate::PdfStandard> = settings
+                    .pdf
+                    .standards
+                    .iter()
+                    .chain(&args.standards)
+                    .copied()
+                    .collect();
+                match crate::protection::pdfa(&standards) {
+                    Some(standard) => (crate::ExportFormat::PdfA, Some(standard)),
+                    None => (crate::ExportFormat::Pdf, None),
+                }
+            }
+            #[cfg(feature = "docx")]
+            Self::Docx(_) => (crate::ExportFormat::Docx, None),
         }
     }
 
@@ -892,6 +918,14 @@ impl Engine {
                 Ok(input)
             })
             .collect::<Result<_, EngineError>>()?;
+        // Read-only exports: the pages' own headers, read from the very text the worker will
+        // parse, decide once, before anything is parsed or written.
+        let _protection = self.protection_of(
+            inputs.iter().map(|input: &crate::rendered::OwnedInput| {
+                (input.path.clone(), input.text.clone())
+            }),
+            request.format(&self.settings),
+        )?;
         self.export.next += 1;
         let job = self.export.next;
         self.export.jobs.insert(
@@ -924,6 +958,49 @@ impl Engine {
             let _ = sender.send(WorkerMessage::ExportParsed { job, doms });
         });
         Ok(job)
+    }
+
+    /// What an export of `target` in `format` would carry, or why it would be refused: the
+    /// decision the export makes, from the pages it would select as they stand now (open
+    /// buffers included), for front ends to show before exporting.
+    pub fn export_protection(
+        &self,
+        target: &ExportTarget,
+        format: crate::ExportFormat,
+    ) -> Result<crate::ExportProtection, EngineError> {
+        let plan = self.export_plan(target)?;
+        let texts = plan
+            .paths()
+            .iter()
+            .map(|path| {
+                self.parse_input_for_path(path)
+                    .map(|input| (input.path, input.text))
+                    .ok_or_else(|| {
+                        EngineError::NotFound(format!("{} cannot be read", path.display()))
+                    })
+            })
+            .collect::<Result<Vec<_>, EngineError>>()?;
+        self.protection_of(texts.into_iter(), (format, None))
+    }
+
+    /// The decision for pages with these texts, written in `format` (with the PDF/A standard
+    /// it claims, if any).
+    fn protection_of(
+        &self,
+        pages: impl Iterator<Item = (PathBuf, std::sync::Arc<str>)>,
+        (format, standard): (crate::ExportFormat, Option<String>),
+    ) -> Result<crate::ExportProtection, EngineError> {
+        let request = crate::protection::request(pages.map(|(path, text)| {
+            let page = crate::read_only::page_read_only(&path, &text);
+            (path, page)
+        }))
+        .map_err(|refusal| EngineError::ExportProtection(Box::new(refusal)))?;
+        let format = match (format, &standard) {
+            (crate::ExportFormat::Pdf, Some(_)) => crate::ExportFormat::PdfA,
+            _ => format,
+        };
+        crate::protection::resolve(request, format, standard)
+            .map_err(|refusal| EngineError::ExportProtection(Box::new(refusal)))
     }
 
     /// The pages to export and how they are arranged.
@@ -1656,6 +1733,7 @@ impl Engine {
                         sources,
                         diagnostics,
                         look: Some(look),
+                        protected: false,
                     }
                 });
             let _ = sender.send(WorkerMessage::ExportFinished { job, result });
@@ -1907,6 +1985,7 @@ fn typeset(
         sources: Vec::new(),
         diagnostics,
         look: None,
+        protected: false,
     })
 }
 

@@ -2,9 +2,7 @@
 //! of its exports, read from the text the export renders — the open buffer, unsaved edits
 //! included, else the file — and located for diagnostics.
 
-#[cfg(feature = "export")]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use adoc_core::SourceRange;
 pub use adoc_parser::ExportReadOnly;
@@ -47,7 +45,6 @@ impl std::fmt::Display for ReadOnlyHeaderError {
 
 impl std::error::Error for ReadOnlyHeaderError {}
 
-#[cfg(feature = "export")]
 fn located(path: &Path, text: &str, range: SourceRange) -> ReadOnlySource {
     let (line, _) = adoc_core::LineIndex::new(text).line_column(range.start);
     ReadOnlySource {
@@ -58,7 +55,6 @@ fn located(path: &Path, text: &str, range: SourceRange) -> ReadOnlySource {
 }
 
 /// The policy the page at `path` with `text` sets in its own main header.
-#[cfg(feature = "export")]
 pub(crate) fn page_read_only(path: &Path, text: &str) -> Result<PageReadOnly, ReadOnlyHeaderError> {
     match adoc_parser::export_read_only(text) {
         Ok(header) => Ok(PageReadOnly {
