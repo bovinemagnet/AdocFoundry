@@ -300,3 +300,80 @@ fn the_header_boundary_agrees_with_the_export_parser() {
         );
     }
 }
+
+/// The same oracle over every header shape up to three lines of these kinds, with the
+/// declaration at every position, a byte-order mark or none. The direction that matters most:
+/// whenever the export's parser reads the declaration as part of the header, the scan finds it
+/// (or refuses the page), so a page that asks is never exported editable; and the scan never
+/// finds one the parser does not.
+#[test]
+fn every_short_header_agrees_with_the_export_parser() {
+    use adoc_dom::{AcdcParser, DocumentParser, ParseInput};
+
+    const KINDS: [&str; 13] = [
+        "= Page",
+        ":a: b",
+        "",
+        "// comment",
+        "Paul Snow",
+        "[role]",
+        "[[id]]",
+        ".Title",
+        "== Section",
+        "# Title",
+        "Page\n====",
+        "Text.",
+        "////\nnotes\n////",
+    ];
+    const DECLARATION: &str = ":export-read-only: true";
+    let parser = AcdcParser;
+    let mut shapes = vec![Vec::new()];
+    for _ in 0..3 {
+        let longer: Vec<Vec<&str>> = shapes
+            .iter()
+            .flat_map(|shape: &Vec<&str>| {
+                KINDS.iter().map(move |kind| {
+                    let mut shape = shape.clone();
+                    shape.push(*kind);
+                    shape
+                })
+            })
+            .collect();
+        shapes.extend(longer);
+    }
+    shapes.sort();
+    shapes.dedup();
+    let mut disagreements = Vec::new();
+    for shape in &shapes {
+        for at in 0..=shape.len() {
+            let mut lines = shape.clone();
+            lines.insert(at, DECLARATION);
+            for bom in ["", "\u{feff}"] {
+                let text = format!("{bom}{}\n\nBody.\n", lines.join("\n"));
+                let dom = parser.parse(&ParseInput::new(Path::new("page.adoc"), &text));
+                let in_header = dom.attributes.contains_key("export-read-only");
+                let scanned = adoc_parser::export_read_only(&text);
+                let ok = match &scanned {
+                    // A page the parser reads as asking must never pass as editable.
+                    Ok(header) if header.policy == ExportReadOnly::Enabled => in_header,
+                    Ok(_) => !in_header,
+                    Err(_) => true,
+                };
+                if !ok {
+                    disagreements.push(format!("{text:?}: parser {in_header}, scan {scanned:?}"));
+                }
+            }
+        }
+    }
+    assert!(
+        disagreements.is_empty(),
+        "{} of the shapes disagree, for example:\n{}",
+        disagreements.len(),
+        disagreements
+            .iter()
+            .take(25)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}

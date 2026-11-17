@@ -2,12 +2,21 @@
 //! exports PRD, `docs/prd/PRD-AdocFoundry_READONLY.md`, §5.1).
 //!
 //! Only the page's own text is read, so a declaration in an included file, `antora.yml`, the
-//! playbook or a profile's attributes never counts, by construction. The main header is the
-//! document title, its author and revision lines, attribute entries, comments and preprocessor
-//! directives at the top of the page, up to the first blank line once it has begun, or the
-//! first line that is none of those. Where the header cannot be read without running the
-//! preprocessor (a declaration inside a conditional, or after an `include::` that could change
-//! what follows), the declaration is an error rather than a guess.
+//! playbook or a profile's attributes never counts, by construction. The header is read as the
+//! export's parser reads it (its oracle tests are the engine's `tests/read_only.rs`):
+//!
+//! - leading blank lines and comments come first;
+//! - then the title (`= Title`, or Markdown's `# Title`), the attribute entries, comments and
+//!   preprocessor lines that follow it, the first other line as the author line, and the next
+//!   as the revision line when it reads as one (`v1.0`, `1.0, 2026-11-17: Draft`); a blank line
+//!   or any other line ends it;
+//! - with no title, the leading attribute entries are the header.
+//!
+//! Where a declaration's place cannot be read for certain, it is an error at its line rather
+//! than a guess, so a page that asks is never exported editable: inside a conditional or after
+//! an `include::` in the header; between the header's end and the first content (a blank line
+//! after the title, say); in a header with anything but comments before its title; and in a
+//! page beginning with a byte-order mark, which hides its header from the export's parser.
 
 use adoc_core::SourceRange;
 
@@ -53,6 +62,11 @@ pub enum HeaderReadOnlyError {
     Conditional { range: SourceRange },
     /// After an `include::` in the header, which could declare it again or end the header.
     AfterInclude { range: SourceRange },
+    /// Where the header has ended or may not be the header: after it but before the first
+    /// content, or in a header with something other than comments before its title.
+    NotInHeader { range: SourceRange },
+    /// In a page that begins with a byte-order mark, which hides its header from the export.
+    ByteOrderMark { range: SourceRange },
 }
 
 impl HeaderReadOnlyError {
@@ -62,7 +76,9 @@ impl HeaderReadOnlyError {
         match self {
             Self::InvalidValue { range, .. }
             | Self::Conditional { range }
-            | Self::AfterInclude { range } => *range,
+            | Self::AfterInclude { range }
+            | Self::NotInHeader { range }
+            | Self::ByteOrderMark { range } => *range,
         }
     }
 }
@@ -83,6 +99,17 @@ impl std::fmt::Display for HeaderReadOnlyError {
                 formatter,
                 "`:{EXPORT_READ_ONLY}:` follows an `include::` in the header; declare it before \
                  any include"
+            ),
+            Self::NotInHeader { .. } => write!(
+                formatter,
+                "`:{EXPORT_READ_ONLY}:` is not plainly in the page's header; declare it under the \
+                 title, with no blank line or other line before it, and nothing but comments \
+                 above the title"
+            ),
+            Self::ByteOrderMark { .. } => write!(
+                formatter,
+                "the page begins with a byte-order mark, which hides its header and \
+                 `:{EXPORT_READ_ONLY}:` from the export; save it without one"
             ),
         }
     }
@@ -122,18 +149,49 @@ fn read_only_name(name: &str) -> Option<bool> {
     bare.eq_ignore_ascii_case(EXPORT_READ_ONLY).then_some(unset)
 }
 
+/// A document title: AsciiDoc's `= Title` or Markdown's `# Title`.
+fn title(line: &str) -> bool {
+    line.starts_with("= ") || line.starts_with("# ")
+}
+
+/// Block metadata that may stand above a title or a block: an anchor or an attribute list.
+fn metadata(line: &str) -> bool {
+    let line = line.trim_end();
+    line.starts_with('[') && line.ends_with(']')
+}
+
+/// A revision line as the export's parser reads one: a version (`v1.0`, `1.0`, `2`), then
+/// optionally `, <date>` and `: <remark>`.
+fn revision(line: &str) -> bool {
+    let line = line.trim_end();
+    let version = line.split([',', ':']).next().unwrap_or_default();
+    let number = version.strip_prefix('v').unwrap_or(version);
+    number.starts_with(|first: char| first.is_ascii_digit())
+        && !number.contains(char::is_whitespace)
+}
+
+/// Where a declaration stands.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Place {
+    Header,
+    Conditional,
+    AfterInclude,
+    NotInHeader,
+}
+
 /// Where the page's main header ends, as a byte offset: past its last line, or 0 when the
 /// page has none.
 #[must_use]
 pub fn main_header_end(text: &str) -> usize {
-    scan(text, |_, _, _| {})
+    scan(text, |_, _| {})
 }
 
 /// The policy a page's own main header sets for its exports, or the declaration in it that
 /// gives none.
 pub fn export_read_only(text: &str) -> Result<HeaderReadOnly, HeaderReadOnlyError> {
     let mut found: Result<HeaderReadOnly, HeaderReadOnlyError> = Ok(HeaderReadOnly::default());
-    scan(text, |declaration, in_conditional, after_include| {
+    let bom = text.starts_with('\u{feff}');
+    scan(text, |declaration, place| {
         let Some(unset) = read_only_name(&declaration.name) else {
             return;
         };
@@ -142,45 +200,63 @@ pub fn export_read_only(text: &str) -> Result<HeaderReadOnly, HeaderReadOnlyErro
             return;
         }
         let range = declaration.range;
-        found = if in_conditional {
-            Err(HeaderReadOnlyError::Conditional { range })
-        } else if after_include {
-            Err(HeaderReadOnlyError::AfterInclude { range })
-        } else {
-            let policy = match (unset, declaration.value.as_deref()) {
-                (true, _) | (false, Some("false")) => Ok(ExportReadOnly::Disabled),
-                (false, None | Some("true")) => Ok(ExportReadOnly::Enabled),
-                (false, Some(value)) => Err(HeaderReadOnlyError::InvalidValue {
-                    value: value.to_owned(),
-                    range,
-                }),
-            };
-            policy.map(|policy| HeaderReadOnly {
-                policy,
-                range: Some(range),
-            })
+        found = match place {
+            _ if bom => Err(HeaderReadOnlyError::ByteOrderMark { range }),
+            Place::Conditional => Err(HeaderReadOnlyError::Conditional { range }),
+            Place::AfterInclude => Err(HeaderReadOnlyError::AfterInclude { range }),
+            Place::NotInHeader => Err(HeaderReadOnlyError::NotInHeader { range }),
+            Place::Header => {
+                let policy = match (unset, declaration.value.as_deref()) {
+                    (true, _) | (false, Some("false")) => Ok(ExportReadOnly::Disabled),
+                    (false, None | Some("true")) => Ok(ExportReadOnly::Enabled),
+                    (false, Some(value)) => Err(HeaderReadOnlyError::InvalidValue {
+                        value: value.to_owned(),
+                        range,
+                    }),
+                };
+                policy.map(|policy| HeaderReadOnly {
+                    policy,
+                    range: Some(range),
+                })
+            }
         };
     });
     found
 }
 
-/// Walks the main header, calling `entry` for each attribute entry in it with whether it is
-/// inside a conditional and whether an `include::` came before it. Returns where the header
-/// ends.
-fn scan(text: &str, mut entry: impl FnMut(&adoc_core::AttributeDeclaration, bool, bool)) -> usize {
-    let mut offset = 0;
+/// Where the scan is.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum State {
+    /// Before anything but blank lines and comments.
+    Before,
+    /// After entries or block metadata with no title yet.
+    Untitled,
+    /// After the title: `lines` text lines (author, revision) taken so far.
+    Titled { lines: u8 },
+    /// After the header, before the first content.
+    After,
+}
+
+/// Walks the top of the page, calling `entry` for each attribute entry up to the first content
+/// with where it stands. Returns where the header ends.
+fn scan(text: &str, mut entry: impl FnMut(&adoc_core::AttributeDeclaration, Place)) -> usize {
+    let text_start = if text.starts_with('\u{feff}') { 3 } else { 0 };
+    let mut offset = text_start;
     let mut end = 0;
-    let mut started = false;
-    // After the title, its author and revision lines may follow.
-    let mut text_lines_allowed = 0;
+    let mut state = State::Before;
+    // Something other than comments came before the title.
+    let mut before_title = false;
+    // An anchor or attribute list came with no title: a block, not a header, may follow.
+    let mut untitled_metadata = false;
     let mut comment_block: Option<usize> = None;
     let mut depth = 0usize;
     let mut after_include = false;
     let mut continued = false;
-    for line in text.split_inclusive('\n') {
+    for line in text[text_start..].split_inclusive('\n') {
         let start = offset;
         offset += line.len();
         let body = content(line);
+        let in_header = matches!(state, State::Untitled | State::Titled { .. });
         if let Some(length) = comment_block {
             if comment_delimiter(body) == Some(length) {
                 comment_block = None;
@@ -188,59 +264,72 @@ fn scan(text: &str, mut entry: impl FnMut(&adoc_core::AttributeDeclaration, bool
             continue;
         }
         if continued {
-            // The rest of a value continued from the line before.
             continued = body.trim_end().ends_with(" \\");
-            end = offset;
+            if in_header {
+                end = offset;
+            }
             continue;
         }
         if let Some(length) = comment_delimiter(body) {
             comment_block = Some(length);
             continue;
         }
-        if body.trim().is_empty() {
-            if started {
-                break;
-            }
-            continue;
-        }
         if body.starts_with("//") {
             continue;
         }
+        if body.trim().is_empty() {
+            if in_header {
+                state = State::After;
+            }
+            continue;
+        }
+        let place = |state: State, before_title: bool| match state {
+            State::After => Place::NotInHeader,
+            State::Titled { .. } if before_title => Place::NotInHeader,
+            State::Untitled if untitled_metadata => Place::NotInHeader,
+            _ if depth > 0 => Place::Conditional,
+            _ if after_include => Place::AfterInclude,
+            _ => Place::Header,
+        };
         if let Some(block) = conditional(body) {
             if block {
                 depth += 1;
-            } else if let Some(rest) = body.find('[').map(|open| &body[open + 1..]) {
+            } else if let Some(open) = body.find('[') {
                 // A one-line conditional's text: an entry written there is conditional.
-                if let Some(declaration) = parse_attribute(
-                    rest.trim_end_matches(']'),
-                    start + body.find('[').unwrap_or(0) + 1,
-                ) {
+                let inside = body[open + 1..].trim_end_matches(']');
+                if let Some(declaration) = parse_attribute(inside, start + open + 1) {
                     let declaration = adoc_core::AttributeDeclaration {
                         range: SourceRange::new(start, start + body.len()),
                         ..declaration
                     };
-                    entry(&declaration, true, after_include);
+                    let place = match place(state, before_title) {
+                        Place::Header | Place::AfterInclude => Place::Conditional,
+                        other => other,
+                    };
+                    entry(&declaration, place);
                 }
             }
-            end = offset;
+            if in_header {
+                end = offset;
+            }
             continue;
         }
         if body.trim_end().starts_with("endif::") {
             depth = depth.saturating_sub(1);
-            end = offset;
+            if in_header {
+                end = offset;
+            }
             continue;
         }
         if body.starts_with("include::") {
             after_include = true;
-            started = true;
-            text_lines_allowed = 0;
-            end = offset;
-            continue;
-        }
-        if !started && (body.starts_with("= ") || body == "=") {
-            started = true;
-            text_lines_allowed = 2;
-            end = offset;
+            if state == State::Before {
+                state = State::Untitled;
+                before_title = true;
+            }
+            if matches!(state, State::Untitled | State::Titled { .. }) {
+                end = offset;
+            }
             continue;
         }
         if let Some(declaration) = parse_attribute(line, start) {
@@ -252,21 +341,40 @@ fn scan(text: &str, mut entry: impl FnMut(&adoc_core::AttributeDeclaration, bool
                 range: SourceRange::new(start, start + body.len()),
                 ..declaration
             };
-            entry(&declaration, depth > 0, after_include);
-            started = true;
-            text_lines_allowed = 0;
-            end = offset;
+            if state == State::Before {
+                state = State::Untitled;
+                before_title = true;
+            }
+            entry(&declaration, place(state, before_title));
+            if matches!(state, State::Untitled | State::Titled { .. }) {
+                end = offset;
+            }
             continue;
         }
-        // The two lines after the title, whatever they hold, are its author and revision
-        // lines, as Asciidoctor and the export's parser read them.
-        if text_lines_allowed > 0 {
-            // The author line, then the revision line.
-            text_lines_allowed -= 1;
-            end = offset;
-            continue;
+        match state {
+            State::Before | State::Untitled if title(body) => {
+                state = State::Titled { lines: 0 };
+                end = offset;
+            }
+            State::Before | State::Untitled if metadata(body) => {
+                // An anchor or attribute list above the title, or above a block.
+                before_title = true;
+                untitled_metadata = true;
+                state = State::Untitled;
+            }
+            State::Titled { lines: 0 } => {
+                state = State::Titled { lines: 1 };
+                end = offset;
+            }
+            State::Titled { lines: 1 } if revision(body) => {
+                state = State::Titled { lines: 2 };
+                end = offset;
+            }
+            State::After if metadata(body) || body.starts_with('.') => {
+                // Block metadata before the first block: still before the content.
+            }
+            _ => break,
         }
-        break;
     }
     end
 }
@@ -284,6 +392,10 @@ mod tests {
         assert_eq!(policy("= Page\n\nText.\n"), ExportReadOnly::Unspecified);
         assert_eq!(
             policy("= Page\n:export-read-only: true\n"),
+            ExportReadOnly::Enabled
+        );
+        assert_eq!(
+            policy("# Page\n:export-read-only: true\n"),
             ExportReadOnly::Enabled
         );
         assert_eq!(
@@ -344,30 +456,24 @@ mod tests {
     }
 
     #[test]
-    fn only_the_main_header_counts() {
-        // The body, past the first blank line or a section.
-        assert_eq!(
-            policy("= Page\n\n:export-read-only: true\n"),
-            ExportReadOnly::Unspecified
-        );
-        // A section title straight after the title is read as the author line.
+    fn the_header_is_read_as_the_export_reads_it() {
+        // The author line is any line after the title; the revision line only one that reads
+        // as a revision.
         assert_eq!(
             policy("= Page\n== Section\n:export-read-only:\n"),
             ExportReadOnly::Enabled
         );
         assert_eq!(
-            policy("= Page\n\n== Section\n:export-read-only:\n"),
-            ExportReadOnly::Unspecified
-        );
-        // Text before any header: there is none.
-        assert_eq!(
-            policy("Text.\n:export-read-only:\n"),
-            ExportReadOnly::Unspecified
-        );
-        // Author and revision lines, comments and a comment block are part of the header.
-        assert_eq!(
-            policy("= Page\nPaul Snow <paul@example.com>\nv1.0, 2026-11-17\n// a note\n////\n:export-read-only: false\n////\n:export-read-only: true\n"),
+            policy("= Page\nPaul Snow <paul@example.com>\nv1.0, 2026-11-17: Draft\n// a note\n////\n:export-read-only: false\n////\n:export-read-only: true\n"),
             ExportReadOnly::Enabled
+        );
+        assert_eq!(
+            policy("= Page\nAuthor\nText.\n:export-read-only:\n"),
+            ExportReadOnly::Unspecified
+        );
+        assert_eq!(
+            policy("= Page\nAuthor\nv1\nText.\n:export-read-only:\n"),
+            ExportReadOnly::Unspecified
         );
         // A declaration inside a comment block is a comment.
         assert_eq!(
@@ -375,7 +481,7 @@ mod tests {
             ExportReadOnly::Unspecified
         );
         // Leading blank lines and comments come before the header; entries with no title are
-        // still the header.
+        // the header.
         assert_eq!(
             policy("\n// comment\n= Page\n:export-read-only:\n"),
             ExportReadOnly::Enabled
@@ -384,13 +490,40 @@ mod tests {
             policy(":export-read-only: true\n\nText.\n"),
             ExportReadOnly::Enabled
         );
-        // A third text line after the title is the body.
+        // After content, the body.
         assert_eq!(
-            policy("= Page\nAuthor\nv1\nText.\n:export-read-only:\n"),
+            policy("Text.\n:export-read-only:\n"),
+            ExportReadOnly::Unspecified
+        );
+        assert_eq!(
+            policy("= Page\n\nText.\n\n:export-read-only: true\n"),
             ExportReadOnly::Unspecified
         );
         assert_eq!(main_header_end("= Page\n:a: b\n\nText.\n"), 13);
         assert_eq!(main_header_end("Text.\n"), 0);
+    }
+
+    #[test]
+    fn a_declaration_whose_place_is_uncertain_is_an_error() {
+        let not_in_header = |text: &str| {
+            matches!(
+                export_read_only(text),
+                Err(HeaderReadOnlyError::NotInHeader { .. })
+            )
+        };
+        // A blank line after the title, then the declaration before any content.
+        assert!(not_in_header(
+            "= Page\n\n:export-read-only: true\n\nText.\n"
+        ));
+        assert!(not_in_header("= Page\n\n[abstract]\n:export-read-only:\n"));
+        // Anything but comments above the title.
+        assert!(not_in_header(":a: b\n= Page\n:export-read-only:\n"));
+        assert!(not_in_header("[[id]]\n= Page\n:export-read-only:\n"));
+        // A byte-order mark.
+        assert!(matches!(
+            export_read_only("\u{feff}= Page\n:export-read-only:\n"),
+            Err(HeaderReadOnlyError::ByteOrderMark { .. })
+        ));
     }
 
     #[test]
@@ -421,7 +554,8 @@ mod tests {
 
     #[test]
     fn half_written_headers_never_panic() {
-        let text = "= Page\n:export-read-only: tr\u{e9}\nifdef::[\n////\n:\n::\n:!:\n";
+        let text =
+            "\u{feff}= Page\n:export-read-only: tr\u{e9}\nifdef::[\n////\n:\n::\n:!:\n# \n[\n";
         for end in 0..=text.len() {
             if text.is_char_boundary(end) {
                 let _ = export_read_only(&text[..end]);
