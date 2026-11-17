@@ -520,6 +520,14 @@ pub fn write_docx(
         relationships: Vec::new(),
     }));
     let body = std::mem::take(&mut writer.xml);
+    let (settings, protected) = parts::settings(
+        footnotes,
+        odd_even,
+        writer.wrote_toc,
+        options.protection,
+        fonts.embeds()
+            || template_fonts.is_some_and(|fonts| fonts.embeds && !options.fonts_named_only),
+    );
     parts.splice(
         0..0,
         [
@@ -553,15 +561,7 @@ pub fn write_docx(
             package::Part {
                 name: "word/settings.xml".to_owned(),
                 content_type: parts::SETTINGS_TYPE,
-                data: parts::settings(
-                    footnotes,
-                    odd_even,
-                    writer.wrote_toc,
-                    options.protection,
-                    fonts.embeds()
-                        || template_fonts
-                            .is_some_and(|fonts| fonts.embeds && !options.fonts_named_only),
-                ),
+                data: settings,
                 relationships: Vec::new(),
             },
         ],
@@ -642,7 +642,7 @@ pub fn write_docx(
     )?;
     Ok(DocxReport {
         diagnostics: writer.diagnostics,
-        protected: options.protection == WordProtection::ReadOnly,
+        protected,
     })
 }
 
