@@ -282,6 +282,18 @@ The record is `docs/qa/spike-kindle.md`.
 - Departure: `kindle_and_pdf_select_the_same_pages` (§12 test 1) needs a writer to export with, so it lands with K3, the first writer. K2 writes nothing yet: `write_kindle` returns `KindleError::Unsupported` for both formats until K3 and K4.
 - Images, diagrams and formulas are exported as their descriptions or sources, with a warning, until K6 embeds them.
 
+### K3 (#629): the AZW3 writer
+
+- `azw3/` writes KF8 only, in a PalmDB/MOBI file: record 0 (PalmDOC header, a 264-byte version 8 MOBI header, EXTH, the title, KindleGen's 8 KiB of padding), the text records, a two-byte separator, the fragment index and its `CNCX`, the skeleton index, the NCX index and its `CNCX`, `FDST` (markup and stylesheet flows), the pictures, `RESC` (the spine), `FLIS`, `FCIS` and the end-of-file record. The record layout and header fields follow `epub3-kindle`'s, the writer with device evidence.
+- Each chapter is one skeleton (`<body aid="…">` empty) and fragments of its body's top-level elements, grouped up to 8 KiB, all inserted under the body (`P-//*[@aid='…']`). An oversized element stays one fragment.
+- Internal links are `kindle:pos:fid:…:off:…`, written as fixed-width placeholders and filled in once every fragment is placed. A link to an anchor the book lacks fails the export rather than being written broken.
+- Text records hold 4,096 bytes uncompressed, with the multibyte trailing entry only (`extra_data_flags` 1). No PalmDOC compression and no trailing byte sequences for indexing, both of which KF8 readers treat as optional. Calibre's writer falls back to the same when it cannot build them.
+- The stylesheet sizes in `em` and names no font or fixed width.
+- `write` reads its own file back (`check`: the PalmDB list, record 0, every pointer's magic, the FDST against the text length, the end-of-file record) before returning it.
+- `adoc_kindle::testing::read_azw3` is the independent reader. It reassembles chapters from skeletons and fragments as a reader does, decodes the indexes and `CNCX`, and follows `kindle:pos` links. The `mobi` crate reads the same files in `azw3_is_a_kf8_container`.
+- `kindle_and_pdf_select_the_same_pages` is in the engine's `tests/kindle_export.rs`, as K2 recorded.
+- Not yet checked on a Kindle (`docs/qa/kindle.md`, K8).
+
 ## 17. References
 
 - Amazon KDP, [supported eBook formats](https://kdp.amazon.com/en_US/help/topic/G200634390)

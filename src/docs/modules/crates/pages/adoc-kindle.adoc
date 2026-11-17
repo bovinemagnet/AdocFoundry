@@ -44,7 +44,31 @@ Otherwise it is the page's published URL when a site URL is configured, and fail
 Both are written from the same `KindleBook`, and a format is never written in place of another.
 A failure is a `KindleError`: `Unsupported`, `Invalid` or `TooLarge`.
 
-The AZW3 and KFX writers are to come (Kindle 3/9 and 4/9), so for now writing returns `KindleError::Unsupported`.
+The AZW3 writer exists (Kindle 3/9).
+The KFX writer is still to come (Kindle 4/9), so writing KFX returns `KindleError::Unsupported`.
+
+== The AZW3 writer
+
+The writer is the `azw3` module.
+It writes KF8 only, in a PalmDB/MOBI file with no MOBI7 part.
+
+* Record 0 holds the PalmDOC header, a 264-byte version 8 MOBI header, the EXTH metadata (authors, publisher, description, date, identifier, start reading position, resource count, cover, title, language, writing mode and page progression) and the full title.
+* The records after it are the text records, the fragment index and its CNCX strings, the skeleton index, the NCX index (the nested table of contents, with parent and child links), FDST (two flows: markup and stylesheet), the pictures, RESC (the spine), FLIS, FCIS and the end-of-file record.
+* Each chapter is one skeleton with an empty `<body aid="...">`, and fragments of its body's top-level elements grouped up to 8 KiB.
+* Internal links are `kindle:pos:fid:...:off:...`, written as fixed-width placeholders and filled in once every fragment is placed.
+A link to an anchor the book lacks fails the export.
+* Text records hold 4,096 bytes uncompressed, with only the multibyte trailing entry.
+There is no PalmDOC compression and there are no indexing trailing byte sequences, both of which are optional for KF8 readers.
+* The stylesheet sizes in `em` and names no font and no fixed width, so the reader's font, size and theme apply.
+* The writer reads its own file back (the record list, record 0, every pointer's magic, FDST against the text length and the end-of-file record) before returning the bytes.
+
+The tests use `adoc_kindle::testing::read_azw3` (feature `test-support`), a reader written apart from the writer.
+It reassembles the chapters from skeletons and fragments, decodes the indexes and CNCX strings, and follows `kindle:pos` links.
+The `mobi` crate (MIT, a dev-dependency only) reads the same files.
+The tests are `azw3_is_a_kf8_container`, `azw3_reads_back_complete` and `kindle_never_substitutes_a_format` in the crate, and `kindle_and_pdf_select_the_same_pages` in the engine's `tests/kindle_export.rs`.
+
+NOTE: The format facts come from the MobileRead wiki's documentation, checked against epub3-kindle's MIT source (see the spike's record).
+The output has not yet been checked on a Kindle device.
 
 == Related
 

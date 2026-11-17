@@ -59,6 +59,8 @@ adoc-core = { workspace = true, features = ["probe"] }
 adoc-git = { workspace = true, features = ["test-support"] }
 # Reading written DOCX packages back in `tests/docx_export.rs`.
 adoc-docx = { workspace = true, features = ["test-support"] }
+# Reading written Kindle books back in `tests/kindle_export.rs`.
+adoc-kindle = { workspace = true, features = ["test-support"] }
 flate2.workspace = true
 insta.workspace = true
 roxmltree.workspace = true

@@ -18,6 +18,7 @@ test-support = []
 
 [dev-dependencies]
 adoc-kindle = { path = ".", features = ["test-support"] }
+mobi.workspace = true
 tempfile.workspace = true
 
 [lints]

@@ -23,9 +23,12 @@ pub use book::{
     ParagraphClass, Row, Target, TocEntry,
 };
 
+mod azw3;
 mod book;
 mod map;
 mod metadata;
+#[cfg(feature = "test-support")]
+pub mod testing;
 
 /// The formats a Kindle book is written in.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -220,10 +223,13 @@ pub fn write_kindle(
     Ok(KindleOutput { bytes, diagnostics })
 }
 
-/// Writes `book` in `format`.
-pub fn write_book(_book: &KindleBook, format: KindleFormat) -> Result<Vec<u8>, KindleError> {
-    Err(KindleError::Unsupported {
-        format,
-        reason: "no writer for this format yet".to_owned(),
-    })
+/// Writes `book` in `format`, the bytes checked against the format.
+pub fn write_book(book: &KindleBook, format: KindleFormat) -> Result<Vec<u8>, KindleError> {
+    match format {
+        KindleFormat::Azw3 => azw3::write(book),
+        KindleFormat::Kfx => Err(KindleError::Unsupported {
+            format,
+            reason: "no writer for this format yet".to_owned(),
+        }),
+    }
 }
