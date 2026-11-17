@@ -29,6 +29,7 @@ Both commands print `protected: read-only`.
 - The decision (READONLY 2/5, `crates/adoc-engine/tests/protection.rs`): articles and books, mixed books, HTML, PDF/A, profiles and an export's attributes, existing output kept, unprotected output unchanged.
 - Word (READONLY 3/5): `docx_readonly_settings_enforced`, `docx_readonly_preserves_relationships`, and the package checks of `w:documentProtection`.
 - The front ends (READONLY 5/5): `protection_cli_exit_codes`, `protection_mcp_errors`, `protection_app_keeps_editors_editable`.
+- PDF (READONLY 4/5, `crates/adoc-pdf/tests/protection.rs`): the encryption dictionary, every page's content and every string read back by an independent reader with no password, the structure unchanged, PDF/UA-1 checked by veraPDF when it is installed.
 
 ## Checks
 
@@ -42,11 +43,27 @@ Both commands print `protected: read-only`.
 8. **The source.** The pages in AdocFoundry stay editable in the source and visual editors after exporting.
 9. **Refusals.** In the app, Export Page to PDF… on `page.adoc` says why at once and asks for no file; Export Page to HTML… likewise. A mixed book (one page without the attribute) to Word is refused, naming both lists of pages.
 
+## PDF readers (READONLY 4/5)
+
+Protected PDF is refused by the exports until these checks pass. The sample is the reference article, written by the exporter itself:
+
+```sh
+ADOC_PDF_OUT=/tmp/ro cargo test -p adoc-pdf --test reference writes_the_reference_article_read_only -- --ignored
+```
+
+Open `/tmp/ro/article-read-only.pdf` in Apple Preview and Adobe Acrobat Reader (and, where to hand, a browser's viewer and a Linux reader such as Evince or Okular):
+
+10. **Opens with no password.** No password prompt; every page, picture and table shows as in an unprotected export.
+11. **Links and bookmarks.** A link opens its address; an internal link and the bookmarks (outline) panel go to the right places. This is the check that the decrypted strings are right in a reader of its own.
+12. **Reading, copying, printing.** Text can be selected and copied; printing is offered.
+13. **Editing is refused.** Acrobat's document properties show Security: Password Security, with changing the document, commenting, filling forms and page assembly not allowed. Preview's markup, page moving and deleting are refused or disabled; record what each reader does.
+14. **Accessibility.** A screen reader (VoiceOver or NVDA) reads the protected PDF.
+
 ## Known limitations
 
 - **No password.** Word protection without a password deters editing; anyone who knows how can remove it. It does not encrypt or hide the content.
 - **Mixed Word books are refused.** Leaving some pages editable needs Word's permission ranges, which wait until they can be verified in Word.
-- **PDF.** A read-only PDF needs the Standard Security Handler written in Rust (READONLY 4/5); until its feasibility gate passes, a PDF export of a page that asks is refused. PDF/A is always refused with protection.
+- **PDF.** The Standard Security Handler is written (READONLY 4/5: AES-256, no password to open, modification denied, owner password random and never kept), but a PDF export of a page that asks stays refused until items 10 to 14 pass. Like Word's, the restriction is a deterrent: tools that ignore permissions can remove it. PDF/A is always refused with protection.
 
 ## Results
 

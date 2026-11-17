@@ -128,49 +128,59 @@ fn pdf_protected_preserves_links_images_fonts() {
     );
     assert_eq!(pages, plain_pages);
     assert!(pages.iter().any(|(links, _, _)| *links > 0), "{pages:?}");
-    // Every string, decrypted: link addresses, outline titles, names, the information
-    // dictionary; equal to the plain PDF's.
+    // Every string, decrypted by the independent reader: link addresses, outline titles, names,
+    // the information dictionary; equal to the plain PDF's.
     let (plain_strings, strings) = (strings(&plain), strings(&protected));
     assert!(plain_strings.iter().any(|(key, _)| key == "URI"));
     assert!(plain_strings.iter().any(|(key, _)| key == "Title"));
     assert_eq!(strings, plain_strings);
 }
 
-/// Each string in the document under the key that holds it, sorted; the encryption
-/// dictionary's own left out.
+/// Each string in the document under the key that holds it, sorted, as an independent reader
+/// (`hayro-syntax`, not the library that encrypted it) decrypts it; the encryption
+/// dictionary's own keys left out.
 fn strings(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
-    fn walk(key: &str, object: &lopdf::Object, found: &mut Vec<(String, Vec<u8>)>) {
+    use hayro_syntax::object::{MaybeRef, Object};
+    fn walk(key: &str, object: &Object<'_>, found: &mut Vec<(String, Vec<u8>)>) {
+        let entries = |dict: &hayro_syntax::object::Dict<'_>, found: &mut Vec<_>| {
+            for (name, value) in dict.entries() {
+                let name = String::from_utf8_lossy(name.as_ref()).into_owned();
+                if ["O", "U", "OE", "UE", "Perms"].contains(&name.as_str()) {
+                    continue;
+                }
+                if let MaybeRef::NotRef(value) = value {
+                    walk(&name, &value, found);
+                }
+            }
+        };
         match object {
-            lopdf::Object::String(text, _) => found.push((key.to_owned(), text.clone())),
-            lopdf::Object::Array(items) => items.iter().for_each(|item| walk(key, item, found)),
-            lopdf::Object::Dictionary(dictionary) => dictionary.iter().for_each(|(name, value)| {
-                walk(&String::from_utf8_lossy(name), value, found);
-            }),
-            lopdf::Object::Stream(stream) => stream.dict.iter().for_each(|(name, value)| {
-                walk(&String::from_utf8_lossy(name), value, found);
-            }),
+            Object::String(text) => found.push((key.to_owned(), text.as_bytes().to_vec())),
+            Object::Array(items) => {
+                for item in items.raw_iter() {
+                    if let MaybeRef::NotRef(item) = item {
+                        walk(key, &item, found);
+                    }
+                }
+            }
+            Object::Dict(dict) => entries(dict, found),
+            Object::Stream(stream) => entries(stream.dict(), found),
             _ => {}
         }
     }
-    let document = lopdf::Document::load_mem(bytes).unwrap();
-    let encrypt = document
-        .trailer
-        .get(b"Encrypt")
-        .and_then(lopdf::Object::as_reference)
-        .ok();
+    let pdf = hayro_syntax::Pdf::new(bytes.to_vec()).expect("opens with no password");
     let mut found = Vec::new();
-    for (id, object) in &document.objects {
-        if Some(*id) != encrypt {
-            walk("", object, &mut found);
-        }
+    for object in pdf.objects() {
+        walk("", &object, &mut found);
     }
     found.sort();
     found
 }
 
 /// PDF/UA-1 lets an encrypted file be conformant when assistive technology may still read it
-/// (`/P` bit 10). A protected PDF/UA-1 article is checked by veraPDF when it is on `PATH`; CI's
-/// veraPDF job checks one through the command line.
+/// (`/P` bit 10). A protected PDF/UA-1 article is checked by veraPDF when it is on `PATH`
+/// (not on CI's test runners, where only the export is checked; CI's veraPDF job is to check a
+/// protected article once PDF protection is switched on). veraPDF writes no executable, so the
+/// spawn needs no guard.
 #[test]
 fn pdfua_with_protection_checked() {
     let view = common::view_of(&common::fixtures().join("pdf/reference/article.adoc"));
