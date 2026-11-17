@@ -26,12 +26,13 @@ impl ExportFormat {
         }
     }
 
-    /// Whether the format can carry a restriction over the whole document yet. Word's arrives
-    /// with READONLY 3/5, the PDF's with READONLY 4/5 once its feasibility gate passes; HTML
-    /// has none.
+    /// Whether the format can carry a restriction over the whole document: Word's enforced
+    /// document protection (READONLY 3/5). The PDF's arrives with READONLY 4/5 once its
+    /// feasibility gate passes; HTML has none.
     fn protects_whole_document(self) -> bool {
         match self {
-            Self::Pdf | Self::PdfA | Self::Docx | Self::Html => false,
+            Self::Docx => true,
+            Self::Pdf | Self::PdfA | Self::Html => false,
         }
     }
 }

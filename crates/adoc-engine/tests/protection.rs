@@ -1,7 +1,8 @@
 //! Read-only exports, READONLY 2/5 (`docs/prd/PRD-AdocFoundry_READONLY.md` §10, tests 5 to
 //! 13): one decision per export from the pages' own headers, checked against the format before
-//! anything is written. Until READONLY 3/5 and 4/5 give Word and PDF their restrictions, every
-//! export a page asks to protect is refused.
+//! anything is written. Word carries a whole-document restriction (READONLY 3/5); until
+//! READONLY 4/5 gives the PDF its own, every PDF a page asks to protect is refused, and a book
+//! mixing pages that ask with pages that do not is refused in both.
 
 #![cfg(all(feature = "typst", feature = "docx"))]
 
@@ -115,9 +116,21 @@ fn protection_article_enabled_disabled() {
             );
         }
     }
-    // An enabled page asks for the whole document, named at its line; no format gives it yet.
+    // An enabled page asks for the whole document, named at its line: Word gives it, PDF and
+    // HTML refuse.
     let target = article(&mut engine, "a");
-    for format in [ExportFormat::Docx, ExportFormat::Pdf, ExportFormat::Html] {
+    match engine
+        .export_protection(&target, ExportFormat::Docx)
+        .unwrap()
+    {
+        ExportProtection::WholeDocument { requested_by } => {
+            assert_eq!(requested_by.len(), 1);
+            assert_eq!(requested_by[0].path, page(&root, "a"));
+            assert_eq!(requested_by[0].line, 2);
+        }
+        other => panic!("{other:?}"),
+    }
+    for format in [ExportFormat::Pdf, ExportFormat::Html] {
         match engine.export_protection(&target, format) {
             Err(EngineError::ExportProtection(refusal)) => match *refusal {
                 ProtectionRefusal::UnsupportedFormat { requested_by, .. } => {
@@ -149,10 +162,20 @@ fn protection_article_enabled_disabled() {
 
 #[test]
 fn protection_book_all_enabled() {
-    // Every page asks: one request for the whole book, naming each page.
+    // Every page asks: one request for the whole book, naming each page, which Word carries
+    // and PDF refuses.
     let (directory, root, mut engine) = workspace([ON, ON, ON], "");
     let output = directory.path().join("book.docx");
-    match refusal(engine.export_docx_blocking(docx(book(), &output), WAIT)) {
+    let summary = engine
+        .export_docx_blocking(docx(book(), &output), WAIT)
+        .unwrap();
+    assert!(summary.protected);
+    let entries = adoc_docx::testing::assert_valid_package(&fs::read(&output).unwrap());
+    assert!(
+        adoc_docx::testing::text(&entries, "word/settings.xml").contains("w:documentProtection")
+    );
+    let output = directory.path().join("book.pdf");
+    match refusal(engine.export_blocking(pdf(book(), &output), WAIT)) {
         ProtectionRefusal::UnsupportedFormat { requested_by, .. } => {
             let pages: Vec<&Path> = requested_by
                 .iter()
@@ -281,13 +304,9 @@ fn protection_profile_attributes_cannot_override() {
     let summary = engine.export_docx_blocking(args, WAIT).unwrap();
     assert!(!summary.protected);
     assert!(root.join("b.docx").is_file());
-    // Nor unlock a protected one, for Word or PDF.
+    // Nor unlock a protected one: the Word document is read-only, the PDF refused.
     let args = engine.docx_profile_export_args("unlocking").unwrap();
-    assert!(matches!(
-        refusal(engine.export_docx_blocking(args, WAIT)),
-        ProtectionRefusal::UnsupportedFormat { .. }
-    ));
-    assert!(!root.join("a.docx").exists());
+    assert!(engine.export_docx_blocking(args, WAIT).unwrap().protected);
     let args = engine.profile_export_args("unlocking").unwrap();
     assert!(matches!(
         refusal(engine.export_blocking(args, WAIT)),
@@ -341,19 +360,19 @@ fn protection_pdfa_is_rejected() {
 #[test]
 fn protection_failed_export_preserves_existing_file() {
     let (directory, root, mut engine) = workspace([ON, NONE, NONE], "");
-    let docx_output = directory.path().join("a.docx");
+    let docx_output = directory.path().join("book.docx");
     let pdf_output = directory.path().join("a.pdf");
     fs::write(&docx_output, b"an earlier document").unwrap();
     fs::write(&pdf_output, b"an earlier PDF").unwrap();
+    // A mixed Word book, and a read-only PDF, are refused.
+    let _ = refusal(engine.export_docx_blocking(docx(book(), &docx_output), WAIT));
     let target = ExportTarget::File(page(&root, "a"));
-    let _ = refusal(engine.export_docx_blocking(docx(target.clone(), &docx_output), WAIT));
     let _ = refusal(engine.export_blocking(pdf(target, &pdf_output), WAIT));
     // Through the command, as the app exports.
-    let id = engine.open(&page(&root, "a")).unwrap();
     assert!(engine
         .invoke(
-            ids::EXPORT_DOCX_PAGE,
-            CommandArgs::ExportDocx(docx(ExportTarget::Page(id), &docx_output)),
+            ids::EXPORT_DOCX_COMPONENT,
+            CommandArgs::ExportDocx(docx(book(), &docx_output)),
         )
         .is_err());
     assert!(engine.wait_for_workers(WAIT));

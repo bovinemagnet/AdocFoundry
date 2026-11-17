@@ -1089,12 +1089,21 @@ pub(crate) fn settings(
     footnotes: bool,
     odd_even: bool,
     update_fields: bool,
+    protection: crate::WordProtection,
     embed_fonts: bool,
 ) -> Vec<u8> {
     let mut xml = Xml::part();
     xml.open("w:settings", &[("xmlns:w", W)]);
     if embed_fonts {
         xml.empty("w:embedTrueTypeFonts", &[]);
+    }
+    // After the fonts and before the headers' setting, as `CT_Settings` orders them. Enforced,
+    // with no password: never `w:writeProtection` or `w:readOnlyRecommended`, which only ask.
+    if protection == crate::WordProtection::ReadOnly {
+        xml.empty(
+            "w:documentProtection",
+            &[("w:edit", "readOnly"), ("w:enforcement", "1")],
+        );
     }
     if odd_even {
         xml.empty("w:evenAndOddHeaders", &[]);
