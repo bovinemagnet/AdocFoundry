@@ -1310,17 +1310,8 @@ impl Engine {
             unread,
         };
         match request {
-            // A format that cannot carry the restriction never gets one to drop: the decision
-            // refuses it first, and this keeps it so.
             #[cfg(feature = "typst")]
-            Request::Pdf(_) if protection != crate::ExportProtection::Off => {
-                self.export_finished(
-                    job,
-                    Err("a read-only PDF cannot be written yet; nothing was written".to_owned()),
-                );
-            }
-            #[cfg(feature = "typst")]
-            Request::Pdf(args) => self.write_pdf(job, args, written, replace, commit),
+            Request::Pdf(args) => self.write_pdf(job, args, written, replace, commit, protection),
             #[cfg(feature = "docx")]
             Request::Docx(args) => self.write_docx(job, args, written, commit, protection),
         }
@@ -1375,6 +1366,7 @@ impl Engine {
         written: Written,
         replace: bool,
         commit: Commit,
+        protection: crate::ExportProtection,
     ) {
         let Written {
             sources,
@@ -1389,7 +1381,12 @@ impl Engine {
             adoc_pdf::Document::Book(book) => book.attributes.clone(),
         };
         let theme = self.export_theme(&args, &attributes, first_page.as_deref());
-        let options = self.export_options(&args, &attributes, first_page.as_deref());
+        let mut options = self.export_options(&args, &attributes, first_page.as_deref());
+        options.protection = if protection == crate::ExportProtection::Off {
+            adoc_pdf::PdfProtection::None
+        } else {
+            adoc_pdf::PdfProtection::RestrictModification
+        };
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
         let crashed = move |error| WorkerMessage::ExportFinished {
@@ -1444,6 +1441,7 @@ impl Engine {
             page_urls,
             date: None,
             access: self.file_access.clone(),
+            protection: adoc_pdf::PdfProtection::None,
         }
     }
 }
@@ -1995,6 +1993,10 @@ fn typeset(
             .map_err(|error| format!("{}: {error}", path.display()))?;
     }
     let output = adoc_pdf::compile(&typst, theme, options).map_err(|error| error.to_string())?;
+    // The bytes say they carry the restriction; a request is no proof of it.
+    if options.protection != adoc_pdf::PdfProtection::None && !output.protected {
+        return Err("the PDF was asked to be read-only but was not written so".to_owned());
+    }
     let failed = |error: std::io::Error| format!("{}: {error}", args.output.display());
     if replace {
         let folder = args
@@ -2033,7 +2035,7 @@ fn typeset(
         sources: Vec::new(),
         diagnostics,
         look: None,
-        protected: false,
+        protected: output.protected,
     })
 }
 

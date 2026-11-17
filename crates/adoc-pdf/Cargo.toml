@@ -11,6 +11,8 @@ repository.workspace = true
 fuzzing = []
 
 [dependencies]
+getrandom.workspace = true
+lopdf.workspace = true
 adoc-core.workspace = true
 adoc-math.workspace = true
 adoc-render.workspace = true
