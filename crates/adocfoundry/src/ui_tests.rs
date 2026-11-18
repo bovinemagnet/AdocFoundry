@@ -3756,6 +3756,45 @@ fn marks_toggle_in_the_source_editor(cx: &mut TestAppContext) {
     assert_eq!(text_of(&app, id, &mut cx), "= Page\n\nSome plain words.\n");
 }
 
+/// Cmd-/ (Ctrl-/ elsewhere) comments out the lines the selection touches and back (#722).
+#[gpui::test]
+fn line_comments_toggle_in_the_source_editor(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    let text = "= Page\n\nFirst line.\nSecond line.\n";
+    std::fs::write(&page, text).unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    // From inside the first line to inside the second.
+    let both = SourceRange::new(10, 25);
+    cx.update(|window, cx| editor.update(cx, |editor, cx| editor.reveal(both, window, cx)));
+    cx.run_until_parked();
+
+    cx.simulate_keystrokes("secondary-/");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\n// First line.\n// Second line.\n"
+    );
+    // The selection moves with the text, so pressing again takes the comments out.
+    let selection = cx.update(|_, cx| editor.read(cx).selection(cx));
+    assert_eq!(selection, 13..31);
+    cx.simulate_keystrokes("secondary-/");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), text);
+
+    // One undo, through the engine, takes back the last toggle.
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\n// First line.\n// Second line.\n"
+    );
+}
+
 #[gpui::test]
 fn inserts_work_in_the_source_editor(cx: &mut TestAppContext) {
     init(cx);

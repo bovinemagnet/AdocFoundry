@@ -37,6 +37,7 @@ mod impact_analysis;
 mod impact_inspection;
 mod index_settle;
 mod kindle_settings;
+mod line_comment;
 // Without Git, the engine behaves as with `[git] enabled = false`.
 #[cfg(not(feature = "git"))]
 #[path = "git_off.rs"]

@@ -96,6 +96,11 @@ image::app-command-palette.png["The command palette filtered by the word preview
 |Ctrl-Shift-Z
 |`edit.redo`
 
+|Toggle line comment
+|Cmd-/
+|Ctrl-/
+|`edit.toggle_line_comment`
+
 |Go to definition
 |F12
 |F12

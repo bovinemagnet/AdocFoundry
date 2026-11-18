@@ -119,6 +119,8 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::EDIT_REDO),
             Command(ids::FILE_UNDO_DELETE),
             Separator,
+            Command(ids::EDIT_TOGGLE_LINE_COMMENT),
+            Separator,
             Command(ids::WORKSPACE_SEARCH),
             Command(ids::WORKSPACE_REPLACE),
             Separator,

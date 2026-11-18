@@ -124,6 +124,7 @@ pub mod ids {
     pub const EDIT_INSERT_TABLE_COLUMN: CommandId = CommandId::new("edit.insert_table_column");
     pub const EDIT_DELETE_TABLE_COLUMN: CommandId = CommandId::new("edit.delete_table_column");
     pub const EDIT_FORMAT_TABLE: CommandId = CommandId::new("edit.format_table");
+    pub const EDIT_TOGGLE_LINE_COMMENT: CommandId = CommandId::new("edit.toggle_line_comment");
     pub const EDIT_INSERT_IMAGE: CommandId = CommandId::new("edit.insert_image");
     pub const EDIT_EDIT_IMAGE: CommandId = CommandId::new("edit.edit_image");
     pub const EDIT_PLACE_IMAGES: CommandId = CommandId::new("edit.place_images");
@@ -602,6 +603,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     crate::doctor::register_doctor(registry);
     crate::about::register_about(registry);
     crate::format_table::register_format_table(registry);
+    crate::line_comment::register_line_comment(registry);
     crate::html_export::register_html_export(registry);
     crate::spelling::register_spelling(registry);
     crate::recovery::register_recovery(registry);
