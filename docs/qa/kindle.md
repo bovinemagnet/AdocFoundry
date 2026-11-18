@@ -2,7 +2,7 @@
 
 The checks that automated tests cannot make: how real Kindle readers show the books AdocFoundry writes (`docs/prd/PRD-AdocFoundry_Kindle_Export.md` §12; epic #616). The automated tests read every book back with readers written apart from the writers (`adoc_kindle::testing`, and the `mobi` crate for AZW3), but no reader of ours is a Kindle. Neither format is called ready until these pass on the readers listed.
 
-Nothing here has been run yet.
+No Kindle has been checked yet. KFX is deferred: the maintainer will check it on a Kindle device later, and until then 0.12.0's documentation marks it untested. AZW3 has been opened in Calibre, which is not a Kindle; KFX needs Calibre's third-party KFX Input plugin, since Calibre cannot read KFX without it. Calibre is likely more lenient than a Kindle, and is not known to use the trailing byte sequences the writer leaves out, so a pass there shows the file is well formed and readable, not that a Kindle accepts it.
 
 ## Samples
 
@@ -51,5 +51,7 @@ Record each reader's model and firmware or app version beside its result.
 
 | Date | Reader | Format | Result | Notes |
 |---|---|---|---|---|
+| 2026-11-18 | Calibre 9.18.0's e-book viewer, Linux (not a Kindle) | AZW3 | Pass | Exported with AdocFoundry and opened by the maintainer. The book opened; the table of contents, links, footnotes, cover and pictures worked. |
+| 2026-11-18 | Calibre 9.18.0's e-book viewer, Linux (not a Kindle) | KFX | Not tested | Calibre has no KFX reader of its own ("No plugin to handle input format: kfx"), so it read nothing of the file. The third-party KFX Input plugin reads KFX; with it installed, the book is to be opened again. |
 
 If a Kindle refuses KFX, record what it says. Whether to release AZW3 alone or hold the feature is then the maintainer's decision (PRD §15, "If KFX proves blocked").

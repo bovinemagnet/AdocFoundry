@@ -102,7 +102,7 @@ The covers and the title page logo come from the `front-cover-image`, `back-cove
 Word publication profiles are `[docx.profiles.<name>]`.
 They are separate from PDF profiles; see xref:settings.adoc#docx-profiles[Word profiles].
 
-`[pdf]` and PDF themes are never read for Word.
+Nothing else in `[pdf]` is read for Word: a PDF theme is used only as a look, named and found as described in <<look>>.
 
 == Warnings
 
