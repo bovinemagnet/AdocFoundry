@@ -445,6 +445,7 @@ impl Engine {
             .as_ref()
             .map(|watcher| Arc::clone(&watcher.watches));
         let sender = self.worker_sender.clone();
+        self.graph_reindexing();
         self.workers_running += 1;
         self.indexing += 1;
         self.index_generation += 1;

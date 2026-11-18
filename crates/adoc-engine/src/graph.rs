@@ -847,23 +847,40 @@ impl Engine {
         }
     }
 
+    /// A whole index is starting, which brings a graph of its own: a catalog build in flight
+    /// is no longer taken, and stays due should the index fail.
+    pub(crate) fn graph_reindexing(&mut self) {
+        if self.graph.building.take().is_some() {
+            self.graph.full_due = true;
+        }
+    }
+
+    /// Whether a full build is due but waits for the whole index running, whose graph holds it
+    /// (#725).
+    fn graph_waits_for_index(&self) -> bool {
+        self.graph.full_due && self.indexing > 0
+    }
+
     /// Now, when the graph has changes to take in and no full build is running, whose result
     /// comes first.
     pub(crate) fn due_graph(&self) -> Option<std::time::Instant> {
-        (self.graph.built
-            && self.graph.building.is_none()
-            && (self.graph.full_due || !self.graph.dirty.is_empty() || self.graph.unannounced))
+        let changes =
+            (self.graph.full_due || !self.graph.dirty.is_empty()) && !self.graph_waits_for_index();
+        (self.graph.built && self.graph.building.is_none() && (changes || self.graph.unannounced))
             .then(|| self.clock.now())
     }
 
     /// Starts a full build that is due, or resolves the files that changed; then announces a
-    /// change. Changes made while a full build runs wait for it.
+    /// change. Changes made while a full build runs wait for it, and a full build waits for a
+    /// whole index.
     pub(crate) fn update_due_graph(&mut self) -> usize {
         if !self.graph.built || self.graph.building.is_some() {
             return 0;
         }
         let mut applied = 0;
-        if self.graph.full_due {
+        if self.graph_waits_for_index() {
+            // Nothing to resolve file by file: the index's graph replaces it all.
+        } else if self.graph.full_due {
             self.graph.full_due = false;
             self.graph.dirty.clear();
             self.graph.generation += 1;
@@ -885,8 +902,7 @@ impl Engine {
                 });
             });
             return 1;
-        }
-        if !self.graph.dirty.is_empty() {
+        } else if !self.graph.dirty.is_empty() {
             let dirty = std::mem::take(&mut self.graph.dirty);
             if self.catch_up(&dirty) {
                 self.graph.changed();
@@ -1148,5 +1164,90 @@ mod tests {
             !engine.graph.full_due,
             "the build that landed holds the catalog as it is"
         );
+    }
+
+    /// An engine over a copy of the graph fixture, indexed, with the reference component's
+    /// descriptor rewritten to a new version on disk but not yet read.
+    fn with_new_version() -> (tempfile::TempDir, Engine, PathBuf) {
+        let directory = tempfile::tempdir().unwrap();
+        let root = adoc_index::normalize_path(&directory.path().join("docs"));
+        copy_tree(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/graph"),
+            &root,
+        );
+        let mut engine = Engine::new(Settings::load(None, None).unwrap().with_git_opt_in());
+        engine.open_workspace(vec![root.clone()]).unwrap();
+        assert!(engine.wait_for_workers(Duration::from_secs(10)));
+        engine.pump();
+        fs::write(
+            root.join("reference/antora.yml"),
+            "name: reference\ntitle: Reference\nversion: '2.0'\n",
+        )
+        .unwrap();
+        (directory, engine, root)
+    }
+
+    /// The version the graph gives the reference component's page.
+    fn api_version(engine: &Engine, root: &Path) -> Option<String> {
+        let api = file_key(&root.join("reference/modules/ROOT/pages/api.adoc"));
+        let snapshot = engine.graph(&GraphScope::Workspace, &GraphFilter::default());
+        snapshot.node(&api)?.coordinate.as_ref()?.version.clone()
+    }
+
+    fn file_key(path: &Path) -> GraphKey {
+        GraphKey::File(Arc::from(path))
+    }
+
+    /// A catalog change reported while a whole index runs, as when a folder and a descriptor
+    /// change together (#725), waits for the index, whose graph holds it: one build, not two.
+    #[test]
+    fn a_catalog_change_during_an_index_builds_once() {
+        let (_directory, mut engine, root) = with_new_version();
+        let builds = engine.graph_builds();
+        let hold = engine.hold_next_index();
+        engine.reindex();
+        assert!(hold.wait_until_held(Duration::from_secs(10)));
+        engine.reload_descriptor(&root.join("reference/antora.yml"));
+        assert_eq!(
+            engine.update_due_graph(),
+            0,
+            "no build while the index runs"
+        );
+        assert!(engine.due_graph().is_none(), "nor is one due");
+        assert!(engine.is_graph_building());
+        drop(hold);
+        assert!(engine.wait_for_workers(Duration::from_secs(10)));
+        engine.pump();
+        assert_eq!(engine.graph_builds(), builds + 1);
+        assert!(!engine.is_graph_building());
+        assert_eq!(api_version(&engine, &root).as_deref(), Some("2.0"));
+    }
+
+    /// A whole index started while a catalog build runs replaces that build: its result is not
+    /// taken, and the index's graph is.
+    #[test]
+    fn an_index_replaces_a_catalog_build_in_flight() {
+        let (_directory, mut engine, root) = with_new_version();
+        let builds = engine.graph_builds();
+        engine.reload_descriptor(&root.join("reference/antora.yml"));
+        assert_eq!(
+            engine.update_due_graph(),
+            1,
+            "a new version starts a full build"
+        );
+        let hold = engine.hold_next_index();
+        engine.reindex();
+        assert!(hold.wait_until_held(Duration::from_secs(10)));
+        // The catalog build reports back first.
+        assert!(engine.wait_until(
+            std::time::Instant::now() + Duration::from_secs(10),
+            |engine| engine.workers_running == 1
+        ));
+        drop(hold);
+        assert!(engine.wait_for_workers(Duration::from_secs(10)));
+        engine.pump();
+        assert_eq!(engine.graph_builds(), builds + 1);
+        assert!(!engine.is_graph_building());
+        assert_eq!(api_version(&engine, &root).as_deref(), Some("2.0"));
     }
 }
