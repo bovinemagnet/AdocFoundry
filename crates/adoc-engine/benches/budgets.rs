@@ -254,6 +254,9 @@ fn backspace(engine: &mut Engine, id: DocumentId, at: usize) -> Duration {
 
 const SIZES: [usize; 4] = [1_000, 5_000, 20_000, 100_000];
 
+/// How long `parse_whole` parses before it is timed.
+const PARSE_WARM_UP: Duration = Duration::from_millis(100);
+
 fn keystrokes(report: &mut Report) {
     if !report.wants(&["parse_whole", "keystroke_insert", "keystroke_backspace"]) {
         return;
@@ -262,6 +265,15 @@ fn keystrokes(report: &mut Report) {
         let text = synthetic_document(lines);
         let runs = if lines >= 100_000 { 50 } else { 200 };
         let size = format!("{lines} lines");
+        if report.wants(&["parse_whole"]) {
+            // A parse of 1,000 lines takes 0.2 ms: timed straight away, as the first bench of a
+            // run is, it measured twice that, the processor not yet at speed. Parsing is pure,
+            // so it is warmed up for a while rather than once.
+            let warming = Instant::now();
+            while warming.elapsed() < PARSE_WARM_UP {
+                let _ = adoc_parser::parse("file:///page.adoc", &text);
+            }
+        }
         report.time(
             "parse_whole",
             size.clone(),
