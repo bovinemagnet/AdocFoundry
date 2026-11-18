@@ -149,13 +149,12 @@ jobs:
       - run: cargo xtask bench ci
 
   typing:
-    # The real app types into a 1 MB page for twenty seconds, through the editor widget and the
-    # engine. The frame intervals and the app's own work in them, the CPU time its thread used, go
-    # in the run's summary, and the job fails when the 1 MB page's work misses three times the
+    # The real app types into a 1 MB page, then a three-line control page, for twenty seconds
+    # each, through the editor widget and the engine. The frame intervals and the app's own work in them, the CPU time its thread used, go
+    # in the run's summary, and the job fails when either page's work misses three times the
     # benchmark's budget (#241, #612): the budget itself is a release's, as the runner's CPU time
     # varies with the runner. The intervals, and the clock, are mostly the runner's, so they are
-    # recorded only. A run that draws no frames cannot be judged and fails. The three-line
-    # control page is recorded only until its own cost per frame is understood (#418).
+    # recorded only. A run that draws no frames cannot be judged and fails.
     timeout-minutes: 45
     runs-on: macos-15
     env:
@@ -181,9 +180,8 @@ jobs:
               lines += [f"Paragraph {n} with *bold*, _emphasis_, `code` and xref:other.adoc[a link].", ""]
           open(sys.argv[1], "w").write("\n".join(lines))
           EOF
-          # A control: the same typing into a page of a few lines, so a long frame here is the
-          # runner's, not the page's (#241). Recorded only: it costs more per frame than the
-          # 1 MB page (#418).
+          # A control: the same typing into a page of a few lines, so a long frame here is not
+          # the page's size (#241). It costs no more per frame than the 1 MB page (#418).
           short="$RUNNER_TEMP/typing-short/page.adoc"
           mkdir -p "$(dirname "$short")"
           printf '= A short page\n\nA paragraph with *bold* and _emphasis_.\n' > "$short"
@@ -203,9 +201,8 @@ jobs:
             printf '\nA character every 35 ms for 20 s into a %s: %s\n\nWork on the front end in each interval, in %s\n\nBudget: %s\n' \
               "$label" "${result#typing benchmark: }" "${work#typing benchmark work: }" \
               "${verdict#typing benchmark budget: }" >> "$GITHUB_STEP_SUMMARY"
-            case "$label:$verdict" in
-              *'(control):'*) ;;
-              *'typing benchmark budget: within:'*) ;;
+            case "$verdict" in
+              'typing benchmark budget: within:'*) ;;
               *) failed="$failed $label;" ;;
             esac
             # Each frame over 25 ms, when it came and what the front end's thread did for it.

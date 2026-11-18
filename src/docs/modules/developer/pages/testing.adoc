@@ -210,13 +210,12 @@ A `typing benchmark budget:` line then says `within:` or `over:` and gives the r
 Each frame over 25 ms is listed with its parts by the clock, longest first, the frame's layout and paint appearing among them as `draw`, how much of the interval was not timed, and the thread's CPU time in that interval.
 
 For each run, the job adds both lines and the long frames to the run's summary.
-It fails when the 1 MB page's run is not within three times the budget, which the job selects with `ADOCFOUNDRY_TYPING_TIER=ci`.
+It fails when either page's run is not within three times the budget, which the job selects with `ADOCFOUNDRY_TYPING_TIER=ci`.
 The `typing benchmark budget:` line then reads, for example, `p99 work 20.0 ms ≤ 50.1 ms (3 × 16.7 ms)`, and no piece may be over 99 ms (3 × 33 ms).
 Without that variable the budget is the release one, held by `cargo xtask bench release` on a quiet machine.
-It also fails when that run draws no frames, since it cannot be judged: macOS draws none for a window that is covered, minimised or on a locked screen.
-The control page's lines are recorded only.
-In CI a three-line page costs more CPU per frame than the 1 MB page does (a median of 9.8 ms against 3.9 ms, and a 99th percentile of 17.1 ms against 8.5 ms), so the cost is the app's own and not the runner's, and #418 tracks it.
-The control page will be held to the budget too once that is fixed.
+It also fails when either run draws no frames, since it cannot be judged: macOS draws none for a window that is covered, minimised or on a locked screen.
+The control page is held to the same budget, since in CI the three-line page costs no more CPU per frame than the 1 MB page (for example a 99th percentile of 9.2 ms against 11.6 ms).
+A long frame on it is therefore the app's own work and not the page's size.
 Real frame timing on a display, which a hosted runner cannot show, remains a manual check in `docs/qa/phase1.md`.
 
 The same command runs locally, with the window visible:
