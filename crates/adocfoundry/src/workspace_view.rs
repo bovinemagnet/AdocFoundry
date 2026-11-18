@@ -3891,6 +3891,16 @@ impl WorkspaceView {
         );
     }
 
+    /// Comments out, or back in, the lines the source editor's selection touches.
+    fn on_toggle_line_comment(
+        &mut self,
+        _: &ToggleLineComment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.source_selection_command(ids::EDIT_TOGGLE_LINE_COMMENT, window, cx);
+    }
+
     fn on_format_table(&mut self, _: &FormatTable, window: &mut Window, cx: &mut Context<Self>) {
         let Some((id, offset)) = self.caret(window, cx) else {
             return;
@@ -6211,6 +6221,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_refresh_git))
             .on_action(cx.listener(Self::on_revert_change))
             .on_action(cx.listener(Self::on_format_table))
+            .on_action(cx.listener(Self::on_toggle_line_comment))
             .on_action(cx.listener(Self::on_next_change))
             .on_action(cx.listener(Self::on_previous_change))
             .on_action(cx.listener(Self::on_show_changes))

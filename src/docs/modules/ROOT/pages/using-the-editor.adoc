@@ -804,6 +804,36 @@ A dropped file that is not an image is reported and left out.
 An existing file whose name a macro cannot write (a space, a bracket or a brace in it) is refused, and the message says to rename it first.
 The visual editor's version of this is described in xref:visual-editing.adoc#images[Images].
 
+[#commenting-out-lines]
+=== Commenting out lines
+
+Toggle Line Comment (`Cmd-/` or `Ctrl-/`, Edit menu and command palette) comments out or restores the lines at the caret in the source editor.
+It works in the source editor only; in the visual editor, comments are shown read-only and the command does nothing.
+It acts on every line the selection touches, or on the caret's line with nothing selected.
+A selection that ends at the very start of a line leaves that line out.
+
+* If every non-blank line is already a line comment, each loses its `//` and one space after it, if there is one.
+* Otherwise every non-blank line gets `// ` at its start, lines that are already comments included, so pressing the key twice gives the text back.
+* Blank lines are left alone.
+* `//` always goes at the very start of the line, never after indentation, because Asciidoctor reads a line comment only there.
+* A line that starts with `////` (a comment block's delimiter), or with `///` followed by text, is not a line comment, so it is commented rather than uncommented.
+
+The selection moves with the text, and each toggle is one undo step.
+
+[source,asciidoc]
+----
+First line
+Second line
+----
+
+With both lines selected, the command gives:
+
+[source,asciidoc]
+----
+// First line
+// Second line
+----
+
 [[format-table]]
 == Formatting a table in the source editor
 

@@ -2,6 +2,12 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- Edit › Toggle Line Comment (Cmd-/, or Ctrl-/ on Windows and Linux; also in the command palette) comments out the lines the source editor's selection touches, or the caret's line, by putting `// ` at the start of each (#722). When every non-blank line touched is already a line comment, it takes the comments out instead, each line losing its `//` and one space after it. Otherwise every non-blank line is commented, comments included, so pressing it twice gives the text back. Blank lines are left alone, and a selection ending at the start of a line leaves that line out. As in Asciidoctor, a comment is `//` only at the very start of a line, and `////` (a comment block's delimiter) and `///text` are not line comments. The change is one undo step, and the selection moves with the text. `adoc-engine` gains `edit.toggle_line_comment`.
+
 ## 0.11.0 — 2026-11-15
 
 ### Added

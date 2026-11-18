@@ -51,6 +51,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Insert Table, Insert Code Block, Insert Admonition and Insert Image add the visual editor's skeleton at the caret, with blank lines around it, and select where typing goes next; a code block goes around the selected lines. Insert Link (Cmd/Ctrl-Shift-L) wraps the selection as `link:[text]` with the caret at the target. Each is one undo step.
 - Paste a picture or drop an image file on the source or visual editor, and it is copied into the `images` family of the page's module (outside Antora, the page's `imagesdir` or an `images` folder beside it) with `image::name.png[]` written at the caret, the caret left in the empty alt text. A picture asks for a file name, offering one made from the page's; a dropped file keeps its own, numbered if another picture has it. A file the page can already name is not copied. One undo step takes back the macro and the file. In the visual editor the image goes after the caret's block, and its alt text is asked for instead. Images over 64 MiB are refused.
 - Format Table (Format menu and palette) pads the cells of the table at the caret so its `|` separators line up, as one undo step, without changing what it renders. Tables with cells spread over lines, spans or styles, or another separator, are left alone with the reason.
+- Toggle Line Comment (Cmd/Ctrl-/, Edit menu and palette) comments out the lines the selection touches, or the caret's line, with `//` at the start of each, or takes the comments out when every non-blank line touched is one already; blank lines are left alone, and `////` and `///text` are not read as comments, as Asciidoctor does not. One undo step.
 
 **Link following**
 
@@ -192,6 +193,7 @@ If you cloned without `--recurse-submodules`, run `git submodule update --init` 
 | New page | Cmd-N | Ctrl-N |
 | Save / Save all / Close | Cmd-S / Cmd-Alt-S / Cmd-W | Ctrl-S / Ctrl-Alt-S / Ctrl-W |
 | Undo / Redo | Cmd-Z / Cmd-Shift-Z | Ctrl-Z / Ctrl-Shift-Z |
+| Toggle line comment | Cmd-/ | Ctrl-/ |
 | Follow link | Cmd-click, F12, Cmd-Enter | Ctrl-click, F12, Ctrl-Enter |
 | Close others / left / right | Cmd-Alt-T / Cmd-K E / Cmd-K T | Ctrl-Alt-T / Ctrl-K E / Ctrl-K T |
 | Close clean / all | Cmd-K U / Cmd-K Cmd-W | Ctrl-K U / Ctrl-K Ctrl-W |
