@@ -68,6 +68,13 @@ impl Xml {
         self.out.push('>');
     }
 
+    /// A processing instruction the crate itself names: never document text.
+    pub(crate) fn instruction(&mut self, target: &str) {
+        self.out.push_str("<?");
+        self.out.push_str(target);
+        self.out.push_str("?>");
+    }
+
     /// A line break between elements, for a reader of the file; never inside text, and never
     /// inside an element whose whitespace is kept.
     pub(crate) fn newline(&mut self) {

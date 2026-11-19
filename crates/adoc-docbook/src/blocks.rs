@@ -1,7 +1,13 @@
-//! A page's blocks as DocBook blocks: sections nest, paragraphs are `para`, and what has no
-//! DocBook element yet keeps its text, with a warning.
+//! A page's blocks as DocBook blocks, each as the element that means what it is (PRD §5.2):
+//! sections nest; paragraphs are `para` (`formalpara` with a title); lists are `itemizedlist`,
+//! `orderedlist`, `variablelist`, `qandaset` and `calloutlist`; listings are `programlisting`
+//! with their callouts as `co`, literal blocks `screen`; admonitions their own elements;
+//! quotations and verses `blockquote`; sidebars and examples their own elements; tables CALS
+//! (`table.rs`). Nothing is converted from HTML, and a passthrough is written as text. What
+//! has no DocBook element keeps its text, with a warning.
 
-use adoc_render::{ViewBlock, ViewInline, ViewKind};
+use adoc_dom::{AdmonitionKind, ListKind};
+use adoc_render::{ViewBlock, ViewCallout, ViewDescription, ViewInline, ViewKind, ViewListItem};
 
 use crate::document::Writer;
 
@@ -15,20 +21,52 @@ impl Writer<'_> {
         wrote
     }
 
-    /// Writes the blocks of an element DocBook does not let be empty (an article, a chapter, a
-    /// section), with an empty paragraph when they show nothing: it adds nothing a reader sees.
+    /// Writes the blocks of an element DocBook does not let be empty (a list item, an
+    /// admonition, a cell…), with an empty paragraph when they show nothing: it adds nothing a
+    /// reader sees.
     pub(crate) fn body(&mut self, blocks: &[ViewBlock]) {
         if !self.blocks(blocks) {
             self.xml.empty("para", &[]);
-            self.xml.newline();
+        }
+    }
+
+    /// A paragraph of `content`, then `blocks`, as a list item, a description or a callout
+    /// holds them, never empty.
+    fn item_body(&mut self, content: &[ViewInline], blocks: &[ViewBlock]) {
+        let has_text = !ViewInline::plain_text(content).trim().is_empty()
+            || content
+                .iter()
+                .any(|inline| !matches!(inline, ViewInline::Text(_)));
+        if has_text {
+            self.xml.open("para", &[]);
+            self.inlines(content);
+            self.xml.close("para");
+            self.blocks(blocks);
+        } else {
+            self.body(blocks);
+        }
+    }
+
+    /// A block's `title` child, when it has one.
+    fn block_title(&mut self, block: &ViewBlock) {
+        if !block.title.is_empty() {
+            self.xml.open("title", &[]);
+            self.inlines(&block.title);
+            self.xml.close("title");
         }
     }
 
     /// Writes `block`, and whether it wrote anything.
     fn block(&mut self, block: &ViewBlock) -> bool {
+        let role = block.roles.join(" ");
+        let role: Vec<(&str, &str)> = if role.is_empty() {
+            Vec::new()
+        } else {
+            vec![("role", role.as_str())]
+        };
         match &block.kind {
             ViewKind::Section { title, blocks, .. } => {
-                self.xml.open("section", &[]);
+                self.xml.open("section", &role);
                 self.xml.open("title", &[]);
                 self.inlines(title);
                 self.xml.close("title");
@@ -36,13 +74,126 @@ impl Writer<'_> {
                 self.body(blocks);
                 self.xml.close("section");
             }
+            ViewKind::Heading { level, title } => {
+                let renderas = format!("sect{}", (*level).clamp(1, 5));
+                self.xml.open("bridgehead", &[("renderas", &renderas)]);
+                self.inlines(title);
+                self.xml.close("bridgehead");
+            }
             ViewKind::Paragraph(content) => {
-                self.xml.open("para", &[]);
+                let titled = !block.title.is_empty();
+                if titled {
+                    self.xml.open("formalpara", &role);
+                    self.block_title(block);
+                    self.xml.open("para", &[]);
+                } else {
+                    self.xml.open("para", &role);
+                }
                 self.inlines(content);
                 self.xml.close("para");
+                if titled {
+                    self.xml.close("formalpara");
+                }
             }
-            // A processor makes its own table of contents.
-            ViewKind::Toc => return false,
+            ViewKind::List { kind, items } => self.list(block, *kind, items, &role),
+            ViewKind::DescriptionList(items) => self.descriptions(block, items, &role),
+            ViewKind::CalloutList(items) => self.callout_list(block, items, &role),
+            ViewKind::Admonition { kind, blocks } => {
+                let name = match kind {
+                    AdmonitionKind::Note => "note",
+                    AdmonitionKind::Tip => "tip",
+                    AdmonitionKind::Important => "important",
+                    AdmonitionKind::Caution => "caution",
+                    AdmonitionKind::Warning => "warning",
+                };
+                self.xml.open(name, &role);
+                self.block_title(block);
+                self.body(blocks);
+                self.xml.close(name);
+            }
+            ViewKind::Code {
+                language,
+                text,
+                callouts,
+            } => {
+                let mut attributes = role.clone();
+                if let Some(language) = language.as_deref().filter(|language| !language.is_empty())
+                {
+                    attributes.push(("language", language));
+                }
+                if block.options.contains("linenums") || block.attributes.contains_key("linenums") {
+                    attributes.push(("linenumbering", "numbered"));
+                }
+                self.titled_verbatim(block, |writer| {
+                    writer.listing(&attributes, text, callouts);
+                });
+            }
+            ViewKind::Literal(text) => {
+                self.titled_verbatim(block, |writer| {
+                    writer.xml.element("screen", &role, text);
+                });
+            }
+            ViewKind::Quote {
+                attribution,
+                citation,
+                blocks,
+            } => {
+                self.xml.open("blockquote", &role);
+                self.block_title(block);
+                self.attribution(attribution.as_deref(), citation.as_deref());
+                self.body(blocks);
+                self.xml.close("blockquote");
+            }
+            ViewKind::Verse {
+                attribution,
+                citation,
+                text,
+            } => {
+                self.xml.open("blockquote", &role);
+                self.block_title(block);
+                self.attribution(attribution.as_deref(), citation.as_deref());
+                self.xml.element("literallayout", &[], text);
+                self.xml.close("blockquote");
+            }
+            ViewKind::Sidebar(blocks) => {
+                self.xml.open("sidebar", &role);
+                self.block_title(block);
+                self.body(blocks);
+                self.xml.close("sidebar");
+            }
+            ViewKind::Example(blocks) => {
+                let name = if block.title.is_empty() {
+                    "informalexample"
+                } else {
+                    "example"
+                };
+                self.xml.open(name, &role);
+                self.block_title(block);
+                self.body(blocks);
+                self.xml.close(name);
+            }
+            ViewKind::Open(blocks) => {
+                // An open block only groups; its title, if any, leads its content.
+                if !block.title.is_empty() {
+                    self.xml.open("para", &[("role", "title")]);
+                    self.inlines(&block.title);
+                    self.xml.close("para");
+                }
+                let wrote = self.blocks(blocks);
+                return wrote || !block.title.is_empty();
+            }
+            ViewKind::Table(table) => self.table(block, table, &role),
+            ViewKind::Passthrough(text) => {
+                self.warn(
+                    "a passthrough block is written as text, never as markup",
+                    Some(&block.span),
+                );
+                self.xml
+                    .element("literallayout", &[("role", "passthrough")], text);
+            }
+            // A processor makes its own table of contents, and pagination and rules are its to
+            // choose: a page break and a thematic break write nothing.
+            ViewKind::Toc | ViewKind::PageBreak | ViewKind::ThematicBreak => return false,
             _ => {
                 let text = block_text(block);
                 self.warn(
@@ -61,6 +212,204 @@ impl Writer<'_> {
         }
         self.xml.newline();
         true
+    }
+
+    /// A listing or literal block, inside a `formalpara` when it has a title, as Asciidoctor
+    /// writes one, since neither element has a title of its own.
+    fn titled_verbatim(&mut self, block: &ViewBlock, write: impl FnOnce(&mut Self)) {
+        if block.title.is_empty() {
+            write(self);
+        } else {
+            self.xml.open("formalpara", &[]);
+            self.block_title(block);
+            self.xml.open("para", &[]);
+            write(self);
+            self.xml.close("para");
+            self.xml.close("formalpara");
+        }
+    }
+
+    /// A `programlisting` of `text`, each callout a `co` at the end of its line, named so the
+    /// callout list after it can point at it.
+    fn listing(&mut self, attributes: &[(&str, &str)], text: &str, callouts: &[adoc_dom::Callout]) {
+        let listing = self.page.next_listing();
+        let mut marks = Vec::new();
+        self.xml.open("programlisting", attributes);
+        let lines: Vec<&str> = text.split('\n').collect();
+        for (index, line) in lines.iter().enumerate() {
+            self.xml.text(line);
+            for callout in callouts.iter().filter(|callout| callout.line == index) {
+                let id = format!(
+                    "{}-co{listing}-{}-{}",
+                    self.page.key,
+                    callout.number,
+                    marks.len() + 1
+                );
+                self.xml.empty("co", &[("xml:id", &id)]);
+                marks.push((callout.number, id));
+            }
+            if index + 1 < lines.len() {
+                self.xml.text("\n");
+            }
+        }
+        self.xml.close("programlisting");
+        self.page.callouts = marks;
+    }
+
+    /// A quotation's `attribution`: who said it, and where.
+    fn attribution(&mut self, attribution: Option<&str>, citation: Option<&str>) {
+        let attribution = attribution.filter(|text| !text.trim().is_empty());
+        let citation = citation.filter(|text| !text.trim().is_empty());
+        if attribution.is_none() && citation.is_none() {
+            return;
+        }
+        self.xml.open("attribution", &[]);
+        if let Some(attribution) = attribution {
+            self.xml.text(attribution);
+        }
+        if let Some(citation) = citation {
+            self.xml.element("citetitle", &[], citation);
+        }
+        self.xml.close("attribution");
+    }
+
+    fn list(
+        &mut self,
+        block: &ViewBlock,
+        kind: ListKind,
+        items: &[ViewListItem],
+        role: &[(&str, &str)],
+    ) {
+        let mut attributes = role.to_vec();
+        let name = match kind {
+            ListKind::Ordered => {
+                let numeration = match block.style.as_deref() {
+                    Some("loweralpha") => Some("loweralpha"),
+                    Some("upperalpha") => Some("upperalpha"),
+                    Some("lowerroman") => Some("lowerroman"),
+                    Some("upperroman") => Some("upperroman"),
+                    Some("arabic") => Some("arabic"),
+                    _ => None,
+                };
+                if let Some(numeration) = numeration {
+                    attributes.push(("numeration", numeration));
+                }
+                if let Some(start) = block
+                    .attributes
+                    .get("start")
+                    .filter(|start| start.trim().parse::<i64>().is_ok())
+                {
+                    attributes.push(("startingnumber", start.trim()));
+                }
+                "orderedlist"
+            }
+            ListKind::Unordered => "itemizedlist",
+            ListKind::Checklist => {
+                if attributes.is_empty() {
+                    attributes.push(("role", "checklist"));
+                }
+                "itemizedlist"
+            }
+        };
+        self.xml.open(name, &attributes);
+        self.block_title(block);
+        for item in items {
+            let mark = match item.checked {
+                // The marks DocBook's stylesheets draw as ticked and empty boxes.
+                Some(true) => vec![("override", "checkedbox")],
+                Some(false) => vec![("override", "checkbox")],
+                None => Vec::new(),
+            };
+            self.xml.open("listitem", &mark);
+            self.item_body(&item.content, &item.blocks);
+            self.xml.close("listitem");
+        }
+        self.xml.close(name);
+    }
+
+    /// A description list: a `variablelist`, or a `qandaset` for the `qanda` style.
+    fn descriptions(
+        &mut self,
+        block: &ViewBlock,
+        items: &[ViewDescription],
+        role: &[(&str, &str)],
+    ) {
+        if block.style.as_deref() == Some("qanda") {
+            self.xml.open("qandaset", role);
+            self.block_title(block);
+            for item in items {
+                self.xml.open("qandaentry", &[]);
+                self.xml.open("question", &[]);
+                self.xml.open("para", &[]);
+                self.inlines(&item.term);
+                self.xml.close("para");
+                self.xml.close("question");
+                self.xml.open("answer", &[]);
+                self.item_body(&item.content, &item.blocks);
+                self.xml.close("answer");
+                self.xml.close("qandaentry");
+            }
+            self.xml.close("qandaset");
+            return;
+        }
+        let mut attributes = role.to_vec();
+        if attributes.is_empty() && block.style.as_deref() == Some("horizontal") {
+            attributes.push(("role", "horizontal"));
+        }
+        self.xml.open("variablelist", &attributes);
+        self.block_title(block);
+        for item in items {
+            self.xml.open("varlistentry", &[]);
+            self.xml.open("term", &[]);
+            self.inlines(&item.term);
+            self.xml.close("term");
+            self.xml.open("listitem", &[]);
+            self.item_body(&item.content, &item.blocks);
+            self.xml.close("listitem");
+            self.xml.close("varlistentry");
+        }
+        self.xml.close("variablelist");
+    }
+
+    /// A callout list: each callout points at the marks of its number in the listing before
+    /// it. With no listing marked so, the list is an ordered list, with a warning.
+    fn callout_list(&mut self, block: &ViewBlock, items: &[ViewCallout], role: &[(&str, &str)]) {
+        let marks = std::mem::take(&mut self.page.callouts);
+        let refs: Vec<String> = items
+            .iter()
+            .map(|item| {
+                marks
+                    .iter()
+                    .filter(|(number, _)| *number == item.number)
+                    .map(|(_, id)| id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect();
+        if refs.iter().any(String::is_empty) {
+            self.warn(
+                "a callout list has a number its listing does not mark, so it is written as an \
+                 ordered list",
+                Some(&block.span),
+            );
+            self.xml.open("orderedlist", role);
+            self.block_title(block);
+            for item in items {
+                self.xml.open("listitem", &[]);
+                self.item_body(&item.content, &item.blocks);
+                self.xml.close("listitem");
+            }
+            self.xml.close("orderedlist");
+            return;
+        }
+        self.xml.open("calloutlist", role);
+        self.block_title(block);
+        for (item, arearefs) in items.iter().zip(&refs) {
+            self.xml.open("callout", &[("arearefs", arearefs)]);
+            self.item_body(&item.content, &item.blocks);
+            self.xml.close("callout");
+        }
+        self.xml.close("calloutlist");
     }
 }
 

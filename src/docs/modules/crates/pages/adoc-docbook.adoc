@@ -7,7 +7,7 @@ Paul Snow
 It is at layer L2, beside `adoc-render` and `adoc-epub`.
 The specification is `docs/prd/PRD-AdocFoundry_DocBook_Export.md` in the repository, which is not part of this site.
 
-NOTE: The crate is the DocBook export of epic #615, built in packages: the crate and its XML writer (DocBook 1/9, #649), the engine's feature (DocBook 2/9, #650), and a book's structure and metadata (DocBook 3/9, #651).
+NOTE: The crate is the DocBook export of epic #615, built in packages: the crate and its XML writer (DocBook 1/9, #649), the engine's feature (DocBook 2/9, #650), a book's structure and metadata (DocBook 3/9, #651), and rich blocks, inlines and CALS tables (DocBook 4/9, #652).
 The crate is headless.
 The engine reaches it through its `docbook` feature (the second package, DocBook 2/9, issue #650), which the app, the command line and the MCP server do not yet name.
 Later packages wire those in.
@@ -41,15 +41,156 @@ The 5.2.1 schema accepts any text there and its Schematron only requires a versi
 
 == What is written so far
 
-* a page's title, sections and paragraphs, with emphasis, strong, code, superscript and subscript;
+* a page's title, sections and blocks, with their inlines (see <<content-mapping>>);
+* CALS tables;
 * a book's structure, from the engine's publication plan;
 * the metadata in the root's `info`.
 
-Every other block keeps its text in a `para` or a `literallayout`, with a warning.
-Later packages replace those.
+Images, diagrams, formulas and audio or video still keep their text in a `para` or a `literallayout`, with a warning.
+DocBook 5/9 replaces those.
+Every other construct has its own element.
 
 An article, chapter or section with nothing at all gets an empty `para`, since DocBook does not allow them empty.
 A page with no blocks of its own but pages under it needs no empty paragraph.
+
+[#content-mapping]
+== Blocks and inlines
+
+The mapping below is what the crate writes for each construct.
+A block's roles become the `role` of its element.
+
+[cols="2,3",options="header"]
+|===
+|AsciiDoc construct |DocBook element
+
+|Paragraph
+|`para`, or `formalpara` when it has a title.
+
+|Discrete heading
+|`bridgehead` with `renderas="sect<n>"`.
+
+|Unordered list
+|`itemizedlist`.
+
+|Ordered list
+|`orderedlist`, with `numeration` from the list style (`arabic`, `loweralpha`, `upperalpha`, `lowerroman` or `upperroman`) and `startingnumber` from `start`.
+
+|Checklist
+|`itemizedlist` with `role="checklist"`.
+Each item's `override` is `checkedbox` or `checkbox`, the marks that DocBook's stylesheets draw as ticked and empty boxes.
+The schema needs a name there, not a character.
+
+|Description list
+|`variablelist`, with `role="horizontal"` for that style.
+The `qanda` style gives a `qandaset`.
+
+|A list's title
+|The list's `title`.
+
+|Source block
+|`programlisting` with `language`, and `linenumbering="numbered"` when the block has `linenums`.
+
+|Callout
+|A `co` at the end of its line.
+The callout list after the listing is a `calloutlist`, each `callout` naming its marks in `arearefs`.
+A callout list whose numbers the listing does not mark becomes an `orderedlist`, with a warning.
+
+|Literal block
+|`screen`.
+
+|Titled listing or literal block
+|Put in a `formalpara`, as Asciidoctor writes it.
+
+|Admonition
+|`note`, `tip`, `important`, `caution` or `warning`, with its title.
+
+|Quotation and verse
+|`blockquote` with `attribution` and `citetitle`.
+A verse's lines are a `literallayout`.
+
+|Sidebar
+|`sidebar`.
+
+|Example
+|`example` with a title, `informalexample` without.
+
+|Open block
+|Only its content.
+Its title, if it has one, is a `para` with `role="title"` before the content.
+
+|Thematic break, page break and table of contents macro
+|Nothing: presentation belongs to the DocBook processor.
+
+|Footnote
+|A `footnote` where it is first referenced, with an `xml:id` made from the page's key and the note's number, and a `footnoteref` to it where it is referenced again.
+
+|Hard line break
+|Asciidoctor's `<?asciidoc-br?>` processing instruction followed by a line feed, because DocBook has no element for one.
+It is the one processing instruction written, and `check` refuses any other.
+
+|Passthrough block
+|A `literallayout` with `role="passthrough"`, its text escaped, with a warning.
+An inline passthrough reaches the view as plain text, so it is escaped like any text and cannot be reported separately.
+|===
+
+No `procedure` is written in the first release: nothing is guessed to be one.
+
+=== Inlines
+
+[cols="2,3",options="header"]
+|===
+|AsciiDoc construct |DocBook element
+
+|Emphasis, strong and highlight
+|`emphasis`, with `role="strong"` for strong and `role="marked"` for highlighted text.
+
+|Monospace
+|`literal`.
+
+|Superscript and subscript
+|`superscript` and `subscript`.
+
+|Role on a span
+|`phrase` with the roles.
+
+|Link
+|`link` with `xlink:href`.
+A link inside a link keeps only its text.
+
+|Keyboard
+|`keycap`, or `keycombo` for a combination.
+
+|Button
+|`guibutton`.
+
+|Menu
+|`guimenu`, or `menuchoice` with `guisubmenu` and `guimenuitem`.
+
+|Index term
+|`indexterm` with `primary`, `secondary` and `tertiary`.
+
+|Icon
+|`phrase` with `role="icon"`.
+|===
+
+== Tables
+
+A table is written as CALS:
+
+* `table` when it has a title, `informaltable` when it has none.
+* `frame` comes from the frame attribute, with `ends` becoming `topbot`.
+`rowsep` and `colsep` come from `grid`.
+* One `tgroup` holds a `colspec` for each column, with `colname` set to `col_1`, `col_2` and so on, a proportional `colwidth` and `align`.
+* Then come `thead`, `tfoot` and `tbody`, in the order CALS requires.
+* Each `entry` has `align` and `valign`, `namest` and `nameend` for a column span and `morerows` for a row span, placed on the grid as the table lays out.
+* Blocks in cells are kept, and so is a table in a cell: an `informaltable` inside the `entry`.
+
+The edge cases are handled as follows:
+
+* A table of only a header row has it as its body.
+* A table with no rows is left out, with a warning.
+* A span that runs past the edge of the table is cut back, with a warning.
+* A row whose every cell is covered by a span from above is folded into those spans.
 
 == A book's structure
 
@@ -137,6 +278,10 @@ It writes no file: the caller puts the document in place.
 The acceptance tests are `docbook_root_is_wellformed_and_versioned`, `docbook_text_is_escaped` and `docbook_output_is_deterministic`, in `crates/adoc-docbook/tests/root.rs`.
 
 The structure and metadata are tested in `crates/adoc-docbook/tests/structure.rs`, including `docbook_article_has_metadata`.
+
+The blocks, inlines and tables are tested in `crates/adoc-docbook/tests/content.rs`, which holds `docbook_rich_content_uses_docbook_elements`, `docbook_tables_are_cals` and `docbook_unsupported_nodes_warn`.
+The placement of cells on the table's grid has unit tests in `crates/adoc-docbook/src/table.rs`.
+Every document in these tests is checked against the DocBook 5.2.1 RELAX NG schema.
 In the engine, `docbook_book_hierarchy_follows_the_plan` in `crates/adoc-engine/tests/docbook_export.rs` checks the hierarchy over the PDF book fixture and the reference fixture of several components and versions.
 
 == Where it sits

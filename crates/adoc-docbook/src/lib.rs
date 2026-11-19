@@ -23,6 +23,7 @@ mod check;
 mod document;
 mod info;
 mod inlines;
+mod table;
 #[cfg(feature = "test-support")]
 pub mod testing;
 mod xml;

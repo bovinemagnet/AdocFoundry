@@ -9,8 +9,10 @@
 //! sections. A part or heading with no page under it is left out with a warning, since DocBook
 //! allows neither empty.
 
+use std::path::PathBuf;
+
 use adoc_dom::SourceSpan;
-use adoc_render::{ViewInline, ViewTree};
+use adoc_render::{ViewFootnote, ViewInline, ViewTree};
 
 use crate::{
     xml::Xml, Book, BookItem, Diagnostic, DocBookDocument, DocBookOptions, Page, Severity,
@@ -23,6 +25,55 @@ pub(crate) struct Writer<'a> {
     pub(crate) diagnostics: Vec<Diagnostic>,
     #[allow(dead_code)]
     pub(crate) options: &'a DocBookOptions,
+    /// The page being written.
+    pub(crate) page: PageContext,
+    /// Inside a `link`, where another link keeps only its text.
+    pub(crate) in_link: bool,
+    /// Inside a `footnote`, where another note keeps only its text.
+    pub(crate) in_footnote: bool,
+}
+
+/// What the writer needs of the page being written: its key for identifiers, its file for
+/// diagnostics, its footnotes, and the marks of its last listing for the callout list after it.
+#[derive(Default)]
+pub(crate) struct PageContext {
+    pub(crate) key: String,
+    pub(crate) source: PathBuf,
+    pub(crate) footnotes: Vec<ViewFootnote>,
+    listings: usize,
+    /// The callout marks of the last listing: each number and the `co` it is.
+    pub(crate) callouts: Vec<(usize, String)>,
+    /// The footnotes written so far, which a repeated reference leads to.
+    pub(crate) noted: std::collections::BTreeSet<u32>,
+}
+
+impl PageContext {
+    fn of(page: &Page) -> Self {
+        Self {
+            key: page.key.clone(),
+            source: page.view.source.clone(),
+            footnotes: page.view.footnotes.clone(),
+            listings: 0,
+            callouts: Vec::new(),
+            noted: std::collections::BTreeSet::new(),
+        }
+    }
+
+    /// The number of the next listing on the page, from 1.
+    pub(crate) fn next_listing(&mut self) -> usize {
+        self.listings += 1;
+        self.listings
+    }
+
+    /// The page's start, to place a diagnostic that has no span of its own.
+    pub(crate) fn span(&self) -> Option<SourceSpan> {
+        (!self.source.as_os_str().is_empty()).then(|| SourceSpan {
+            path: self.source.clone(),
+            range: adoc_core::SourceRange::default(),
+            line: 1,
+            include_chain: Vec::new(),
+        })
+    }
 }
 
 impl Writer<'_> {
@@ -43,6 +94,9 @@ pub(crate) fn write(
         xml: Xml::file(),
         diagnostics: Vec::new(),
         options,
+        page: PageContext::default(),
+        in_link: false,
+        in_footnote: false,
     };
     match document {
         DocBookDocument::Article(page) => writer.article(page),
@@ -151,6 +205,7 @@ impl Writer<'_> {
 
     fn article(&mut self, page: &Page) {
         let view = &page.view;
+        self.page = PageContext::of(page);
         self.open_root("article", view.attributes.get("lang").map(String::as_str));
         let (title, subtitle) = partition(self.page_title(view));
         self.info(title, subtitle.as_deref(), &view.attributes);
@@ -219,6 +274,7 @@ impl Writer<'_> {
     /// A page as `name` (`preface`, `chapter` or `section`): its title, its blocks, then what
     /// the navigation nests under it, as sections.
     fn component(&mut self, name: &str, page: &Page, children: &[Node<'_>]) {
+        self.page = PageContext::of(page);
         self.xml.open(name, &[]);
         let title = self.page_title(&page.view);
         self.title(&title);

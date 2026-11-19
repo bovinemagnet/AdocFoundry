@@ -3,7 +3,7 @@
 //! 5.2.1 RELAX NG schema as well (`testing`), but an export does not carry the schema.
 //!
 //! What it checks: the XML is well formed, with no `DOCTYPE` (and so no entity declared) and no
-//! processing instruction; the root is an `article` or a `book` in the DocBook namespace with
+//! processing instruction but Asciidoctor's hard line break, `<?asciidoc-br?>`; the root is an `article` or a `book` in the DocBook namespace with
 //! the [`crate::VERSION`]; every element is in the DocBook namespace; every `xml:id` is a valid
 //! name and unique; every `linkend` and `linkends` names one, and a `footnoteref` names a
 //! `footnote` (a rule of the schema's Schematron); every `xlink:href` has a value; and every
@@ -42,7 +42,12 @@ pub fn check(xml: &str) -> Vec<String> {
     let mut ids: HashMap<&str, &str> = HashMap::new();
     for node in document.descendants() {
         if node.is_pi() {
-            problems.push("the document holds a processing instruction".to_owned());
+            let allowed = node
+                .pi()
+                .is_some_and(|pi| pi.target == crate::inlines::LINE_BREAK && pi.value.is_none());
+            if !allowed {
+                problems.push("the document holds a processing instruction".to_owned());
+            }
             continue;
         }
         if !node.is_element() {
@@ -138,7 +143,7 @@ mod tests {
     #[test]
     fn a_sound_document_passes() {
         let xml = document(
-            "<para xml:id=\"p\"><xref linkend=\"p\"/><footnote xml:id=\"f\"><para>n</para></footnote><footnoteref linkend=\"f\"/><link xlink:href=\"https://example.com\">x</link></para><mediaobject><imageobject><imagedata fileref=\"a_assets/i1.png\"/></imageobject></mediaobject>",
+            "<para>a<?asciidoc-br?>b</para><para xml:id=\"p\"><xref linkend=\"p\"/><footnote xml:id=\"f\"><para>n</para></footnote><footnoteref linkend=\"f\"/><link xlink:href=\"https://example.com\">x</link></para><mediaobject><imageobject><imagedata fileref=\"a_assets/i1.png\"/></imageobject></mediaobject>",
         );
         assert_eq!(check(&xml), Vec::<String>::new());
     }
@@ -163,6 +168,7 @@ mod tests {
             ("<imagedata fileref=\"C:\\x.png\"/>", "not a relative path"),
             ("<imagedata fileref=\"file:x.png\"/>", "not a relative path"),
             ("<?evil x?>", "processing instruction"),
+            ("<para>a<?asciidoc-br x?>b</para>", "processing instruction"),
             (
                 "<p xmlns=\"http://www.w3.org/1999/xhtml\"/>",
                 "not in the DocBook namespace",
