@@ -7,7 +7,7 @@ Paul Snow
 It is at layer L2, beside `adoc-render` and `adoc-epub`.
 The specification is `docs/prd/PRD-AdocFoundry_DocBook_Export.md` in the repository, which is not part of this site.
 
-NOTE: The crate is the DocBook export of epic #615, built in packages: the crate and its XML writer (DocBook 1/9, #649), the engine's feature (DocBook 2/9, #650), a book's structure and metadata (DocBook 3/9, #651), rich blocks, inlines and CALS tables (DocBook 4/9, #652), pictures, diagrams, formulas and the assets folder (DocBook 5/9, #653), identifiers and cross references (DocBook 6/9, #654), settings and publication profiles (DocBook 7/9, #655), and the app, command line and MCP server (DocBook 8/9, #656).
+NOTE: The crate is the DocBook export of epic #615, built in nine packages, DocBook 1/9 to 9/9 (#649 to #657): the crate and its XML writer (DocBook 1/9, #649), the engine's feature (DocBook 2/9, #650), a book's structure and metadata (DocBook 3/9, #651), rich blocks, inlines and CALS tables (DocBook 4/9, #652), pictures, diagrams, formulas and the assets folder (DocBook 5/9, #653), identifiers and cross references (DocBook 6/9, #654), settings and publication profiles (DocBook 7/9, #655), the app, command line and MCP server (DocBook 8/9, #656), and conformance, regression and performance QA (DocBook 9/9, #657).
 The crate is headless.
 The engine reaches it through its `docbook` feature (the second package, DocBook 2/9, issue #650).
 The app, the command line and the MCP server name it too (DocBook 8/9, issue #656).
@@ -160,6 +160,8 @@ No `procedure` is written in the first release: nothing is guessed to be one.
 |Link
 |`link` with `xlink:href`.
 A cross reference is a `link` with `linkend`, or an `xref` (see <<references>>).
+`inlines::followable` decides which addresses may be links: an `xlink:href` is written only for a web, mail, file transfer or telephone address, or a relative one with no scheme.
+Any other address (`javascript:`, `data:`, `file:` and the like) is written as its text, with a warning.
 A link inside a link keeps only its text.
 
 |Keyboard
@@ -361,8 +363,9 @@ The schema is committed unchanged, with its notice, as `crates/adoc-docbook/sche
 It is checked through the `oxixml-relaxng` crate (Apache-2.0, pure Rust), which is a dependency only of the crate's `test-support` feature, so no shipped binary carries it.
 
 The feature gives the `testing` module: `assert_valid`, `schema_problems` and `parse`.
-The schema's embedded Schematron rules are not run.
-The `check` covers the ones that apply to what the crate writes.
+The schema's embedded Schematron rules are not run, so that part of conformance is partial.
+Of those rules, `check` covers only that the root has a version and that a `footnoteref` points at a `footnote`.
+The tests validate every document they write, including the whole reference book.
 
 == In the engine
 
@@ -402,6 +405,16 @@ In the engine, `docbook_book_hierarchy_follows_the_plan` in `crates/adoc-engine/
 
 Identifiers and references are tested in `crates/adoc-docbook/tests/references.rs`, which holds `docbook_ids_are_unique_and_stable` (including that the same pages from another checkout give the same document), `docbook_references_resolve` and `anchors_in_partials_are_found_in_their_page`.
 In the engine, `docbook_internal_links_resolve` in `crates/adoc-engine/tests/docbook_export.rs` exports the reference book and checks its links, its repeated footnote and the published address of a page outside it.
+
+Conformance, regression and performance QA (DocBook 9/9, #657) is tested in the engine, in `crates/adoc-engine/tests/`:
+
+* `docbook_reference_book_is_complete` exports the reference book (two components, two versions, every construct the exporter writes) and compares it with a snapshot; the same sources give the same bytes, pictures included.
+* `docbook_large_book_is_bounded`, in `docbook_large.rs`, holds a 1,000-page book to budgets.
+* `docbook_hostile_input_is_safe` checks that markup, entity and DOCTYPE tricks are written as text, that a picture outside what the export may read, or reached through `..`, is never read or copied, and that unsafe addresses never become links.
+* `docbook_failed_export_keeps_existing_output` checks that a failed export leaves the previous document and assets folder as they were.
+
+The fuzz target `docbook_write` (`fuzz/fuzz_targets/docbook_write.rs`) writes arbitrary pages and runs `check`.
+`docbook_is_in_process`, in `xtask`, checks that the crate names no process, network, file or thread and builds nothing copyleft.
 
 == Where it sits
 

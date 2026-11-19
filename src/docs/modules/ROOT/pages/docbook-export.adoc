@@ -37,6 +37,49 @@ The common constructs become DocBook elements.
 Each page is written whole, never split.
 For the full table of constructs and elements, see xref:crates:adoc-docbook.adoc[adoc-docbook].
 
+[#supported]
+== What is supported
+
+[cols="2,3",options="header"]
+|===
+|In your page |In the DocBook document
+
+|Titles, sections and paragraphs
+|Sections and paragraphs, with the page's title and metadata in the document's information.
+
+|Lists, description lists and checklists
+|Bulleted, numbered and term lists, with checklists marked as ticked or empty.
+
+|Source and literal blocks, with callouts
+|Program listings and screens, with each callout linked to its list.
+
+|Admonitions, quotations, verses, sidebars and examples
+|The matching DocBook blocks, with their titles.
+
+|Tables
+|CALS tables, with column and row spans, header and footer rows, and tables inside cells.
+
+|Pictures
+|Figures with their descriptions, copied beside the document.
+
+|Diagrams
+|A picture once drawn; otherwise the diagram's source.
+
+|Formulas
+|The formula's source and, where one was drawn, a picture.
+
+|Footnotes, keys, buttons, menus and index terms
+|The matching DocBook elements.
+
+|Cross references and links
+|Links to identifiers inside the publication, links to the published site, and web links; see <<links>>.
+
+|Audio and video
+|A link to the file's web address.
+|===
+
+For the elements themselves, see xref:crates:adoc-docbook.adoc#content-mapping[the developer page].
+
 == Pictures
 
 A picture is copied once, however many times it is used, into a folder beside the document named after it, as `<name>_assets/`.
@@ -60,6 +103,7 @@ Otherwise the diagram's source is kept, with a warning.
 A formula keeps its source and, where one was drawn, a picture.
 No MathML is made, and a warning says so.
 
+[#links]
 == Links
 
 Every page and anchor in the document has a stable identifier made from its Antora resource.
@@ -70,6 +114,8 @@ An anchor in a book adds the anchor's name, as in `manual-2.0-ROOT-install.requi
 * A cross reference to a page outside it leads to the published site when `[pdf] site_url`, or the playbook's site URL, is set.
 Otherwise it stays as text, with a warning.
 * External web links are kept.
+Only a web, mail, file transfer or telephone address, or a relative one with no scheme, becomes a link.
+Any other address (`javascript:`, `data:`, `file:` and the like) is written as its text, with a warning.
 
 == Exporting
 
@@ -103,11 +149,16 @@ Unsaved edits are exported, because the export reads open buffers.
 [#validation]
 == Validation
 
-The project's own tests check every document they write against the official DocBook 5.2.1 RELAX NG schema.
-The schema's Schematron rules are not run.
+The project's tests validate every DocBook document they write, including the whole reference book, against the official DocBook 5.2.1 RELAX NG schema.
+The validation runs in process, in pure Rust, with no Java or other program, and the schema is kept in the repository and never downloaded.
 
-Every export also runs its own structural check, of identifiers, links and picture paths, before the document is written.
-A document that fails a check is not written.
+The schema's embedded Schematron rules are not run, so that part of conformance is partial.
+Of those rules, the export's own check covers only that the root has a version and that a `footnoteref` points at a `footnote`.
+
+Every export also runs its own structural check before the document is written.
+It requires well-formed XML, no DOCTYPE or processing instruction other than the line break, the right root element, namespace and version, unique valid identifiers, every `linkend` resolving, and relative picture paths.
+A document that fails the check is not written.
+That check is not schema validation, and well-formed XML alone is not conformance.
 
 AdocFoundry does not include a DocBook processor.
 Results from DocBook toolchains, checked by hand, are recorded in `docs/qa/docbook.md` in the repository.
@@ -131,8 +182,35 @@ Warnings cover these cases.
 
 The document is still written.
 
+[#limits]
+== Known limits
+
+DocBook export does not do the following.
+
+* No MathML is made: a formula is its source and, where one was drawn, a picture.
+* No `procedure` elements are written.
+* Graphviz, PlantUML and D2 diagrams are used only once the preview has drawn them.
+* Audio and video are linked, never copied.
+* A thematic break and a page break write nothing.
+* An inline passthrough is written as text, without a warning.
+* There is no XInclude: each export is one document.
+* There is no DocBook import, preview or processing.
+* The Schematron rules are not checked; see <<validation>>.
+* Consumers have not yet been checked by hand; the checks are listed in `docs/qa/docbook.md` in the repository.
+
+== Performance
+
+A 1,000-page book exports in about 2.2 seconds in a debug build on a developer machine.
+Each page has three sections, lists, notes, code with callouts, tables, footnotes and cross references, and the book holds 25 pictures.
+Ten times the pages of a 100-page book take about ten times the time.
+The export runs on workers, so the application never waits on it.
+The tests hold it to budgets (`docbook_large_book_is_bounded`).
+
 == Safety
 
+* Markup, entity and DOCTYPE tricks in a page are written as text.
+* A picture outside the folders the export may read, or reached through `..`, is never read or copied.
+* Unsafe addresses never become links.
 * The document is written to a temporary file beside the output and renamed over it only when it is complete.
 A failed or timed-out export leaves any existing file untouched.
 * An output that is a link, a folder or not an `.xml` file is refused.

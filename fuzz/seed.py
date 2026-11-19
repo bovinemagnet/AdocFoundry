@@ -48,6 +48,7 @@ def main():
             "model_roundtrip",
             "kindle_write",
             "epub_write",
+            "docbook_write",
         ):
             write(target, data)
         text = data.decode("utf-8", errors="replace")

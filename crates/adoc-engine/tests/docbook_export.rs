@@ -938,3 +938,201 @@ output = "guide.xml"
     assert_eq!(after.theme, None);
     assert_eq!(engine.settings().pdf, pdf_settings);
 }
+
+/// Every file below `folder`, by its path from there, with its bytes.
+fn files_below(folder: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let mut files = std::collections::BTreeMap::new();
+    if let Ok(entries) = fs::read_dir(folder) {
+        for entry in entries.filter_map(Result::ok) {
+            files.insert(
+                entry.file_name().to_string_lossy().into_owned(),
+                fs::read(entry.path()).unwrap(),
+            );
+        }
+    }
+    files
+}
+
+/// PRD §11 test 23: the reference book (two components, two versions, the whole content
+/// vocabulary, CALS tables with merged cells, code with callouts, repeated footnotes, links,
+/// figures, a diagram and formulas) exports valid DocBook with every page's title, every
+/// reference and picture sound, only the warnings it should have, the same bytes each time,
+/// and the XML the snapshot holds.
+#[test]
+fn docbook_reference_book_is_complete() {
+    let (workspace, mut engine) = reference_workspace();
+    let output = workspace.path().join("manual.xml");
+    let summary = engine
+        .export_docbook_blocking(docbook(manual(), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let xml = fs::read_to_string(&output).unwrap();
+    adoc_docbook::testing::assert_valid(&xml);
+    let document = adoc_docbook::testing::parse(&xml);
+    let text: String = document
+        .descendants()
+        .filter(roxmltree::Node::is_text)
+        .filter_map(|node| node.text())
+        .collect();
+    for title in [
+        "The Manual",
+        "Installing",
+        "Tables",
+        "Media",
+        "Links",
+        "Security",
+    ] {
+        assert!(text.contains(title), "{title}");
+    }
+    for element in [
+        "preface",
+        "part",
+        "chapter",
+        "section",
+        "table",
+        "entry",
+        "programlisting",
+        "calloutlist",
+        "footnote",
+        "footnoteref",
+        "figure",
+        "inlineequation",
+        "variablelist",
+        "warning",
+        "sidebar",
+        "example",
+        "blockquote",
+        "link",
+    ] {
+        assert!(
+            document
+                .descendants()
+                .any(|node| node.has_tag_name((adoc_docbook::NAMESPACE, element))),
+            "{element}"
+        );
+    }
+    assert!(
+        document
+            .descendants()
+            .any(|node| node.attribute("namest").is_some() || node.attribute("morerows").is_some()),
+        "merged cells"
+    );
+    let assets = workspace.path().join("manual_assets");
+    for fileref in filerefs(&output) {
+        assert!(workspace.path().join(&fileref).is_file(), "{fileref}");
+    }
+    // What is lost is said: the reference outside the book and the formulas' MathML, nothing
+    // else.
+    let messages: Vec<&str> = summary
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .all(|message| message.contains("leads outside the publication")
+                || message.contains("not as MathML")),
+        "{messages:#?}"
+    );
+
+    // The same sources give the same bytes, pictures included.
+    let first_assets = files_below(&assets);
+    engine
+        .export_docbook_blocking(docbook(manual(), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(fs::read_to_string(&output).unwrap(), xml);
+    assert_eq!(files_below(&assets), first_assets);
+    insta::assert_snapshot!("docbook_reference_book", xml);
+}
+
+/// PRD §11 test 24: hostile input gives no unsafe output. Markup, entity and `DOCTYPE` tricks
+/// stay text; a picture outside the folders the export may read, or named by a path that
+/// escapes them, is never read or copied; a script address is not a link; and the document is
+/// valid DocBook all the same, the staging folder gone.
+#[test]
+fn docbook_hostile_input_is_safe() {
+    let (directory, root, mut engine) = book_workspace();
+    engine.set_file_access(adoc_engine::FileAccess::within([root.clone()]));
+    let secret = directory.path().join("secret.png");
+    fs::copy(
+        fixture("docx/reference/manual/modules/ROOT/images/logo.png"),
+        &secret,
+    )
+    .unwrap();
+    let hostile = page(&root, "ROOT/pages/hostile.adoc");
+    fs::write(
+        &hostile,
+        format!(
+            "= Hostile <!DOCTYPE x [<!ENTITY e SYSTEM \"file:///etc/passwd\">]>\n\n\
+             Text &e; ]]> <?xml version=\"1.0\"?> <script>alert(1)</script> \u{202e}reversed.\n\n\
+             ++++\n<!DOCTYPE y><y>&e;</y>\n++++\n\n\
+             image::{}[Outside]\n\n\
+             image::../../../../../secret.png[Escaping]\n\n\
+             link:javascript:alert(1)[click] and link:file:///etc/passwd[a file].\n\n\
+             See xref:../../../../outside.adoc[away].\n",
+            secret.display()
+        ),
+    )
+    .unwrap();
+    let output = directory.path().join("hostile.xml");
+    let summary = engine
+        .export_docbook_blocking(docbook(ExportTarget::File(hostile), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let xml = fs::read_to_string(&output).unwrap();
+    adoc_docbook::testing::assert_valid(&xml);
+    // Markup in the page is text in the document: no element of its own, no declaration, no
+    // instruction but the line break (all checked by `assert_valid`), and the text kept.
+    let document = adoc_docbook::testing::parse(&xml);
+    assert!(document
+        .descendants()
+        .filter(roxmltree::Node::is_element)
+        .all(|node| !matches!(node.tag_name().name(), "script" | "y" | "x")));
+    let text: String = document
+        .descendants()
+        .filter(roxmltree::Node::is_text)
+        .filter_map(|node| node.text())
+        .collect();
+    for kept in [
+        "<!DOCTYPE x",
+        "&e;",
+        "]]>",
+        "<script>alert(1)</script>",
+        "<y>&e;</y>",
+    ] {
+        assert!(text.contains(kept), "{kept} in {text}");
+    }
+
+    assert!(document.descendants().all(|node| node
+        .attribute(("http://www.w3.org/1999/xlink", "href"))
+        .is_none()));
+    assert!(
+        filerefs(&output).is_empty(),
+        "nothing outside the roots is referred to"
+    );
+    assert!(
+        !directory.path().join("hostile_assets").exists(),
+        "nothing copied"
+    );
+    let messages: Vec<&str> = summary
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    // The pictures outside the roots are not found, so never read.
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message.contains("is not found"))
+            .count(),
+        2,
+        "{messages:#?}"
+    );
+    assert!(messages
+        .iter()
+        .any(|message| message.contains("passthrough")));
+    let staged: Vec<String> = names(directory.path())
+        .into_iter()
+        .filter(|name| name.starts_with(".adocfoundry-docbook-"))
+        .collect();
+    assert_eq!(staged, Vec::<String>::new());
+}

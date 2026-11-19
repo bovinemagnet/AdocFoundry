@@ -83,6 +83,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "adoc-docbook"
+version = "0.12.0"
+dependencies = [
+ "adoc-core",
+ "adoc-dom",
+ "adoc-render",
+ "roxmltree 0.21.2",
+]
+
+[[package]]
 name = "adoc-dom"
 version = "0.12.0"
 dependencies = [
@@ -280,6 +290,7 @@ version = "0.0.0"
 dependencies = [
  "adoc-antora",
  "adoc-core",
+ "adoc-docbook",
  "adoc-dom",
  "adoc-engine",
  "adoc-epub",

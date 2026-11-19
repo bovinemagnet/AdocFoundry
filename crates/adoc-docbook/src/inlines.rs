@@ -119,10 +119,26 @@ impl Writer<'_> {
     }
 
     /// A link to `url`, with its text, or the address when it has none. A link inside a link,
-    /// which DocBook does not allow, keeps only its text.
+    /// which DocBook does not allow, keeps only its text, as does one to an address no reader
+    /// should follow (`javascript:`, `data:`, `file:` …), with a warning.
     fn link(&mut self, url: &str, content: &[ViewInline]) {
         if self.in_link {
             self.inlines(content);
+            return;
+        }
+        if !followable(url) {
+            let source = self.page.span();
+            self.warn(
+                format!(
+                    "the address {url} is not one a reader may follow, so it is written as text"
+                ),
+                source.as_ref(),
+            );
+            if content.is_empty() {
+                self.xml.text(url);
+            } else {
+                self.inlines(content);
+            }
             return;
         }
         self.in_link = true;
@@ -287,5 +303,58 @@ impl Writer<'_> {
         self.xml.close("para");
         self.xml.close("footnote");
         self.in_footnote = false;
+    }
+}
+
+/// Whether a link to `url` may be written: a web, mail, file transfer or telephone address (as
+/// the e-book exporters allow), or an address with no scheme, which leads beside wherever the
+/// document is published. A script, data or local file address never is.
+pub(crate) fn followable(url: &str) -> bool {
+    let url = url.trim();
+    if url.is_empty() || url.len() > 2000 || url.chars().any(char::is_control) {
+        return false;
+    }
+    let scheme = url
+        .split_once(':')
+        .map(|(scheme, _)| scheme)
+        .filter(|scheme| !scheme.contains(['/', '?', '#']));
+    match scheme {
+        None => true,
+        Some(scheme) => matches!(
+            scheme.to_ascii_lowercase().as_str(),
+            "http" | "https" | "mailto" | "ftp" | "ftps" | "tel"
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::followable;
+
+    #[test]
+    fn only_addresses_a_reader_may_follow_are_links() {
+        for url in [
+            "https://example.com",
+            "http://example.com/a?b#c",
+            "mailto:a@example.com",
+            "tel:+61",
+            "ftp://example.com",
+            "other.html",
+            "../guide/index.html#part",
+            "a/b:c",
+        ] {
+            assert!(followable(url), "{url}");
+        }
+        for url in [
+            "javascript:alert(1)",
+            "JavaScript:alert(1)",
+            "data:text/html,x",
+            "file:///etc/passwd",
+            "vbscript:x",
+            "",
+            "https://example.com/\u{0}",
+        ] {
+            assert!(!followable(url), "{url}");
+        }
     }
 }

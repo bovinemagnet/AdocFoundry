@@ -682,6 +682,18 @@ fn epub_licence_violations(licences: &[(String, String)]) -> Vec<String> {
         .collect()
 }
 
+/// A violation for each package of DocBook export that may be used only under a copyleft
+/// licence, or declares none (DocBook PRD §7: reviewed for licence, as Kindle's and EPUB's).
+fn docbook_licence_violations(licences: &[(String, String)]) -> Vec<String> {
+    licences
+        .iter()
+        .filter(|(_, licence)| !permissive(licence))
+        .map(|(name, licence)| {
+            format!("DocBook export builds {name}, licensed `{licence}`; no copyleft is allowed")
+        })
+        .collect()
+}
+
 /// Runs every check over the workspace rooted at `root`.
 pub fn run(root: &Path) -> Result<Vec<String>, String> {
     let crates = root.join("crates");
@@ -727,6 +739,7 @@ pub fn run(root: &Path) -> Result<Vec<String>, String> {
     violations.extend(docbook_violations(&docbook_engine_packages(root)?));
     violations.extend(kindle_licence_violations(&kindle_licences(root)?));
     violations.extend(epub_licence_violations(&licences(root, "adoc-epub")?));
+    violations.extend(docbook_licence_violations(&licences(root, "adoc-docbook")?));
     Ok(violations)
 }
 
@@ -1172,6 +1185,41 @@ libc = "=0.2.0"
                 "DocBook export builds typst; it needs no other exporter or Typst",
             ]
         );
+    }
+
+    /// DocBook PRD §11 test 22: `adoc-docbook` names no process, network, file or thread
+    /// (the audit's list, `check_sources`), and builds nothing copyleft.
+    #[test]
+    fn docbook_is_in_process() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut sources = BTreeMap::new();
+        collect_sources(&root.join("crates/adoc-docbook/src"), &mut sources);
+        assert!(sources.len() > 8, "{}", sources.len());
+        assert_eq!(
+            check_sources("adoc-docbook", &sources),
+            Vec::<String>::new()
+        );
+        // A source naming a process, the network or a file is caught.
+        let mut sources = BTreeMap::new();
+        sources.insert(
+            PathBuf::from("x.rs"),
+            "std::process::Command::new(\"xmllint\"); std::net::TcpStream; std::fs::write"
+                .to_owned(),
+        );
+        assert_eq!(check_sources("adoc-docbook", &sources).len(), 5);
+
+        let licences = licences(&root, "adoc-docbook").unwrap();
+        assert!(
+            licences.iter().any(|(name, _)| name == "roxmltree"),
+            "{licences:?}"
+        );
+        assert!(
+            !licences.iter().any(|(name, _)| name == "oxixml-relaxng"),
+            "the schema validator is for tests only: {licences:?}"
+        );
+        assert_eq!(docbook_licence_violations(&licences), Vec::<String>::new());
+        let copyleft = [("libxml2-sys".to_owned(), "GPL-2.0".to_owned())];
+        assert_eq!(docbook_licence_violations(&copyleft).len(), 1);
     }
 
     /// The Word looks PRD, §9 test 1: themes load without Typst, so Word export can read them
