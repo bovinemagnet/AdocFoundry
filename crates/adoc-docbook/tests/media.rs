@@ -31,6 +31,7 @@ fn options(policy: AssetPolicy) -> DocBookOptions {
     DocBookOptions {
         access: FileAccess::Any,
         assets: policy,
+        ..DocBookOptions::default()
     }
 }
 
@@ -136,6 +137,7 @@ fn docbook_missing_media_is_reported() {
     let options = DocBookOptions {
         access: FileAccess::within([dir.to_path_buf()]),
         assets: copy(),
+        ..DocBookOptions::default()
     };
     let output = written(page, &options);
     assert!(output.assets.is_empty());

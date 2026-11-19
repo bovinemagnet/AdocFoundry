@@ -3114,7 +3114,7 @@ impl Engine {
             unread,
         } = written;
         let failed = failed_diagrams(&arranged);
-        let document = to_docbook(arranged);
+        let document = to_docbook(arranged, |path| self.docbook_key(path));
         let assets = match args.assets.unwrap_or_default() {
             DocBookAssets::Copy => adoc_docbook::AssetPolicy::Copy {
                 folder: docbook_assets_folder(&args.output)
@@ -3142,6 +3142,10 @@ impl Engine {
         let options = adoc_docbook::DocBookOptions {
             access: self.file_access.clone(),
             assets,
+            page_urls: self
+                .site_url()
+                .map(|site| self.page_urls(&site))
+                .unwrap_or_default(),
         };
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
@@ -3174,13 +3178,16 @@ impl Engine {
     }
 }
 
-/// The arranged views as what DocBook export writes.
+/// The arranged views as what DocBook export writes, each page keyed by `key_of` its file.
 #[cfg(feature = "docbook")]
-fn to_docbook(arranged: Arranged) -> adoc_docbook::DocBookDocument {
+fn to_docbook(
+    arranged: Arranged,
+    key_of: impl Fn(&Path) -> String,
+) -> adoc_docbook::DocBookDocument {
     use adoc_docbook::{Book, BookItem, DocBookDocument, Page};
     match arranged {
         Arranged::Article(view) => DocBookDocument::Article(Page {
-            key: "p0".to_owned(),
+            key: key_of(&view.source),
             view,
             depth: 0,
         }),
@@ -3198,12 +3205,16 @@ fn to_docbook(arranged: Arranged) -> adoc_docbook::DocBookDocument {
                     ArrangedItem::Part(title) => BookItem::Part(title),
                     ArrangedItem::Heading { title, depth } => BookItem::Heading { title, depth },
                     ArrangedItem::Page {
-                        key,
                         view,
                         depth,
                         preface,
+                        ..
                     } => {
-                        let page = Page { key, view, depth };
+                        let page = Page {
+                            key: key_of(&view.source),
+                            view,
+                            depth,
+                        };
                         if preface {
                             BookItem::Preface(page)
                         } else {
@@ -3213,6 +3224,45 @@ fn to_docbook(arranged: Arranged) -> adoc_docbook::DocBookDocument {
                 })
                 .collect(),
         }),
+    }
+}
+
+#[cfg(feature = "docbook")]
+impl Engine {
+    /// A page's key in a DocBook publication, from which its ids are made: its Antora resource
+    /// (`manual-2.0-ROOT-install`, `component-version-module-path`, the path's folders joined
+    /// by `-` and its extension dropped), never a path on disk; a file outside Antora is keyed
+    /// by its name. The writer makes it a valid, unique XML name.
+    fn docbook_key(&self, path: &Path) -> String {
+        let stem = |path: &Path| {
+            path.with_extension("")
+                .components()
+                .filter_map(|part| match part {
+                    std::path::Component::Normal(name) => Some(name.to_string_lossy().into_owned()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("-")
+        };
+        match self.workspace.antora.resource_for_path(path) {
+            Some(resource) => {
+                let coordinate = &resource.coordinate;
+                let mut parts = vec![coordinate.component.clone()];
+                parts.extend(
+                    coordinate
+                        .version
+                        .clone()
+                        .filter(|version| !version.is_empty() && version != "~"),
+                );
+                parts.push(coordinate.module.clone());
+                parts.push(stem(&coordinate.relative_path));
+                parts.join("-")
+            }
+            None => path.file_stem().map_or_else(
+                || "page".to_owned(),
+                |stem| stem.to_string_lossy().into_owned(),
+            ),
+        }
     }
 }
 

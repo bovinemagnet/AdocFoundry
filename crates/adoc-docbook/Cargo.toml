@@ -19,6 +19,7 @@ test-support = ["dep:oxixml-relaxng"]
 
 [dev-dependencies]
 adoc-docbook = { path = ".", features = ["test-support"] }
+adoc-core.workspace = true
 adoc-dom.workspace = true
 adoc-render.workspace = true
 roxmltree.workspace = true

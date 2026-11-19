@@ -15,8 +15,8 @@ use adoc_dom::SourceSpan;
 use adoc_render::{ViewFootnote, ViewInline, ViewTree};
 
 use crate::{
-    media::Media, xml::Xml, Asset, Book, BookItem, Diagnostic, DocBookDocument, DocBookOptions,
-    Page, Severity, NAMESPACE, VERSION, XLINK,
+    ids::Ids, media::Media, xml::Xml, Asset, Book, BookItem, Diagnostic, DocBookDocument,
+    DocBookOptions, Page, Severity, NAMESPACE, VERSION, XLINK,
 };
 
 /// What writes the document: the XML so far and what was found on the way.
@@ -32,33 +32,40 @@ pub(crate) struct Writer<'a> {
     pub(crate) in_link: bool,
     /// Inside a `footnote`, where another note keeps only its text.
     pub(crate) in_footnote: bool,
+    /// Every id of the publication.
+    pub(crate) ids: Ids,
+    /// Each page's place in the publication, by its address in the document.
+    places: std::collections::HashMap<usize, usize>,
 }
 
 /// What the writer needs of the page being written: its key for identifiers, its file for
 /// diagnostics, its footnotes, and the marks of its last listing for the callout list after it.
 #[derive(Default)]
 pub(crate) struct PageContext {
+    /// Its place in the publication, for its ids.
+    pub(crate) index: usize,
     pub(crate) key: String,
     pub(crate) source: PathBuf,
     pub(crate) footnotes: Vec<ViewFootnote>,
     listings: usize,
     /// The callout marks of the last listing: each number and the `co` it is.
     pub(crate) callouts: Vec<(usize, String)>,
-    /// The footnotes written so far, which a repeated reference leads to.
-    pub(crate) noted: std::collections::BTreeSet<u32>,
+    /// The footnotes written so far, by number, with the id a repeated reference leads to.
+    pub(crate) notes: std::collections::BTreeMap<u32, String>,
     /// How many formulas the page has written, each as its source and picture.
     pub(crate) formulas: usize,
 }
 
 impl PageContext {
-    fn of(page: &Page) -> Self {
+    fn of(page: &Page, index: usize) -> Self {
         Self {
+            index,
             key: page.key.clone(),
             source: page.view.source.clone(),
             footnotes: page.view.footnotes.clone(),
             listings: 0,
             callouts: Vec::new(),
-            noted: std::collections::BTreeSet::new(),
+            notes: std::collections::BTreeMap::new(),
             formulas: 0,
         }
     }
@@ -94,6 +101,25 @@ pub(crate) fn write(
     document: &DocBookDocument,
     options: &DocBookOptions,
 ) -> (String, Vec<Asset>, Vec<Diagnostic>) {
+    let (pages, article): (Vec<&Page>, bool) = match document {
+        DocBookDocument::Article(page) => (vec![page], true),
+        DocBookDocument::Book(book) => (
+            book.items
+                .iter()
+                .filter_map(|item| match item {
+                    BookItem::Page(page) | BookItem::Preface(page) => Some(page),
+                    _ => None,
+                })
+                .collect(),
+            false,
+        ),
+    };
+    let places = pages
+        .iter()
+        .enumerate()
+        .map(|(index, page)| (std::ptr::from_ref::<Page>(page) as usize, index))
+        .collect();
+    let ids = Ids::collect(&pages, article);
     let mut writer = Writer {
         xml: Xml::file(),
         diagnostics: Vec::new(),
@@ -102,6 +128,8 @@ pub(crate) fn write(
         page: PageContext::default(),
         in_link: false,
         in_footnote: false,
+        ids,
+        places,
     };
     match document {
         DocBookDocument::Article(page) => writer.article(page),
@@ -198,13 +226,33 @@ fn nest<'a>(items: &[(u8, &'a BookItem)], at: &mut usize, depth: u8) -> Vec<Node
 }
 
 impl Writer<'_> {
-    /// Opens the root element: the DocBook and XLink namespaces, the version and the language.
-    fn open_root(&mut self, name: &str, language: Option<&str>) {
+    /// The writing context of `page`, which becomes the page being written.
+    fn begin(&mut self, page: &Page) {
+        let index = self
+            .places
+            .get(&(std::ptr::from_ref::<Page>(page) as usize))
+            .copied()
+            .unwrap_or_default();
+        self.page = PageContext::of(page, index);
+    }
+
+    /// The page being written's own id, once.
+    fn page_id(&mut self) -> Option<String> {
+        let id = self.ids.page(self.page.index)?.to_owned();
+        self.ids.place(&id).then_some(id)
+    }
+
+    /// Opens the root element: the DocBook and XLink namespaces, the version, the language and
+    /// the id of an article's page.
+    fn open_root(&mut self, name: &str, language: Option<&str>, id: Option<&str>) {
         let mut attributes = vec![
             ("xmlns", NAMESPACE),
             ("xmlns:xlink", XLINK),
             ("version", VERSION),
         ];
+        if let Some(id) = id {
+            attributes.push(("xml:id", id));
+        }
         if let Some(language) = language.filter(|language| !language.trim().is_empty()) {
             attributes.push(("xml:lang", language.trim()));
         }
@@ -214,8 +262,13 @@ impl Writer<'_> {
 
     fn article(&mut self, page: &Page) {
         let view = &page.view;
-        self.page = PageContext::of(page);
-        self.open_root("article", view.attributes.get("lang").map(String::as_str));
+        self.begin(page);
+        let id = self.page_id();
+        self.open_root(
+            "article",
+            view.attributes.get("lang").map(String::as_str),
+            id.as_deref(),
+        );
         let (title, subtitle) = partition(self.page_title(view));
         self.info(title, subtitle.as_deref(), &view.attributes);
         self.page_content(view, &[]);
@@ -223,7 +276,11 @@ impl Writer<'_> {
     }
 
     fn book(&mut self, book: &Book) {
-        self.open_root("book", book.attributes.get("lang").map(String::as_str));
+        self.open_root(
+            "book",
+            book.attributes.get("lang").map(String::as_str),
+            None,
+        );
         let title = if book.title.trim().is_empty() {
             self.warn(
                 "the book has no title, so it is titled \u{201c}Untitled\u{201d}",
@@ -283,8 +340,10 @@ impl Writer<'_> {
     /// A page as `name` (`preface`, `chapter` or `section`): its title, its blocks, then what
     /// the navigation nests under it, as sections.
     fn component(&mut self, name: &str, page: &Page, children: &[Node<'_>]) {
-        self.page = PageContext::of(page);
-        self.xml.open(name, &[]);
+        self.begin(page);
+        let id = self.page_id();
+        let attributes: Vec<(&str, &str)> = id.iter().map(|id| ("xml:id", id.as_str())).collect();
+        self.xml.open(name, &attributes);
         let title = self.page_title(&page.view);
         self.title(&title);
         self.xml.newline();

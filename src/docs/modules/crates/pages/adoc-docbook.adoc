@@ -7,7 +7,7 @@ Paul Snow
 It is at layer L2, beside `adoc-render` and `adoc-epub`.
 The specification is `docs/prd/PRD-AdocFoundry_DocBook_Export.md` in the repository, which is not part of this site.
 
-NOTE: The crate is the DocBook export of epic #615, built in packages: the crate and its XML writer (DocBook 1/9, #649), the engine's feature (DocBook 2/9, #650), a book's structure and metadata (DocBook 3/9, #651), rich blocks, inlines and CALS tables (DocBook 4/9, #652), and pictures, diagrams, formulas and the assets folder (DocBook 5/9, #653).
+NOTE: The crate is the DocBook export of epic #615, built in packages: the crate and its XML writer (DocBook 1/9, #649), the engine's feature (DocBook 2/9, #650), a book's structure and metadata (DocBook 3/9, #651), rich blocks, inlines and CALS tables (DocBook 4/9, #652), pictures, diagrams, formulas and the assets folder (DocBook 5/9, #653), and identifiers and cross references (DocBook 6/9, #654).
 The crate is headless.
 The engine reaches it through its `docbook` feature (the second package, DocBook 2/9, issue #650), which the app, the command line and the MCP server do not yet name.
 Later packages wire those in.
@@ -30,6 +30,7 @@ AsciiDoc is not parsed again, and nothing passes through HTML.
 A `Diagnostic` has a `Severity`, which is `Error` or `Warning`, and an optional source span.
 
 `DocBookOptions` holds `access`, the engine's `FileAccess`, which says which files may be read, and `assets`, an `AssetPolicy`.
+`DocBookOptions` also holds `page_urls`, each page's published address, for references out of the publication (see <<references>>).
 `DocBookOutput` holds `assets` beside the XML and the diagnostics: each is an `Asset` with a `name` and its `bytes`.
 
 == The document
@@ -48,8 +49,8 @@ The 5.2.1 schema accepts any text there and its Schematron only requires a versi
 * CALS tables;
 * a book's structure, from the engine's publication plan;
 * the metadata in the root's `info`;
-
-* pictures, diagrams, formulas and media (see <<pictures>>).
+* pictures, diagrams, formulas and media (see <<pictures>>);
+* identifiers and cross references (see <<references>>).
 
 Every other construct has its own element.
 
@@ -125,7 +126,7 @@ Its title, if it has one, is a `para` with `role="title"` before the content.
 |Nothing: presentation belongs to the DocBook processor.
 
 |Footnote
-|A `footnote` where it is first referenced, with an `xml:id` made from the page's key and the note's number, and a `footnoteref` to it where it is referenced again.
+|A `footnote` where it is first referenced, with an `xml:id` of `<page id>.fn<n>` (see <<references>>), and a `footnoteref` to it where it is referenced again.
 
 |Hard line break
 |Asciidoctor's `<?asciidoc-br?>` processing instruction followed by a line feed, because DocBook has no element for one.
@@ -158,6 +159,7 @@ No `procedure` is written in the first release: nothing is guessed to be one.
 
 |Link
 |`link` with `xlink:href`.
+A cross reference is a `link` with `linkend`, or an `xref` (see <<references>>).
 A link inside a link keeps only its text.
 
 |Keyboard
@@ -175,6 +177,43 @@ A link inside a link keeps only its text.
 |Icon
 |`phrase` with `role="icon"`.
 |===
+
+[#references]
+== Identifiers and cross references
+
+Every `xml:id` is decided before anything is written, so a reference may lead forward.
+
+=== Identifiers
+
+* A page's id is its key.
+The engine makes the key from the page's Antora resource: the component, the version, the module and the path, with the path's folders joined by `-` and its extension dropped (`manual-2.0-ROOT-install`).
+A file outside Antora is keyed by its name.
+The key never comes from a path on disk, so the same pages give the same ids from any checkout and in any navigation order.
+* An anchor a page defines, whether a section's or a block's id or an inline anchor, is `<page id>.<anchor>` in a book, where pages meet, and the anchor itself in an article.
+An anchor defined twice on a page is written once.
+* Each id is made a valid XML name.
+A character that no name may hold becomes `_`, and a name that may not start as it does gets a leading `_`.
+Unicode letters are kept.
+* Each id is unique.
+A later one that would repeat an earlier one gets `-2`, `-3` and so on.
+* Footnotes (`<page id>.fn<n>`) and callout marks take their ids from the same allocator as they are written.
+* A block whose element writes nothing but which has an id leaves an `anchor` in its place, so a reference to it still lands.
+Inline anchors are `anchor` elements.
+
+=== Cross references
+
+Cross references reuse the view's resolution, and nothing is resolved again.
+
+* A reference into the publication is a `link` with `linkend` and the text the view gives it: the author's, else the target's title.
+Where the view has only its `[target]` placeholder, it is an `xref`, so the DocBook processor writes the target's label.
+* The target page is the one whose file the reference names or, for an anchor, the one that holds an anchor written in that file.
+A reference to an anchor in a partial therefore leads to it in the page that includes the partial.
+* A reference to a page outside the publication is a `link` with `xlink:href` to its published address, with the anchor as the fragment, when the site's address is known.
+The address is the `[pdf] site_url` setting or the playbook's, and each page's is in `DocBookOptions::page_urls`.
+* Otherwise the reference is written as its text, with a warning at its location.
+That is also what happens to an unresolved reference and to one naming an anchor the publication does not have.
+* A `linkend` is never written to an id the publication lacks, and the crate's check refuses one anyway.
+* A link inside a link keeps only its text.
 
 [#pictures]
 == Pictures, diagrams and formulas
@@ -354,6 +393,9 @@ Every document in these tests is checked against the DocBook 5.2.1 RELAX NG sche
 Pictures, diagrams and formulas are tested in `crates/adoc-docbook/tests/media.rs`, which holds `docbook_assets_are_copied_and_relative`, `docbook_missing_media_is_reported`, `docbook_formulas_have_a_fallback` and `diagrams_are_pictures_or_their_source`.
 In the engine, `docbook_pictures_go_beside_the_document` in `crates/adoc-engine/tests/docbook_export.rs` exports the reference book and checks that every `fileref` leads to a file in the assets folder, that a later export with fewer pictures leaves only those, and the reference policy.
 In the engine, `docbook_book_hierarchy_follows_the_plan` in `crates/adoc-engine/tests/docbook_export.rs` checks the hierarchy over the PDF book fixture and the reference fixture of several components and versions.
+
+Identifiers and references are tested in `crates/adoc-docbook/tests/references.rs`, which holds `docbook_ids_are_unique_and_stable` (including that the same pages from another checkout give the same document), `docbook_references_resolve` and `anchors_in_partials_are_found_in_their_page`.
+In the engine, `docbook_internal_links_resolve` in `crates/adoc-engine/tests/docbook_export.rs` exports the reference book and checks its links, its repeated footnote and the published address of a page outside it.
 
 == Where it sits
 

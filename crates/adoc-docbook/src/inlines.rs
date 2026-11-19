@@ -6,7 +6,8 @@
 //! `<?asciidoc-br?>` instruction, the one processing instruction written, since DocBook has no
 //! element for one. A passthrough is written as text, never as markup, with a warning.
 
-use adoc_render::ViewInline;
+use adoc_dom::SourceSpan;
+use adoc_render::{ResolvedLink, ViewInline};
 
 use crate::document::Writer;
 
@@ -74,6 +75,17 @@ impl Writer<'_> {
             }
             ViewInline::Icon(name) => self.xml.element("phrase", &[("role", "icon")], name),
             ViewInline::Image(image) => self.inline_picture(image),
+            ViewInline::Anchor(anchor) => {
+                if let Some(id) = self.anchor_id(anchor) {
+                    self.xml.empty("anchor", &[("xml:id", &id)]);
+                }
+            }
+            ViewInline::Xref {
+                target,
+                link,
+                content,
+                span,
+            } => self.xref(target, link, content, span),
             ViewInline::Stem {
                 source, rendered, ..
             } => self.inline_equation(source, rendered.as_ref()),
@@ -97,9 +109,6 @@ impl Writer<'_> {
                 );
                 self.xml.text(text);
             }
-            other => self
-                .xml
-                .text(&ViewInline::plain_text(std::slice::from_ref(other))),
         }
     }
 
@@ -127,11 +136,129 @@ impl Writer<'_> {
         self.in_link = false;
     }
 
+    /// A cross reference (PRD §5.3): to a place in the publication, a `link` to its id with the
+    /// text the view gives it (the author's, else the target's title), or an `xref`, which the
+    /// processor fills in, when there is neither; to a page outside it, a `link` to its published address where one is
+    /// known; otherwise its text, with a warning. A `linkend` is only ever written to an id
+    /// the publication has, so none dangles.
+    fn xref(
+        &mut self,
+        target: &str,
+        link: &ResolvedLink,
+        content: &[ViewInline],
+        span: &SourceSpan,
+    ) {
+        let fragment = link
+            .fragment
+            .clone()
+            .or_else(|| {
+                target
+                    .split_once('#')
+                    .map(|(_, fragment)| fragment.to_owned())
+            })
+            .filter(|fragment| !fragment.is_empty());
+        if self.in_link {
+            self.xref_text(target, link, content);
+            return;
+        }
+        if link.unresolved {
+            self.warn(
+                format!(
+                    "the cross reference {target} leads to nothing, so it is written as its text"
+                ),
+                Some(span),
+            );
+            self.xref_text(target, link, content);
+            return;
+        }
+        let page = match &link.target {
+            Some(location) => self.ids.page_of(&location.path, fragment.as_deref()),
+            None => Some(self.page.index),
+        };
+        if let Some(page) = page {
+            let id = match &fragment {
+                Some(fragment) => self.ids.anchor(page, fragment),
+                None => self.ids.page(page),
+            }
+            .map(str::to_owned);
+            let Some(id) = id else {
+                self.warn(
+                    format!(
+                        "the cross reference {target} names nothing in the publication, so it is \
+                         written as its text"
+                    ),
+                    Some(span),
+                );
+                self.xref_text(target, link, content);
+                return;
+            };
+            // With no text of the author's and no title to show, the view shows `[target]`;
+            // an `xref` lets the processor write the target's own label instead.
+            let placeholder = format!("[{target}]");
+            let untitled = content.is_empty()
+                || matches!(content, [ViewInline::Text(text)] if *text == placeholder);
+            if untitled && link.title.is_none() {
+                self.xml.empty("xref", &[("linkend", &id)]);
+                return;
+            }
+            self.in_link = true;
+            self.xml.open("link", &[("linkend", &id)]);
+            self.xref_text(target, link, content);
+            self.xml.close("link");
+            self.in_link = false;
+            return;
+        }
+        let url = link
+            .target
+            .as_ref()
+            .and_then(|location| {
+                self.options.page_urls.get(&location.path).or_else(|| {
+                    self.options
+                        .page_urls
+                        .get(&adoc_core::normalize_path(&location.path))
+                })
+            })
+            .filter(|url| url.starts_with("https://") || url.starts_with("http://"))
+            .cloned();
+        match url {
+            Some(mut url) => {
+                if let Some(fragment) = &fragment {
+                    url.push('#');
+                    url.push_str(fragment);
+                }
+                self.in_link = true;
+                self.xml.open("link", &[("xlink:href", &url)]);
+                self.xref_text(target, link, content);
+                self.xml.close("link");
+                self.in_link = false;
+            }
+            None => {
+                self.warn(
+                    format!(
+                        "the cross reference {target} leads outside the publication, so it is \
+                         written as its text"
+                    ),
+                    Some(span),
+                );
+                self.xref_text(target, link, content);
+            }
+        }
+    }
+
+    /// A reference's text: the author's, else its target's title, else the target as written.
+    fn xref_text(&mut self, target: &str, link: &ResolvedLink, content: &[ViewInline]) {
+        if content.is_empty() {
+            let shown = link.title.clone().unwrap_or_else(|| target.to_owned());
+            self.xml.text(&shown);
+        } else {
+            self.inlines(content);
+        }
+    }
+
     /// The footnote `number` of the page: the note itself where it is first referenced, a
     /// reference to it after.
     fn footnote(&mut self, number: u32, repeat: bool) {
-        let id = format!("{}-fn{number}", self.page.key);
-        if repeat && self.page.noted.contains(&number) {
+        if let Some(id) = self.page.notes.get(&number).filter(|_| repeat).cloned() {
             self.xml.empty("footnoteref", &[("linkend", &id)]);
             return;
         }
@@ -146,11 +273,13 @@ impl Writer<'_> {
             self.warn(format!("footnote {number} has no text"), source.as_ref());
             return;
         };
-        if self.in_footnote || !self.page.noted.insert(number) {
+        if self.in_footnote || self.page.notes.contains_key(&number) {
             // A note inside a note, or one already written: its text stays where it is.
             self.inlines(&note);
             return;
         }
+        let id = self.ids.allocate(&format!("{}.fn{number}", self.page.key));
+        self.page.notes.insert(number, id.clone());
         self.in_footnote = true;
         self.xml.open("footnote", &[("xml:id", &id)]);
         self.xml.open("para", &[]);

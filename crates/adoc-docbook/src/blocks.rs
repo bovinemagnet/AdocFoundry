@@ -56,14 +56,42 @@ impl Writer<'_> {
         }
     }
 
-    /// Writes `block`, and whether it wrote anything.
+    /// The id an anchor of the page being written has, the first time it is written.
+    pub(crate) fn anchor_id(&mut self, anchor: &str) -> Option<String> {
+        let id = self.ids.anchor(self.page.index, anchor)?.to_owned();
+        self.ids.place(&id).then_some(id)
+    }
+
+    /// Writes `block`, with its id, and whether it wrote anything; a block that writes nothing
+    /// but has an id leaves an `anchor` in its place, so a reference to it still lands.
     fn block(&mut self, block: &ViewBlock) -> bool {
-        let role = block.roles.join(" ");
-        let role: Vec<(&str, &str)> = if role.is_empty() {
-            Vec::new()
-        } else {
-            vec![("role", role.as_str())]
-        };
+        let id = block
+            .id
+            .as_deref()
+            .filter(|id| !id.is_empty())
+            .and_then(|id| self.anchor_id(id));
+        let wrote = self.block_with(block, id.as_deref());
+        if !wrote {
+            if let Some(id) = &id {
+                self.xml.open("para", &[]);
+                self.xml.empty("anchor", &[("xml:id", id)]);
+                self.xml.close("para");
+                self.xml.newline();
+                return true;
+            }
+        }
+        wrote
+    }
+
+    fn block_with(&mut self, block: &ViewBlock, id: Option<&str>) -> bool {
+        let roles = block.roles.join(" ");
+        let mut role: Vec<(&str, &str)> = Vec::new();
+        if let Some(id) = id {
+            role.push(("xml:id", id));
+        }
+        if !roles.is_empty() {
+            role.push(("role", roles.as_str()));
+        }
         match &block.kind {
             ViewKind::Section { title, blocks, .. } => {
                 self.xml.open("section", &role);
@@ -76,7 +104,9 @@ impl Writer<'_> {
             }
             ViewKind::Heading { level, title } => {
                 let renderas = format!("sect{}", (*level).clamp(1, 5));
-                self.xml.open("bridgehead", &[("renderas", &renderas)]);
+                let mut attributes = role.clone();
+                attributes.push(("renderas", &renderas));
+                self.xml.open("bridgehead", &attributes);
                 self.inlines(title);
                 self.xml.close("bridgehead");
             }
@@ -173,14 +203,20 @@ impl Writer<'_> {
                 self.xml.close(name);
             }
             ViewKind::Open(blocks) => {
-                // An open block only groups; its title, if any, leads its content.
+                // An open block only groups; its title, if any, leads its content, and its id
+                // is an anchor before it.
+                if let Some(id) = id {
+                    self.xml.open("para", &[]);
+                    self.xml.empty("anchor", &[("xml:id", id)]);
+                    self.xml.close("para");
+                }
                 if !block.title.is_empty() {
                     self.xml.open("para", &[("role", "title")]);
                     self.inlines(&block.title);
                     self.xml.close("para");
                 }
                 let wrote = self.blocks(blocks);
-                return wrote || !block.title.is_empty();
+                return wrote || !block.title.is_empty() || id.is_some();
             }
             ViewKind::Table(table) => self.table(block, table, &role),
             ViewKind::Image(image) => self.figure(block, image, &role),
@@ -196,8 +232,10 @@ impl Writer<'_> {
                     "a passthrough block is written as text, never as markup",
                     Some(&block.span),
                 );
-                self.xml
-                    .element("literallayout", &[("role", "passthrough")], text);
+                let mut attributes = role.clone();
+                attributes.retain(|(name, _)| *name != "role");
+                attributes.push(("role", "passthrough"));
+                self.xml.element("literallayout", &attributes, text);
             }
             // A processor makes its own table of contents, and pagination and rules are its to
             // choose: a page break and a thematic break write nothing.
@@ -212,9 +250,9 @@ impl Writer<'_> {
                     Some(&block.span),
                 );
                 if text.contains('\n') {
-                    self.xml.element("literallayout", &[], &text);
+                    self.xml.element("literallayout", &role, &text);
                 } else {
-                    self.xml.element("para", &[], &text);
+                    self.xml.element("para", &role, &text);
                 }
             }
         }
@@ -247,12 +285,12 @@ impl Writer<'_> {
         for (index, line) in lines.iter().enumerate() {
             self.xml.text(line);
             for callout in callouts.iter().filter(|callout| callout.line == index) {
-                let id = format!(
-                    "{}-co{listing}-{}-{}",
+                let id = self.ids.allocate(&format!(
+                    "{}.co{listing}-{}-{}",
                     self.page.key,
                     callout.number,
                     marks.len() + 1
-                );
+                ));
                 self.xml.empty("co", &[("xml:id", &id)]);
                 marks.push((callout.number, id));
             }

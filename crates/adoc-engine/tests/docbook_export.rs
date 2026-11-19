@@ -654,3 +654,87 @@ fn docbook_pictures_go_beside_the_document() {
     assert!(out.join(&refs[0]).is_file());
     adoc_docbook::testing::assert_valid_referenced(&fs::read_to_string(&output).unwrap());
 }
+
+/// PRD §11 test 16, through the engine: in the reference book, references between its pages
+/// lead to their ids (an anchor in another component's page included), one to a component
+/// outside the book is its text with a warning, a repeated footnote is a `footnoteref`, and
+/// with the site's address known the outside reference leads there.
+#[test]
+fn docbook_internal_links_resolve() {
+    let (workspace, mut engine) = reference_workspace();
+    let output = workspace.path().join("manual.xml");
+    let summary = engine
+        .export_docbook_blocking(docbook(manual(), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let xml = fs::read_to_string(&output).unwrap();
+    adoc_docbook::testing::assert_valid(&xml);
+    let document = adoc_docbook::testing::parse(&xml);
+    let ids: std::collections::BTreeSet<&str> = document
+        .descendants()
+        .filter_map(|node| node.attribute(("http://www.w3.org/XML/1998/namespace", "id")))
+        .collect();
+    for id in [
+        "manual-2.0-ROOT-index",
+        "manual-2.0-ROOT-install",
+        "manual-2.0-ROOT-install.requirements",
+        "manual-2.0-admin-security",
+    ] {
+        assert!(ids.contains(id), "{id} in {ids:?}");
+    }
+    let links: Vec<(&str, String)> = document
+        .descendants()
+        .filter(|node| node.has_tag_name((adoc_docbook::NAMESPACE, "link")))
+        .filter_map(|node| {
+            let text: String = node
+                .descendants()
+                .filter(roxmltree::Node::is_text)
+                .filter_map(|node| node.text())
+                .collect();
+            Some((node.attribute("linkend")?, text))
+        })
+        .collect();
+    assert!(
+        links.contains(&(
+            "manual-2.0-ROOT-install.requirements",
+            "the requirements".to_owned()
+        )),
+        "{links:?}"
+    );
+    assert!(
+        links.contains(&("manual-2.0-admin-security", "security".to_owned())),
+        "{links:?}"
+    );
+    assert!(document
+        .descendants()
+        .any(|node| node.has_tag_name((adoc_docbook::NAMESPACE, "footnoteref"))));
+    assert!(
+        summary.diagnostics.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("api::index.adoc leads outside the publication")),
+        "{:?}",
+        summary.diagnostics
+    );
+    assert!(xml.contains("the API reference"));
+
+    // With the site's address known, the reference outside the book leads to its page there.
+    fs::write(
+        workspace.path().join("reference/.adocfoundry.toml"),
+        "[pdf]\nsite_url = \"https://docs.example.com\"\n",
+    )
+    .unwrap();
+    let mut settings = Settings::load(None, Some(&workspace.path().join("reference"))).unwrap();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine
+        .open_workspace(vec![workspace.path().join("reference")])
+        .unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    engine
+        .export_docbook_blocking(docbook(manual(), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let xml = fs::read_to_string(&output).unwrap();
+    assert!(
+        xml.contains("xlink:href=\"https://docs.example.com/api/2.0/index.html\""),
+        "{xml}"
+    );
+}

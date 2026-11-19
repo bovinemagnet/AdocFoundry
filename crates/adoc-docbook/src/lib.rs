@@ -21,6 +21,7 @@ pub use check::check;
 mod blocks;
 mod check;
 mod document;
+mod ids;
 mod info;
 mod inlines;
 mod media;
@@ -92,6 +93,9 @@ pub struct DocBookOptions {
     pub access: adoc_core::FileAccess,
     /// Where the pictures go, and how the document refers to them.
     pub assets: AssetPolicy,
+    /// The published address of each page a reference out of the publication may lead to; a
+    /// reference to any other page outside it is written as its text, with a warning.
+    pub page_urls: std::collections::HashMap<std::path::PathBuf, String>,
 }
 
 /// How a document refers to its pictures.
