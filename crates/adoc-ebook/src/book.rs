@@ -151,6 +151,7 @@ pub enum Block {
     /// Content set apart: an admonition, a sidebar or an example.
     Aside {
         anchor: Option<String>,
+        kind: AsideKind,
         blocks: Vec<Block>,
     },
     Table {
@@ -188,10 +189,22 @@ impl Block {
     }
 }
 
+/// What an [`Block::Aside`] sets apart. A format that cannot tell them apart shows each the
+/// same way.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AsideKind {
+    /// An admonition, its kind's name (`note`, `tip`, `important`, `caution`, `warning`).
+    Admonition(&'static str),
+    Sidebar,
+    Example,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
     /// A header row, whose cells are headings for their columns.
     pub header: bool,
+    /// A footer row, at the table's end. A format with no footer group reads it as body.
+    pub footer: bool,
     pub cells: Vec<Cell>,
 }
 
@@ -241,6 +254,23 @@ pub enum Inline {
         alt: String,
     },
     LineBreak,
+    /// Text marked as what it names, for a format that can show it so: only made when the
+    /// options' [`crate::Format`] keeps it, and otherwise written as its content.
+    Styled {
+        style: InlineStyle,
+        content: Vec<Inline>,
+    },
+}
+
+/// What [`Inline::Styled`] text names.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InlineStyle {
+    /// A key to press.
+    Keyboard,
+    /// A menu, and the items to choose in it.
+    Menu,
+    /// A button to press.
+    Button,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -313,7 +343,8 @@ fn push_text(inlines: &[Inline], out: &mut String) {
             | Inline::Mark(content)
             | Inline::Superscript(content)
             | Inline::Subscript(content)
-            | Inline::Link { content, .. } => push_text(content, out),
+            | Inline::Link { content, .. }
+            | Inline::Styled { content, .. } => push_text(content, out),
             Inline::NoteRef { number, .. } => out.push_str(&number.to_string()),
             Inline::Image { alt, .. } => out.push_str(alt),
             Inline::LineBreak => out.push('\n'),
@@ -400,7 +431,8 @@ fn visit_inlines(inlines: &[Inline], found: &mut dyn FnMut(&str)) {
             | Inline::Mark(content)
             | Inline::Superscript(content)
             | Inline::Subscript(content)
-            | Inline::Link { content, .. } => visit_inlines(content, found),
+            | Inline::Link { content, .. }
+            | Inline::Styled { content, .. } => visit_inlines(content, found),
             _ => {}
         }
     }
@@ -457,7 +489,8 @@ fn links_in_inlines(inlines: &[Inline], targets: &mut Vec<Target>) {
             | Inline::Mark(content)
             | Inline::Superscript(content)
             | Inline::Subscript(content)
-            | Inline::Link { content, .. } => links_in_inlines(content, targets),
+            | Inline::Link { content, .. }
+            | Inline::Styled { content, .. } => links_in_inlines(content, targets),
             _ => {}
         }
     }

@@ -367,7 +367,7 @@ impl Flattener<'_> {
                     self.blocks(description, &format!("{prefix}    "));
                 }
             }
-            Block::Quote { anchor, blocks } | Block::Aside { anchor, blocks } => {
+            Block::Quote { anchor, blocks } | Block::Aside { anchor, blocks, .. } => {
                 if let Some(anchor) = anchor {
                     self.anchors.insert(anchor.clone(), (self.next_eid, 0));
                 }
@@ -578,6 +578,8 @@ impl Flattener<'_> {
             }
             Inline::Image { alt, .. } => push_text(text, alt),
             Inline::LineBreak => push_text(text, "\n"),
+            // Never made for a Kindle book: written as its content.
+            Inline::Styled { content, .. } => self.inlines(text, content),
         }
     }
 }

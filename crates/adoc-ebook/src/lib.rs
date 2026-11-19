@@ -15,8 +15,8 @@ use adoc_dom::SourceSpan;
 use adoc_render::ViewTree;
 
 pub use book::{
-    inline_content, plain_text, Asset, AssetKind, Block, Book, Cell, Chapter, Inline, Link,
-    Metadata, Note, ParagraphClass, Row, Target, TocEntry,
+    inline_content, plain_text, AsideKind, Asset, AssetKind, Block, Book, Cell, Chapter, Inline,
+    InlineStyle, Link, Metadata, Note, ParagraphClass, Row, Target, TocEntry,
 };
 
 mod book;
@@ -65,9 +65,34 @@ pub enum Document {
     Book(Plan),
 }
 
+/// The format a book is made for, where the formats differ in what they can show. The mapping
+/// keeps what the format can show and lowers the rest, as it always did for Kindle.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Format {
+    /// A Kindle book: a table inside a table's cell becomes lines of text, and keys, menus and
+    /// buttons are written as code and strong text.
+    #[default]
+    Kindle,
+    /// An EPUB: tables nest, and keys, menus and buttons are [`Inline::Styled`].
+    Epub,
+}
+
+impl Format {
+    /// The format's name, as a diagnostic says it: "a Kindle book", "an EPUB".
+    #[must_use]
+    pub fn book(self) -> &'static str {
+        match self {
+            Self::Kindle => "a Kindle book",
+            Self::Epub => "an EPUB",
+        }
+    }
+}
+
 /// How a book is made. The metadata given here wins over the document's attributes.
 #[derive(Clone, Debug, Default)]
 pub struct Options {
+    /// The format the book is made for.
+    pub format: Format,
     pub title: Option<String>,
     pub creator: Option<String>,
     pub language: Option<String>,

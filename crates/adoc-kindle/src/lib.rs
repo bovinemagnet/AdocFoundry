@@ -17,10 +17,10 @@
 use std::fmt;
 
 pub use adoc_ebook::{
-    plain_text, Asset, AssetKind, Block, Book as KindleBook, BookItem, Cell, Chapter,
-    Diagnostic as KindleDiagnostic, Document as KindleDocument, Inline, Link, Metadata, Note,
-    Options as KindleOptions, Page as KindlePage, ParagraphClass, Plan as KindlePlan, Row,
-    Severity as KindleSeverity, Target, TocEntry,
+    plain_text, AsideKind, Asset, AssetKind, Block, Book as KindleBook, BookItem, Cell, Chapter,
+    Diagnostic as KindleDiagnostic, Document as KindleDocument, Inline, InlineStyle, Link,
+    Metadata, Note, Options as KindleOptions, Page as KindlePage, ParagraphClass,
+    Plan as KindlePlan, Row, Severity as KindleSeverity, Target, TocEntry,
 };
 
 mod azw3;

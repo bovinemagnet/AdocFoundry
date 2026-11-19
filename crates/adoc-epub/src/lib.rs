@@ -5,8 +5,8 @@
 //! [`write_epub`] maps a [`Document`] to one [`Book`] through `adoc-ebook`, the book model
 //! Kindle export writes too, then writes that book as an OCF container in memory: `mimetype`
 //! first and stored, `META-INF/container.xml`, the package document `EPUB/package.opf`, the
-//! navigation document and a content document per chapter. Every XML file is checked to be
-//! well-formed before the bytes are returned.
+//! navigation document and a content document per chapter, semantic XHTML (`xhtml.rs`). Every
+//! XML file is checked to be well-formed before the bytes are returned.
 //!
 //! The crate reads no clock and no environment: the modification time is given ([`Modified`]),
 //! so the same input always gives the same bytes. It does no IO but reading the pictures it
@@ -16,12 +16,13 @@
 use std::fmt;
 
 pub use adoc_ebook::{
-    Book, BookItem, Diagnostic, Document, Options as BookOptions, Page, Plan, Severity,
+    Book, BookItem, Diagnostic, Document, Format, Options as BookOptions, Page, Plan, Severity,
 };
 
 mod package;
 #[cfg(feature = "test-support")]
 pub mod testing;
+mod xhtml;
 mod xml;
 mod zip;
 
@@ -139,7 +140,12 @@ impl std::error::Error for EpubError {}
 /// returned, so whoever owns the output writes them somewhere temporary and moves them into
 /// place only once this returns `Ok`.
 pub fn write_epub(document: &Document, options: &EpubOptions) -> Result<EpubOutput, EpubError> {
-    let (book, diagnostics) = Book::build(document, &options.book);
+    // Whatever format the options name, the book is made for EPUB.
+    let book_options = BookOptions {
+        format: Format::Epub,
+        ..options.book.clone()
+    };
+    let (book, diagnostics) = Book::build(document, &book_options);
     let bytes = write_book(&book, options.modified)?;
     Ok(EpubOutput {
         bytes,

@@ -62,6 +62,36 @@ It depends on `adoc-render`, an allowed same-layer pair listed in `SAME_LAYER_AL
 It must never build `adoc-pdf`, `adoc-docx`, Typst or the engine.
 It starts no process and uses no network: `cargo xtask layers` refuses `std::process`, `Command::new`, `std::net`, `TcpStream` and `UdpSocket` in its sources, with the same forbidden paths as `adoc-kindle`.
 
+== Formats
+
+`Options::format` is a `Format`, either `Kindle`, the default, or `Epub`.
+It names the format a book is made for, where the formats differ in what they can show.
+`Format::book` names it in diagnostics, as "a Kindle book" or "an EPUB", for example in the audio and video warning.
+
+[cols="1,2,2"]
+|===
+|Choice |Kindle |EPUB
+
+|A table inside a table's cell
+|Lines of text, with a warning.
+|Kept as a table.
+
+|Keys, buttons and menus
+|Code and strong text.
+|`Inline::Styled` with an `InlineStyle` (`Keyboard`, `Button` or `Menu`).
+|===
+
+For Kindle the mapping is exactly as before: the AZW3 and KFX bytes are unchanged, checked against `main`.
+Kindle's writers never receive `Inline::Styled`, and would write its content if they did.
+
+Two additions are made in every format:
+
+* `Block::Aside` has a `kind`, an `AsideKind`: `Admonition` with the kind's name, such as `note` or `warning`, `Sidebar` or `Example`.
+* `Row` has `footer`, true for a table's footer rows.
+
+Kindle's writers ignore both.
+`crates/adoc-ebook/tests/format.rs` holds both formats' choices.
+
 == Anchors and links
 
 * Anchors are generated, never taken from a path: `c<n>-a<m>` for an id a page defines, `c<n>-n<number>` for a footnote and `c<n>-r<number>` for its first mark.

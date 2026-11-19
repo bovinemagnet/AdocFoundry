@@ -9,7 +9,7 @@ The book model, its mapping, pictures and metadata live in xref:crates:adoc-eboo
 The specification is `docs/prd/PRD-AdocFoundry_EPUB_Export.md` in the repository, which is not part of this site.
 
 IMPORTANT: The engine reaches the crate through its `epub` feature (`Engine::export_epub_blocking` and the commands `export.epub_page` and `export.epub_component`), but the app, the CLI and the MCP server do not yet, so there is no user-facing way to export an EPUB.
-Later packages add the front ends, full semantic XHTML, links, media, CSS and metadata.
+Later packages add the front ends, media, CSS and metadata.
 
 == What it does
 
@@ -25,7 +25,29 @@ The publication is an OCF container holding:
 * the navigation document `EPUB/nav.xhtml`, with one `epub:type="toc"` navigation of nested ordered lists;
 * one XHTML content document for each chapter, `EPUB/text/c<n>.xhtml`.
 
-In this first package the chapters are minimal: headings, and every other block as a paragraph of its text.
+The chapters are semantic XHTML, written by `xhtml.rs`.
+
+* Each chapter is a `section` with `epub:type="chapter"`.
+* Headings are `h1` to `h6`, with their ids.
+* Paragraphs carry classes for captions (`caption`), attributions (`attribution`) and admonition labels (`label`).
+* Listings are `pre class="listing"` holding `code`, and verses are `pre class="verse"`.
+* Lists are `ul`, `ol` and `dl`, and quotations `blockquote`.
+* Admonitions, sidebars and examples are a `div` with the class `admonition <kind>` (and `role="note"`), `sidebar` or `example`.
+It is a `div` and not an `aside`, because some reading systems hide an `aside`, taking it for a note.
+* Tables have `thead`, `tbody` and `tfoot`, `th scope="col"` in header rows, `colspan` and `rowspan`, and tables nested in cells are kept.
+* Keys are `kbd`, and buttons and menus are `span class="button"` and `span class="menu"`.
+* A page break is `hr class="page-break"`, a separator rather than a page.
+
+Links in the same chapter are fragments, and links to other chapters are `c<n>.xhtml#...`.
+External links are as written, and a link is never written inside a link.
+
+Footnotes are at the chapter's end, in a `section` with `epub:type="footnotes"`.
+Each is an `aside` with `epub:type="footnote"` and a link back to its first mark.
+Every mark is a `sup` holding an `a` with `epub:type="noteref"`, and a repeated mark has no id of its own.
+
+Passthrough is shown as text with a located warning, never as markup.
+An unsupported block is its source with a located warning.
+Pictures are still written as their description, until a later package embeds them.
 
 == Checks
 
@@ -47,6 +69,7 @@ The ZIP writer (`zip.rs`, deflate through `flate2` and CRC-32 through `crc32fast
 The `test-support` feature gives the `testing` module: a ZIP reader of its own (`entries`, `files`, `text` and `parse`) and `assert_valid_ocf`, which checks the container and the package as a reading system does.
 
 The acceptance tests are `epub_package_is_valid_ocf`, `epub_text_is_escaped` and `epub_output_is_deterministic`, in `crates/adoc-epub/tests/package.rs`.
+The content tests are `epub_content_is_wellformed_xhtml`, `epub_footnotes_link_both_ways` and `epub_unsupported_nodes_warn`, in `crates/adoc-epub/tests/content.rs`.
 
 == Where it sits
 

@@ -319,6 +319,31 @@ The epic starts with a package of its own, before E1: Kindle export's book model
   - `epub_builds_alone` in `xtask`.
   - A unit test of the time's order.
 
+
+### E3 (#640): semantic XHTML
+
+- **Sharing with `to_html` (§14):** a separate writer, `adoc-epub`'s `xhtml.rs`, from the shared `Book`. `to_html` is untouched.
+- **Per-format choices in the shared mapping:** `adoc_ebook::Options::format` (`Format::Kindle`, the default, or `Epub`). For EPUB:
+  - a table inside a table's cell stays a table, which Kindle turns into lines of text with a warning;
+  - keys, buttons and menus are `Inline::Styled`, written as `kbd` and `span class="button"`/`"menu"`, which Kindle writes as code and strong text;
+  - a diagnostic names the format it is about (`Format::book`).
+
+  `write_epub` always makes the book for EPUB.
+- **Distinctions every format keeps:** the model gained `AsideKind` on `Block::Aside` (each admonition kind, a sidebar or an example) and `footer` on table rows. Kindle's writers ignore both, and Kindle's AZW3 and KFX bytes were compared again and are unchanged.
+- **The markup:**
+  - Admonitions, sidebars and examples are a `div` with a class (`admonition note`, `sidebar`, `example`), not an `aside`, since some reading systems hide an `aside` from the text as a note.
+  - Footnotes are `aside epub:type="footnote"` in a `section epub:type="footnotes"` at the chapter's end, with `noteref` marks.
+  - A page break is `hr class="page-break"`.
+  - No link is ever written inside a link.
+- **Passthrough (§14):** shown as text, with a located warning, never as markup. This is the same choice as Kindle (K5) and Word (D3). An unsupported block is its source, with a located warning.
+- **Not yet carried:**
+  - roles, a block's `lang` and a table's column alignment, which the shared model does not hold;
+  - a table caption, which is a `caption` paragraph before the table, not a `caption` element.
+
+  A later package can add them to the model, an option at a time.
+- **Links within and between chapters:** written here (`#anchor` in the chapter, `c<n>.xhtml#anchor` across chapters). E4 tests them over a book.
+- **Pictures:** written as their description until E5 embeds them.
+
 ## 16. References
 
 - W3C, [EPUB 3.3](https://www.w3.org/TR/epub-33/) (Recommendation)

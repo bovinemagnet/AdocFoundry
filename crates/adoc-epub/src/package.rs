@@ -2,7 +2,7 @@
 //! package document, the navigation document and the chapters. Paths are fixed and named from
 //! the book's own chapter ids, never from a source path.
 
-use adoc_ebook::{Block, Book, Chapter, Target, TocEntry};
+use adoc_ebook::{Book, Chapter, Target, TocEntry};
 
 use crate::{xml::Xml, zip::ZipWriter, EpubError, Modified};
 
@@ -34,10 +34,10 @@ fn files(book: &Book, modified: Modified) -> Vec<(String, Vec<u8>)> {
         (PACKAGE.to_owned(), package(book, modified)),
         (format!("EPUB/{NAV}"), nav(book)),
     ];
-    for chapter in &book.chapters {
+    for (index, chapter) in book.chapters.iter().enumerate() {
         files.push((
             format!("EPUB/{}", chapter_file(chapter)),
-            content(book, chapter),
+            crate::xhtml::chapter(book, index),
         ));
     }
     files
@@ -45,7 +45,7 @@ fn files(book: &Book, modified: Modified) -> Vec<(String, Vec<u8>)> {
 
 /// A chapter's content document, relative to the package document.
 fn chapter_file(chapter: &Chapter) -> String {
-    format!("text/{}.xhtml", chapter.id)
+    format!("text/{}", crate::xhtml::chapter_name(chapter))
 }
 
 /// Where a target is, relative to the package document.
@@ -225,65 +225,6 @@ fn toc_list(xml: &mut Xml, book: &Book, entries: &[TocEntry]) {
         xml.newline();
     }
     xml.close("ol");
-    xml.newline();
-}
-
-/// A chapter's content document: each block's text, its headings as headings.
-fn content(book: &Book, chapter: &Chapter) -> Vec<u8> {
-    let title = if chapter.title.trim().is_empty() {
-        &book.metadata.title
-    } else {
-        &chapter.title
-    };
-    let mut xml = Xml::xhtml(&book.metadata.language, title);
-    xml.open("body", &[]);
-    xml.newline();
-    xml.open("section", &[("epub:type", "chapter"), ("id", &chapter.id)]);
-    xml.newline();
-    for block in &chapter.blocks {
-        block_text(&mut xml, block);
-    }
-    xml.close("section");
-    xml.newline();
-    xml.close("body");
-    xml.close("html");
-    xml.newline();
-    xml.into_bytes()
-}
-
-fn block_text(xml: &mut Xml, block: &Block) {
-    match block {
-        Block::Heading {
-            level,
-            anchor,
-            content,
-        } => {
-            let name = format!("h{}", (*level).clamp(1, 6));
-            let id = anchor.as_deref().map(|anchor| ("id", anchor));
-            xml.element(&name, id.as_slice(), &adoc_ebook::plain_text(content));
-        }
-        Block::Notes(notes) => {
-            for note in notes {
-                xml.element(
-                    "p",
-                    &[("id", &note.anchor)],
-                    &format!("{}. {}", note.number, adoc_ebook::plain_text(&note.content)),
-                );
-                xml.newline();
-            }
-            return;
-        }
-        Block::Rule | Block::PageBreak => xml.empty("hr", &[]),
-        block => {
-            let text =
-                adoc_ebook::plain_text(&adoc_ebook::inline_content(std::slice::from_ref(block)));
-            let id = block.anchor().map(|anchor| ("id", anchor));
-            if text.trim().is_empty() && id.is_none() {
-                return;
-            }
-            xml.element("p", id.as_slice(), &text);
-        }
-    }
     xml.newline();
 }
 

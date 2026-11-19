@@ -14,9 +14,10 @@ use adoc_dom::SourceSpan;
 use adoc_render::{DiagramView, ResolvedLink, ViewBlock, ViewInline, ViewKind, ViewListItem};
 
 use crate::book::{
-    Block, Book, Cell, Chapter, Inline, Link, Note, ParagraphClass, Row, Target, TocEntry,
+    AsideKind, Block, Book, Cell, Chapter, Inline, InlineStyle, Link, Note, ParagraphClass, Row,
+    Target, TocEntry,
 };
-use crate::{metadata, BookItem, Diagnostic, Document, Options, Page, Severity};
+use crate::{metadata, BookItem, Diagnostic, Document, Format, Options, Page, Severity};
 
 /// How many levels of a page's sections the table of contents lists below the page.
 const TOC_SECTION_LEVELS: u8 = 2;
@@ -618,6 +619,7 @@ impl Mapper<'_> {
                 inner.extend(self.nested(blocks, depth));
                 out.push(Block::Aside {
                     anchor,
+                    kind: AsideKind::Admonition(admonition_name(*kind)),
                     blocks: inner,
                 });
             }
@@ -666,8 +668,17 @@ impl Mapper<'_> {
                 });
             }
             ViewKind::Sidebar(blocks) | ViewKind::Example(blocks) => {
+                let kind = if matches!(block.kind, ViewKind::Sidebar(_)) {
+                    AsideKind::Sidebar
+                } else {
+                    AsideKind::Example
+                };
                 let blocks = self.nested(blocks, depth);
-                out.push(Block::Aside { anchor, blocks });
+                out.push(Block::Aside {
+                    anchor,
+                    kind,
+                    blocks,
+                });
             }
             ViewKind::Open(blocks) => {
                 if let Some(anchor) = anchor {
@@ -679,9 +690,10 @@ impl Mapper<'_> {
                 }
                 self.blocks(blocks, depth, out, sections);
             }
-            ViewKind::Table(table) if self.in_table => {
-                // A table in a table's cell: few readers lay one out, so each row is a line of
-                // text, its cells separated by bars (Kindle PRD §15, "Tables").
+            ViewKind::Table(table) if self.in_table && self.options.format == Format::Kindle => {
+                // A table in a table's cell: few Kindles lay one out, so each row is a line of
+                // text, its cells separated by bars (Kindle PRD §15, "Tables"). An EPUB keeps
+                // it a table.
                 self.warn(
                     None,
                     "a table inside a table cell is exported as lines of text".to_owned(),
@@ -715,7 +727,10 @@ impl Mapper<'_> {
             ViewKind::Table(table) => {
                 let mut rows = Vec::new();
                 let was_in_table = std::mem::replace(&mut self.in_table, true);
-                let mut push = |mapper: &mut Self, cells: &[adoc_render::ViewCell], header| {
+                let mut push = |mapper: &mut Self,
+                                cells: &[adoc_render::ViewCell],
+                                header: bool,
+                                footer: bool| {
                     let cells = cells
                         .iter()
                         .map(|cell| Cell {
@@ -724,16 +739,20 @@ impl Mapper<'_> {
                             rowspan: u32::try_from(cell.rowspan.max(1)).unwrap_or(u32::MAX),
                         })
                         .collect();
-                    rows.push(Row { header, cells });
+                    rows.push(Row {
+                        header,
+                        footer,
+                        cells,
+                    });
                 };
                 if let Some(header) = &table.header {
-                    push(self, header, true);
+                    push(self, header, true, false);
                 }
                 for row in &table.rows {
-                    push(self, row, false);
+                    push(self, row, false, false);
                 }
                 if let Some(footer) = &table.footer {
-                    push(self, footer, false);
+                    push(self, footer, false, true);
                 }
                 self.in_table = was_in_table;
                 out.push(Block::Table { anchor, rows });
@@ -754,9 +773,10 @@ impl Mapper<'_> {
                     adoc_dom::MediaKind::Audio => "audio",
                     adoc_dom::MediaKind::Video => "video",
                 };
+                let book = self.options.format.book();
                 self.warn(
                     None,
-                    format!("a Kindle book cannot play {kind}; it is exported as its address"),
+                    format!("{book} cannot play {kind}; it is exported as its address"),
                 );
                 let content = targets
                     .iter()
@@ -987,6 +1007,29 @@ impl Mapper<'_> {
                 });
             }
             ViewInline::LineBreak => out.push(Inline::LineBreak),
+            ViewInline::Keyboard(keys) if self.options.format == Format::Epub => {
+                for (index, key) in keys.iter().enumerate() {
+                    if index > 0 {
+                        out.push(Inline::Text("+".to_owned()));
+                    }
+                    out.push(Inline::Styled {
+                        style: InlineStyle::Keyboard,
+                        content: vec![Inline::Text(key.clone())],
+                    });
+                }
+            }
+            ViewInline::Button(text) if self.options.format == Format::Epub => {
+                out.push(Inline::Styled {
+                    style: InlineStyle::Button,
+                    content: vec![Inline::Text(text.clone())],
+                });
+            }
+            ViewInline::Menu(items) if self.options.format == Format::Epub => {
+                out.push(Inline::Styled {
+                    style: InlineStyle::Menu,
+                    content: vec![Inline::Text(items.join(" › "))],
+                });
+            }
             ViewInline::Keyboard(keys) => {
                 out.push(Inline::Code(vec![Inline::Text(keys.join("+"))]));
             }
@@ -1158,6 +1201,17 @@ fn attribution_paragraph(attribution: Option<&str>, citation: Option<&str>) -> O
         class: ParagraphClass::Attribution,
         content: vec![Inline::Text(text)],
     })
+}
+
+/// An admonition's kind as a name, for a class.
+fn admonition_name(kind: adoc_dom::AdmonitionKind) -> &'static str {
+    match kind {
+        adoc_dom::AdmonitionKind::Note => "note",
+        adoc_dom::AdmonitionKind::Tip => "tip",
+        adoc_dom::AdmonitionKind::Important => "important",
+        adoc_dom::AdmonitionKind::Caution => "caution",
+        adoc_dom::AdmonitionKind::Warning => "warning",
+    }
 }
 
 fn admonition_label(kind: adoc_dom::AdmonitionKind) -> &'static str {

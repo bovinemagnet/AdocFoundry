@@ -2486,6 +2486,7 @@ impl Engine {
             })
         });
         let options = adoc_kindle::KindleOptions {
+            format: adoc_ebook::Format::Kindle,
             title: args.title.clone().or_else(|| defaults.title.clone()),
             creator: args.creator.clone().or_else(|| defaults.creator.clone()),
             language: args.language.clone().or_else(|| defaults.language.clone()),
@@ -2583,6 +2584,7 @@ impl Engine {
         let document = to_book(arranged);
         let options = adoc_epub::EpubOptions {
             book: adoc_epub::BookOptions {
+                format: adoc_ebook::Format::Epub,
                 title: args.title.clone(),
                 creator: args.creator.clone(),
                 language: args.language.clone(),

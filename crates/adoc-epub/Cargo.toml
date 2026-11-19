@@ -21,6 +21,7 @@ test-support = []
 adoc-dom.workspace = true
 adoc-epub = { path = ".", features = ["test-support"] }
 adoc-render.workspace = true
+roxmltree.workspace = true
 
 [lints]
 workspace = true
