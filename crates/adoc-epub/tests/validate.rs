@@ -248,6 +248,19 @@ fn the_validator_finds_what_breaks_a_book() {
         "leaves the book",
     );
 
+    // A hyperlink to a document outside the spine, such as the navigation document itself.
+    finds(
+        &problems(|files| {
+            edit(
+                files,
+                "EPUB/text/c1.xhtml",
+                "href=\"https://example.com\"",
+                "href=\"../nav.xhtml\"",
+            )
+        }),
+        "not in the spine",
+    );
+
     // An unsafe name in the archive.
     finds(
         &problems(|files| files.push(("../escape.xhtml".to_owned(), b"<html/>".to_vec()))),

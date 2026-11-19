@@ -126,7 +126,8 @@ fn epub_nav_matches_the_plan() {
     );
     testing::assert_links_resolve(&output.bytes);
 
-    // The landmarks: the contents and the start of the text.
+    // The landmarks: the start of the text. No `toc` landmark: the navigation document is not
+    // in the spine, so a link may not lead to it.
     let nav = testing::text(&files, &package.nav);
     let document = testing::parse("nav", nav);
     let landmarks: Vec<(String, String)> = document
@@ -144,10 +145,7 @@ fn epub_nav_matches_the_plan() {
         .collect();
     assert_eq!(
         landmarks,
-        [
-            ("toc".to_owned(), "nav.xhtml#toc".to_owned()),
-            ("bodymatter".to_owned(), "text/c1.xhtml".to_owned()),
-        ]
+        [("bodymatter".to_owned(), "text/c1.xhtml".to_owned()),]
     );
     let tocs = document
         .descendants()
