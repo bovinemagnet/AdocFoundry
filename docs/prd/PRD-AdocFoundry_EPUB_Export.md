@@ -344,6 +344,27 @@ The epic starts with a package of its own, before E1: Kindle export's book model
 - **Links within and between chapters:** written here (`#anchor` in the chapter, `c<n>.xhtml#anchor` across chapters). E4 tests them over a book.
 - **Pictures:** written as their description until E5 embeds them.
 
+
+### E4 (#641): navigation and links
+
+- **The navigation document** holds:
+  - exactly one `toc` navigation, nested as the plan is: parts, then their pages and navigation headings, then each page's sections two levels deep;
+  - hidden landmarks, `toc` and `bodymatter`, with the cover added by E5.
+
+  No NCX is written.
+- **Links:**
+  - In a chapter, a reference is a fragment. Across chapters it is `c<n>.xhtml#…`, since the chapters share a folder. The navigation document's links are `text/c<n>.xhtml#…`.
+  - A reference to a page outside the book uses the page's published address (`page_urls`, which the engine fills from the site's URL) when there is one. Otherwise it is text with a located warning, as is a reference to an id the book does not define.
+  - Ids are the shared model's (§15, "Before E1"), so two pages defining one id keep their own. A page reached through an alias or from another module is linked like any other.
+- **Splitting large pages (§14):** never, in this release. One page is one content document, so no link or spine entry depends on a rule for where a page breaks.
+- **`testing::assert_links_resolve`** checks every link as a reading system follows it, and becomes part of E9's validator:
+  - a link inside the book must lead to a document of the manifest and, with a fragment, to an element of that document with that id;
+  - any other link must be an address of `testing::SCHEMES`;
+  - nothing names `file:` or `antora:`.
+- **Tests:**
+  - `epub_nav_matches_the_plan` (in `adoc-epub`): parts, headings and pages at three depths, with a page's sections.
+  - `epub_internal_links_resolve` (in the engine, over the Word and Kindle reference fixtures with a page alias and a missing id added): links across modules, through an alias, to an id two pages define, out of the book, and to a missing id.
+
 ## 16. References
 
 - W3C, [EPUB 3.3](https://www.w3.org/TR/epub-33/) (Recommendation)

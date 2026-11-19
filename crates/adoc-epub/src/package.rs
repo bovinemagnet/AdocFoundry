@@ -199,10 +199,48 @@ fn nav(book: &Book) -> Vec<u8> {
     toc_list(&mut xml, book, entries);
     xml.close("nav");
     xml.newline();
+    landmarks(&mut xml, book);
     xml.close("body");
     xml.close("html");
     xml.newline();
     xml.into_bytes()
+}
+
+/// The landmarks a reading system offers to go to: the table of contents and where the
+/// book's text begins, its first chapter. Hidden, since they are for the reading system.
+fn landmarks(xml: &mut Xml, book: &Book) {
+    xml.open(
+        "nav",
+        &[
+            ("epub:type", "landmarks"),
+            ("id", "landmarks"),
+            ("hidden", "hidden"),
+        ],
+    );
+    xml.element("h2", &[], "Landmarks");
+    xml.newline();
+    xml.open("ol", &[]);
+    xml.newline();
+    let first = href(
+        book,
+        &Target {
+            chapter: 0,
+            anchor: None,
+        },
+    );
+    for (kind, href, title) in [
+        ("toc", "nav.xhtml#toc", "Contents"),
+        ("bodymatter", first.as_str(), "Start of content"),
+    ] {
+        xml.open("li", &[]);
+        xml.element("a", &[("epub:type", kind), ("href", href)], title);
+        xml.close("li");
+        xml.newline();
+    }
+    xml.close("ol");
+    xml.newline();
+    xml.close("nav");
+    xml.newline();
 }
 
 /// `entries` as an ordered list, each nested list only where an entry has children.

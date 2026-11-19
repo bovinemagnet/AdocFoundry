@@ -353,3 +353,145 @@ fn epub_refuses_a_read_only_page() {
     assert!(engine.wait_for_workers(WAIT));
     assert!(!output.exists());
 }
+
+/// The reference book: the Word reference book with the Kindle fixture laid over it, and two
+/// more references on its links page: one through a page alias, one to an id nothing defines.
+fn reference(folder: &Path) -> (PathBuf, Engine) {
+    let root = folder.join("reference");
+    copy_tree(&fixture("docx/reference"), &root);
+    copy_tree(&fixture("kindle/reference"), &root);
+    let links = root.join("manual/modules/ROOT/pages/links.adoc");
+    let mut text = fs::read_to_string(&links).unwrap();
+    text.push_str(
+        "\nThe extras are xref:more.adoc[reached by an alias], and \
+         xref:install.adoc#nowhere[a missing place] is not.\n",
+    );
+    fs::write(&links, text).unwrap();
+    let mut settings = Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    (root, engine)
+}
+
+/// PRD §11 test 11: over an Antora book with nested navigation, two components, a page alias,
+/// an id two pages define, references across modules, a missing id and a reference out of the
+/// book, every local link and fragment resolves, and nothing names a local file or an Antora
+/// resource.
+#[test]
+fn epub_internal_links_resolve() {
+    let directory = tempfile::tempdir().unwrap();
+    let (root, mut engine) = reference(directory.path());
+    let output = directory.path().join("manual.epub");
+    let summary = engine
+        .export_epub_blocking(
+            epub(
+                ExportTarget::Component {
+                    name: "manual".to_owned(),
+                    version: Some("2.0".to_owned()),
+                },
+                &output,
+            ),
+            WAIT,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    let bytes = fs::read(&output).unwrap();
+    let links = adoc_epub::testing::assert_links_resolve(&bytes);
+
+    // The chapter each page is: the one whose first heading is the page's title. Parts and
+    // navigation headings are chapters too, so a page's place among the sources is not it.
+    let files = adoc_epub::testing::files(&bytes);
+    let chapter_of = |relative: &str| {
+        let source = summary
+            .sources
+            .iter()
+            .find(|source| source.ends_with(relative))
+            .unwrap_or_else(|| panic!("{relative} in {:?}", summary.sources));
+        let title = fs::read_to_string(source).unwrap();
+        let title = title
+            .lines()
+            .next()
+            .unwrap()
+            .trim_start_matches("= ")
+            .to_owned();
+        let name = files
+            .iter()
+            .filter(|(name, _)| name.starts_with("EPUB/text/"))
+            .find(|(name, data)| {
+                let text = String::from_utf8_lossy(data);
+                let document = adoc_epub::testing::parse(name, &text);
+                document
+                    .descendants()
+                    .find(|node| node.tag_name().name() == "h1")
+                    .map(|h1| {
+                        h1.descendants()
+                            .filter(|node| node.is_text())
+                            .filter_map(|node| node.text())
+                            .collect::<String>()
+                    })
+                    == Some(title.clone())
+            })
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| panic!("no chapter is titled {title}"));
+        name.trim_start_matches("EPUB/text/").to_owned()
+    };
+    let link = |text: &str| {
+        links
+            .iter()
+            .find(|link| link.text == text)
+            .unwrap_or_else(|| panic!("a link {text:?} in {links:?}"))
+    };
+    // Across modules, and through a page alias, to the pages' chapters.
+    assert!(link("security")
+        .href
+        .starts_with(&chapter_of("admin/pages/security.adoc")));
+    assert!(link("reached by an alias")
+        .href
+        .starts_with(&chapter_of("ROOT/pages/extras.adoc")));
+    // An id two pages define: each reference leads to its own page's.
+    let install = link("the requirements");
+    assert!(install
+        .href
+        .starts_with(&chapter_of("ROOT/pages/install.adoc")));
+    assert!(install.href.contains('#'));
+    let extras_own = links
+        .iter()
+        .find(|link| {
+            link.from.ends_with(&chapter_of("ROOT/pages/extras.adoc")) && link.href.starts_with('#')
+        })
+        .expect("the extras page's own requirements, as a fragment");
+    assert_ne!(
+        install.href.split_once('#').unwrap().1,
+        extras_own.href.trim_start_matches('#')
+    );
+    // Out of the book: the web address as written; the API page and the missing id as text,
+    // each with a located warning.
+    assert_eq!(link("its site").href, "https://example.com/product");
+    assert!(!links
+        .iter()
+        .any(|link| link.text == "the API reference" || link.text == "a missing place"));
+    for wanted in ["leads outside the book", "names nothing in the book"] {
+        assert!(
+            summary
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains(wanted)
+                    && diagnostic
+                        .location
+                        .as_ref()
+                        .is_some_and(|(path, _)| path.ends_with("links.adoc"))),
+            "{wanted}: {:?}",
+            summary.diagnostics
+        );
+    }
+    // No file names a local file or an Antora resource.
+    for (name, data) in files {
+        if name.ends_with(".xhtml") || name.ends_with(".opf") {
+            let text = String::from_utf8(data).unwrap();
+            for scheme in ["file:", "antora:", root.to_string_lossy().as_ref()] {
+                assert!(!text.contains(scheme), "{name} holds {scheme}");
+            }
+        }
+    }
+}

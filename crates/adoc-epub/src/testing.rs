@@ -361,3 +361,86 @@ pub fn assert_valid_ocf(bytes: &[u8]) -> (BTreeMap<String, Vec<u8>>, Package) {
 pub fn refused(name: &str, data: &[u8]) -> bool {
     !crate::zip::safe_name(name) || crate::package::check_xml(name, data).is_err()
 }
+
+/// A link one of the book's XHTML files holds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Href {
+    /// The archive path of the file it is in.
+    pub from: String,
+    pub href: String,
+    /// The text it shows.
+    pub text: String,
+}
+
+/// The schemes a link out of the book may have: web, mail, file transfer and telephone
+/// addresses; never a local file, a script or an Antora resource.
+pub const SCHEMES: &[&str] = &["http", "https", "mailto", "ftp", "ftps", "tel"];
+
+/// Every link of the book's XHTML files, checked as a reading system follows it (PRD §11 test
+/// 11): one inside the book leads to a file in the manifest and, with a fragment, to an
+/// element of that file with that id; any other is an address of one of [`SCHEMES`]. Returns
+/// every link. Panics, saying which, on the first that fails.
+pub fn assert_links_resolve(bytes: &[u8]) -> Vec<Href> {
+    let (files, package) = assert_valid_ocf(bytes);
+    let documents: Vec<&String> = package
+        .manifest
+        .values()
+        .filter(|(_, media, _)| media == "application/xhtml+xml")
+        .map(|(path, _, _)| path)
+        .collect();
+    let mut ids: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
+    for path in &documents {
+        let document = parse(path, text(&files, path));
+        let found = document
+            .descendants()
+            .filter_map(|node| node.attribute("id").map(str::to_owned))
+            .collect();
+        ids.insert(path.as_str(), found);
+    }
+    let mut links = Vec::new();
+    for from in &documents {
+        let document = parse(from, text(&files, from));
+        for a in document
+            .descendants()
+            .filter(|node| node.has_tag_name((XHTML, "a")))
+        {
+            let Some(href) = a.attribute("href") else {
+                continue;
+            };
+            let link = Href {
+                from: (*from).clone(),
+                href: href.to_owned(),
+                text: a
+                    .descendants()
+                    .filter(|node| node.is_text())
+                    .filter_map(|node| node.text())
+                    .collect(),
+            };
+            let path_part = href.split('#').next().unwrap_or_default();
+            if let Some((scheme, _)) = path_part.split_once(':') {
+                assert!(
+                    SCHEMES.contains(&scheme.to_ascii_lowercase().as_str()),
+                    "{from}: {href} leads out of the book by a scheme a reader must not follow"
+                );
+                links.push(link);
+                continue;
+            }
+            let target = if path_part.is_empty() {
+                (*from).clone()
+            } else {
+                resolve(from, path_part)
+            };
+            let Some(target_ids) = ids.get(target.as_str()) else {
+                panic!("{from}: {href} leads to {target}, which is not a document of the book");
+            };
+            if let Some((_, fragment)) = href.split_once('#') {
+                assert!(
+                    target_ids.contains(fragment),
+                    "{from}: {href} leads to #{fragment}, which {target} does not hold"
+                );
+            }
+            links.push(link);
+        }
+    }
+    links
+}
