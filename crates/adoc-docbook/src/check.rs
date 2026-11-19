@@ -8,7 +8,8 @@
 //! name and unique; every `linkend` and `linkends` names one, and a `footnoteref` names a
 //! `footnote` (a rule of the schema's Schematron); every `xlink:href` has a value; and every
 //! `fileref` is a relative path that stays below the document's folder, or a web address (a
-//! remote picture, never fetched). A document whose pictures are referred to where they are
+//! remote picture, never fetched); and no element is inside one the schema's Schematron keeps
+//! it out of ([`EXCLUSIONS`]: no admonition in an admonition, no table in a table's cell…). A document whose pictures are referred to where they are
 //! may have `fileref`s that climb out of its folder.
 
 use std::collections::{HashMap, HashSet};
@@ -77,6 +78,8 @@ pub(crate) fn check_document(xml: &str, referenced: bool) -> Vec<String> {
         }
     }
 
+    problems.extend(exclusion_problems(&document));
+
     let mut reported = HashSet::new();
     for node in document.descendants().filter(roxmltree::Node::is_element) {
         let name = node.tag_name().name();
@@ -113,6 +116,96 @@ pub(crate) fn check_document(xml: &str, referenced: bool) -> Vec<String> {
             if !fine {
                 problems.push(format!(
                     "<{name}> refers to \u{201c}{fileref}\u{201d}, not a relative path below the document"
+                ));
+            }
+        }
+    }
+    problems
+}
+
+/// The schema's Schematron rules that keep an element out of another's descendants (`caution
+/// must not occur among the children or descendants of note` and the like), as the 5.2.1
+/// schema states them: each container, and what may not be inside it. Checked here without an
+/// XPath engine, since each is only a test of names.
+pub const EXCLUSIONS: &[(&str, &[&str])] = &[
+    ("annotation", &["annotation"]),
+    (
+        "caption",
+        &[
+            "caution",
+            "danger",
+            "equation",
+            "example",
+            "figure",
+            "important",
+            "note",
+            "sidebar",
+            "table",
+            "task",
+            "tip",
+            "warning",
+        ],
+    ),
+    ("caution", ADMONITIONS),
+    ("danger", ADMONITIONS),
+    ("important", ADMONITIONS),
+    ("note", ADMONITIONS),
+    ("tip", ADMONITIONS),
+    ("warning", ADMONITIONS),
+    ("entry", &["informaltable", "table"]),
+    ("equation", &["equation", "example", "figure", "table"]),
+    ("example", &["equation", "example", "figure", "table"]),
+    ("figure", &["equation", "example", "figure", "table"]),
+    (
+        "footnote",
+        &[
+            "caution",
+            "danger",
+            "epigraph",
+            "equation",
+            "example",
+            "figure",
+            "footnote",
+            "important",
+            "note",
+            "sidebar",
+            "table",
+            "task",
+            "tip",
+            "warning",
+        ],
+    ),
+    ("sidebar", &["sidebar"]),
+    ("table", &["equation", "example", "figure"]),
+];
+
+const ADMONITIONS: &[&str] = &["caution", "danger", "important", "note", "tip", "warning"];
+
+/// Whether an element named `inner` may not be inside one named `container`.
+pub(crate) fn excludes(container: &str, inner: &str) -> bool {
+    EXCLUSIONS
+        .iter()
+        .any(|(name, forbidden)| *name == container && forbidden.contains(&inner))
+}
+
+/// What [`EXCLUSIONS`] finds in `document`: each element inside one it may not be inside.
+fn exclusion_problems(document: &roxmltree::Document<'_>) -> Vec<String> {
+    let mut problems = Vec::new();
+    for node in document.descendants().filter(roxmltree::Node::is_element) {
+        let name = node.tag_name().name();
+        let Some((_, forbidden)) = EXCLUSIONS.iter().find(|(container, _)| *container == name)
+        else {
+            continue;
+        };
+        for inner in node
+            .descendants()
+            .skip(1)
+            .filter(roxmltree::Node::is_element)
+        {
+            let inner_name = inner.tag_name().name();
+            if forbidden.contains(&inner_name) {
+                problems.push(format!(
+                    "{inner_name} must not occur among the children or descendants of {name}"
                 ));
             }
         }

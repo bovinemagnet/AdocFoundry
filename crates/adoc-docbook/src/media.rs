@@ -236,19 +236,32 @@ impl Writer<'_> {
         alt: &str,
         role: &[(&str, &str)],
     ) {
-        let name = if block.title.is_empty() {
-            "informalfigure"
-        } else {
-            "figure"
-        };
-        self.xml.open(name, role);
-        if !block.title.is_empty() {
+        let formal = self.formal(block, "figure", role);
+        self.media_object("mediaobject", fileref, width, height, alt);
+        self.xml
+            .close(if formal { "figure" } else { "informalfigure" });
+    }
+
+    /// Opens `name` (`figure` or `equation`) with the block's title, or its informal form where
+    /// it has none or may not be (inside a table, an example, a figure or an equation), its
+    /// title then a `para` before it; and whether the formal one was opened.
+    fn formal(&mut self, block: &ViewBlock, name: &'static str, role: &[(&str, &str)]) -> bool {
+        let formal = !block.title.is_empty() && !self.forbidden(name);
+        if formal {
+            self.xml.open(name, role);
             self.xml.open("title", &[]);
             self.inlines(&block.title);
             self.xml.close("title");
+        } else {
+            self.title_para(&block.title);
+            let informal = if name == "figure" {
+                "informalfigure"
+            } else {
+                "informalequation"
+            };
+            self.xml.open(informal, role);
         }
-        self.media_object("mediaobject", fileref, width, height, alt);
-        self.xml.close(name);
+        formal
     }
 
     pub(crate) fn inline_picture(&mut self, image: &ViewImage) {
@@ -333,17 +346,12 @@ impl Writer<'_> {
         role: &[(&str, &str)],
     ) {
         self.page.formulas += 1;
-        let name = if block.title.is_empty() {
-            "informalequation"
-        } else {
+        let formal = self.formal(block, "equation", role);
+        let name = if formal {
             "equation"
+        } else {
+            "informalequation"
         };
-        self.xml.open(name, role);
-        if !block.title.is_empty() {
-            self.xml.open("title", &[]);
-            self.inlines(&block.title);
-            self.xml.close("title");
-        }
         let picture = match rendered {
             DiagramView::Svg(path) => self.local_picture(path).ok(),
             _ => None,
@@ -405,17 +413,8 @@ impl Writer<'_> {
                 Some(&block.span),
             );
         }
-        let name = if block.title.is_empty() {
-            "informalfigure"
-        } else {
-            "figure"
-        };
-        self.xml.open(name, role);
-        if !block.title.is_empty() {
-            self.xml.open("title", &[]);
-            self.inlines(&block.title);
-            self.xml.close("title");
-        }
+        let formal = self.formal(block, "figure", role);
+        let name = if formal { "figure" } else { "informalfigure" };
         self.xml.open("mediaobject", &[]);
         for target in &remote {
             self.xml.open(object, &[]);

@@ -1,7 +1,8 @@
-//! What tests need to check a document: the export's own [`crate::check`], and validation
-//! against the DocBook 5.2.1 RELAX NG schema (`schema/docbook.rng`, kept in the repository and
-//! never downloaded), in process through `oxixml-relaxng`. The schema's embedded Schematron
-//! rules are not run.
+//! What tests need to check a document: the export's own [`crate::check`], validation against
+//! the DocBook 5.2.1 RELAX NG schema (`schema/docbook.rng`, kept in the repository and never
+//! downloaded), in process through `oxixml-relaxng`. The check holds the schema's Schematron
+//! rules that keep elements out of others ([`EXCLUSIONS`]); the other Schematron rules are not
+//! run.
 
 use oxixml_relaxng::RelaxNg;
 
@@ -21,6 +22,8 @@ pub fn schema_problems(xml: &str) -> Vec<String> {
         Err(errors) => errors.iter().map(ToString::to_string).collect(),
     })
 }
+
+pub use crate::check::EXCLUSIONS;
 
 /// Fails unless `xml` passes both the export's own check and the RELAX NG schema.
 ///

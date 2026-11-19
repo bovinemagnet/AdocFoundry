@@ -357,11 +357,16 @@ fn docbook_tables_are_cals() {
     );
     let blocks = entries(rows[4]);
     assert_eq!(children(blocks[0]), ["itemizedlist"]);
+    // A table that is all its cell holds is the cell's `entrytbl`, the table CALS allows there.
     assert!(
-        blocks[2]
-            .descendants()
-            .any(|node| node.has_tag_name((NAMESPACE, "informaltable"))),
-        "a table in a cell stays a table"
+        blocks[2].has_tag_name((NAMESPACE, "entrytbl")),
+        "{:?}",
+        blocks[2].tag_name()
+    );
+    assert_eq!(blocks[2].attribute("cols"), Some("2"));
+    assert_eq!(
+        text_of(blocks[2]).split_whitespace().collect::<String>(),
+        "nestedtable"
     );
     let footer = group
         .children()
@@ -375,11 +380,7 @@ fn docbook_tables_are_cals() {
     // A table of a header row alone has it as its body. A row whose span does not fit is
     // dropped by the parser, so that table has no rows and is left out, with a warning.
     let informal: Vec<_> = elements(&document, "informaltable").collect();
-    assert_eq!(
-        informal.len(),
-        2,
-        "the nested table and the header-only one"
-    );
+    assert_eq!(informal.len(), 1, "the header-only one");
     assert!(output
         .diagnostics
         .iter()
@@ -444,4 +445,120 @@ fn docbook_unsupported_nodes_warn() {
     assert_eq!(output.diagnostics.len(), 1);
     assert!(output.diagnostics[0].message.contains("the gizmo block"));
     assert_eq!(output.diagnostics[0].source.as_ref(), Some(&span));
+}
+
+/// The nestings the schema's Schematron forbids are written another way, never as they are:
+/// an admonition in an admonition as its label and content, a sidebar in a sidebar as its
+/// title and content, an example in an example as an informal one, a picture in a table as an
+/// informal figure, and a table beside other content in a cell as its rows of text.
+#[test]
+fn nestings_the_schema_forbids_are_lowered() {
+    let output = written(&article(
+        r#"= Nesting
+
+[NOTE]
+====
+Outer note.
+
+WARNING: Inner warning.
+====
+
+.Outer
+*****
+Outer sidebar.
+
+.Inner
+****
+Inner sidebar.
+****
+*****
+
+.Outer example
+=====
+.Inner example
+====
+Inner.
+====
+=====
+
+.A table
+|===
+a|
+.A picture
+image::missing.png[A picture]
+a|
+Before the table.
+
+!===
+!a !b
+!===
+|===
+"#,
+    ));
+    let document = testing::parse(&output.xml);
+    assert_eq!(names(&document, "note"), 1);
+    assert_eq!(names(&document, "warning"), 0);
+    let lowered = elements(&document, "para")
+        .find(|para| para.attribute("role") == Some("warning"))
+        .expect("the inner warning's label");
+    assert_eq!(text_of(lowered), "Warning");
+    assert_eq!(names(&document, "sidebar"), 1);
+    assert_eq!(names(&document, "example"), 1);
+    assert_eq!(names(&document, "informalexample"), 1);
+    assert_eq!(names(&document, "figure"), 0);
+    assert_eq!(names(&document, "informalfigure"), 1);
+    let rows: Vec<String> = elements(&document, "para")
+        .filter(|para| para.attribute("role") == Some("row"))
+        .map(text_of)
+        .collect();
+    assert_eq!(rows, ["a | b"]);
+    let messages: Vec<&str> = output
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("inside another admonition")),
+        "{messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("rows of text")),
+        "{messages:?}"
+    );
+}
+
+/// A code span holds only what a `literal` may: a formula, a key, a nested code span or an
+/// anchor inside one is its text, the anchor written after it, so a reference to it lands.
+#[test]
+fn code_spans_hold_only_what_a_literal_may() {
+    let output = written(&article(
+        ":experimental:\n= Code\n\nRun `+stem:[x^2]+ and kbd:[Ctrl+C] and [[inside]]here` now. See <<inside>>.\n\n\
+         Also `outer pass:q[`inner`]`.\n",
+    ));
+    let document = testing::parse(&output.xml);
+    for literal in elements(&document, "literal") {
+        assert!(
+            literal
+                .descendants()
+                .skip(1)
+                .filter(roxmltree::Node::is_element)
+                .all(|inner| !matches!(
+                    inner.tag_name().name(),
+                    "literal" | "inlineequation" | "keycap" | "keycombo" | "anchor"
+                )),
+            "{}",
+            output.xml
+        );
+    }
+    let reference = elements(&document, "xref").next();
+    if let Some(reference) = reference {
+        let target = reference.attribute("linkend").unwrap();
+        assert!(document.descendants().any(|node| node
+            .attribute(("http://www.w3.org/XML/1998/namespace", "id"))
+            == Some(target)));
+    }
 }

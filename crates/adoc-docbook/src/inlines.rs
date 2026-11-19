@@ -23,11 +23,41 @@ impl Writer<'_> {
     }
 
     fn inline(&mut self, inline: &ViewInline) {
+        // A code span (`literal`) holds text, emphasis, links, phrases, footnotes, sub- and
+        // superscripts, index terms and inline pictures; what else it meets is its text, and
+        // an anchor follows it, so a reference to it still lands.
+        if self.in_literal.is_some() {
+            match inline {
+                ViewInline::Code(content) => return self.inlines(content),
+                ViewInline::Stem { source, .. } => return self.xml.text(source),
+                ViewInline::Keyboard(_) | ViewInline::Button(_) | ViewInline::Menu(_) => {
+                    return self
+                        .xml
+                        .text(&ViewInline::plain_text(std::slice::from_ref(inline)));
+                }
+                ViewInline::Anchor(anchor) => {
+                    if let Some(waiting) = &mut self.in_literal {
+                        waiting.push(anchor.clone());
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
         match inline {
             ViewInline::Text(text) => self.xml.text(text),
             ViewInline::Strong(content) => self.wrapped("emphasis", &[("role", "strong")], content),
             ViewInline::Emphasis(content) => self.wrapped("emphasis", &[], content),
-            ViewInline::Code(content) => self.wrapped("literal", &[], content),
+            ViewInline::Code(content) => {
+                self.in_literal = Some(Vec::new());
+                self.wrapped("literal", &[], content);
+                let waiting = self.in_literal.take().unwrap_or_default();
+                for anchor in waiting {
+                    if let Some(id) = self.anchor_id(&anchor) {
+                        self.xml.empty("anchor", &[("xml:id", &id)]);
+                    }
+                }
+            }
             ViewInline::Mark(content) => self.wrapped("emphasis", &[("role", "marked")], content),
             ViewInline::Superscript(content) => self.wrapped("superscript", &[], content),
             ViewInline::Subscript(content) => self.wrapped("subscript", &[], content),
@@ -299,7 +329,7 @@ impl Writer<'_> {
         self.in_footnote = true;
         self.xml.open("footnote", &[("xml:id", &id)]);
         self.xml.open("para", &[]);
-        self.inlines(&note);
+        self.within("footnote", |writer| writer.inlines(&note));
         self.xml.close("para");
         self.xml.close("footnote");
         self.in_footnote = false;

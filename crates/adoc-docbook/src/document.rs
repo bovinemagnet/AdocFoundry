@@ -32,6 +32,12 @@ pub(crate) struct Writer<'a> {
     pub(crate) in_link: bool,
     /// Inside a `footnote`, where another note keeps only its text.
     pub(crate) in_footnote: bool,
+    /// Inside a `literal` (a code span), which holds only text and a few inlines: anchors met
+    /// there wait here to be written after it.
+    pub(crate) in_literal: Option<Vec<String>>,
+    /// The containers the schema's Schematron restricts that are open around what is being
+    /// written, innermost last ([`crate::check::EXCLUSIONS`]).
+    pub(crate) context: Vec<&'static str>,
     /// Every id of the publication.
     pub(crate) ids: Ids,
     /// Each page's place in the publication, by its address in the document.
@@ -88,6 +94,36 @@ impl PageContext {
 }
 
 impl Writer<'_> {
+    /// Whether an element named `name` may not be written here: a container open around it
+    /// keeps it out.
+    pub(crate) fn forbidden(&self, name: &str) -> bool {
+        self.context
+            .iter()
+            .any(|container| crate::check::excludes(container, name))
+    }
+
+    /// Runs `write` with `container` open around it.
+    pub(crate) fn within<T>(
+        &mut self,
+        container: &'static str,
+        write: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        self.context.push(container);
+        let result = write(self);
+        self.context.pop();
+        result
+    }
+
+    /// A block's title where the element that would hold it may not be written: a `para` with
+    /// `role="title"` before what is written instead.
+    pub(crate) fn title_para(&mut self, title: &[ViewInline]) {
+        if !title.is_empty() {
+            self.xml.open("para", &[("role", "title")]);
+            self.inlines(title);
+            self.xml.close("para");
+        }
+    }
+
     pub(crate) fn warn(&mut self, message: impl Into<String>, source: Option<&SourceSpan>) {
         self.diagnostics.push(Diagnostic {
             severity: Severity::Warning,
@@ -128,6 +164,8 @@ pub(crate) fn write(
         page: PageContext::default(),
         in_link: false,
         in_footnote: false,
+        in_literal: None,
+        context: Vec::new(),
         ids,
         places,
     };

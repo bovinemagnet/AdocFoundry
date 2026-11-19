@@ -8,7 +8,7 @@
 //! CALS cannot hold, is folded into the cells over it.
 
 use adoc_dom::{Align, ColumnWidth, VAlign};
-use adoc_render::{ViewBlock, ViewCell, ViewTable};
+use adoc_render::{ViewBlock, ViewCell, ViewKind, ViewTable};
 
 use crate::document::Writer;
 
@@ -23,8 +23,17 @@ struct Placed<'a> {
     more_rows: usize,
 }
 
+/// A table's cells placed on its grid: its width, and its header, footer and body rows.
+struct Grid<'a> {
+    columns: usize,
+    head: Vec<Vec<Placed<'a>>>,
+    foot: Vec<Vec<Placed<'a>>>,
+    body: Vec<Vec<Placed<'a>>>,
+}
+
 impl Writer<'_> {
-    pub(crate) fn table(&mut self, block: &ViewBlock, table: &ViewTable, role: &[(&str, &str)]) {
+    /// `table`'s rows placed on its grid, or `None`, with a warning, when it has none.
+    fn grid<'a>(&mut self, block: &ViewBlock, table: &'a ViewTable) -> Option<Grid<'a>> {
         let header = table.header.as_ref().filter(|row| !row.is_empty());
         let footer = table.footer.as_ref().filter(|row| !row.is_empty());
         let mut body: Vec<&[ViewCell]> = table.rows.iter().map(Vec::as_slice).collect();
@@ -36,7 +45,7 @@ impl Writer<'_> {
         }
         if body.is_empty() {
             self.warn("a table with no rows is left out", Some(&block.span));
-            return;
+            return None;
         }
         let widest = head
             .iter()
@@ -47,19 +56,35 @@ impl Writer<'_> {
             .unwrap_or(1);
         let columns = table.columns.len().max(widest).max(1);
         let mut clipped = false;
-        let head = place(&head, columns, &mut clipped);
-        let foot = place(&foot, columns, &mut clipped);
-        let body = place(&body, columns, &mut clipped);
+        let grid = Grid {
+            columns,
+            head: place(&head, columns, &mut clipped),
+            foot: place(&foot, columns, &mut clipped),
+            body: place(&body, columns, &mut clipped),
+        };
         if clipped {
             self.warn(
                 "a table cell spans past the edge of its table, so its span is cut back to it",
                 Some(&block.span),
             );
         }
+        Some(grid)
+    }
 
+    pub(crate) fn table(&mut self, block: &ViewBlock, table: &ViewTable, role: &[(&str, &str)]) {
+        // In a table's cell, a table is the cell's `entrytbl` when it is all the cell holds
+        // (`entry`); anywhere else there it may not be, so its rows are written as text.
+        if self.forbidden("informaltable") {
+            self.table_as_text(block, table);
+            return;
+        }
+        let Some(grid) = self.grid(block, table) else {
+            return;
+        };
         let titled = !block.title.is_empty();
+        let formal = titled && !self.forbidden("table");
         let mut attributes = role.to_vec();
-        let (frame, grid) = (
+        let (frame, grid_lines) = (
             block.attributes.get("frame").map(String::as_str),
             block.attributes.get("grid").map(String::as_str),
         );
@@ -72,7 +97,7 @@ impl Writer<'_> {
                 _ => "all",
             },
         ));
-        let (rowsep, colsep) = match grid {
+        let (rowsep, colsep) = match grid_lines {
             Some("rows") => ("1", "0"),
             Some("cols") => ("0", "1"),
             Some("none") => ("0", "0"),
@@ -80,15 +105,40 @@ impl Writer<'_> {
         };
         attributes.push(("rowsep", rowsep));
         attributes.push(("colsep", colsep));
-        let name = if titled { "table" } else { "informaltable" };
+        let name = if formal { "table" } else { "informaltable" };
+        if titled && !formal {
+            // A titled table where a `table` may not be (in an example, a figure or an
+            // equation) keeps its title before it.
+            self.title_para(&block.title);
+        }
         self.xml.open(name, &attributes);
-        if titled {
+        if formal {
             self.xml.open("title", &[]);
             self.inlines(&block.title);
             self.xml.close("title");
         }
-        let count = columns.to_string();
+        let count = grid.columns.to_string();
         self.xml.open("tgroup", &[("cols", &count)]);
+        let write = |writer: &mut Self| {
+            writer.colspecs(table, grid.columns);
+            for (group, rows) in [
+                ("thead", &grid.head),
+                ("tfoot", &grid.foot),
+                ("tbody", &grid.body),
+            ] {
+                writer.rows(group, rows);
+            }
+        };
+        if formal {
+            self.within("table", write);
+        } else {
+            write(self);
+        }
+        self.xml.close("tgroup");
+        self.xml.close(name);
+    }
+
+    fn colspecs(&mut self, table: &ViewTable, columns: usize) {
         for index in 0..columns {
             let column = table.columns.get(index);
             let name = column_name(index);
@@ -107,28 +157,30 @@ impl Writer<'_> {
             }
             self.xml.empty("colspec", &spec);
         }
-        for (group, rows) in [("thead", &head), ("tfoot", &foot), ("tbody", &body)] {
-            if rows.is_empty() {
-                continue;
-            }
-            self.xml.open(group, &[]);
-            for row in rows {
-                self.xml.open("row", &[]);
-                for placed in row {
-                    self.entry(placed);
-                }
-                self.xml.close("row");
-            }
-            self.xml.close(group);
-        }
-        self.xml.close("tgroup");
-        self.xml.close(name);
     }
 
-    fn entry(&mut self, placed: &Placed<'_>) {
-        let start = column_name(placed.column);
-        let end = column_name(placed.column + placed.columns - 1);
-        let more = placed.more_rows.to_string();
+    /// A row group (`thead`, `tfoot` or `tbody`) of `rows`, unless there are none.
+    fn rows(&mut self, group: &str, rows: &[Vec<Placed<'_>>]) {
+        if rows.is_empty() {
+            return;
+        }
+        self.xml.open(group, &[]);
+        for row in rows {
+            self.xml.open("row", &[]);
+            for placed in row {
+                self.entry(placed);
+            }
+            self.xml.close("row");
+        }
+        self.xml.close(group);
+    }
+
+    /// The attributes every cell has: its alignments and, spanning columns, its first and last.
+    fn cell_attributes<'a>(
+        placed: &Placed<'_>,
+        start: &'a str,
+        end: &'a str,
+    ) -> Vec<(&'a str, &'a str)> {
         let mut attributes = vec![
             ("align", align(placed.cell.align)),
             (
@@ -141,15 +193,78 @@ impl Writer<'_> {
             ),
         ];
         if placed.columns > 1 {
-            attributes.push(("namest", &start));
-            attributes.push(("nameend", &end));
+            attributes.push(("namest", start));
+            attributes.push(("nameend", end));
         }
+        attributes
+    }
+
+    fn entry(&mut self, placed: &Placed<'_>) {
+        let start = column_name(placed.column);
+        let end = column_name(placed.column + placed.columns - 1);
+        // A table that is all its cell holds is the cell's own `entrytbl`, the table CALS
+        // allows in a cell; one that spans rows cannot be, having no `morerows`.
+        if let [only] = placed.cell.blocks.as_slice() {
+            if let ViewKind::Table(inner) = &only.kind {
+                if placed.more_rows == 0 && only.title.is_empty() {
+                    if let Some(grid) = self.grid(only, inner) {
+                        let count = grid.columns.to_string();
+                        let mut attributes = Self::cell_attributes(placed, &start, &end);
+                        attributes.retain(|(name, _)| *name != "valign");
+                        attributes.insert(0, ("cols", &count));
+                        self.xml.open("entrytbl", &attributes);
+                        self.within("entry", |writer| {
+                            writer.colspecs(inner, grid.columns);
+                            writer.rows("thead", &grid.head);
+                            // `entrytbl` has no footer group: its footer rows end its body.
+                            let mut body = grid.body;
+                            body.extend(grid.foot);
+                            writer.rows("tbody", &body);
+                        });
+                        self.xml.close("entrytbl");
+                        return;
+                    }
+                }
+            }
+        }
+        let more = placed.more_rows.to_string();
+        let mut attributes = Self::cell_attributes(placed, &start, &end);
         if placed.more_rows > 0 {
             attributes.push(("morerows", &more));
         }
         self.xml.open("entry", &attributes);
-        self.blocks(&placed.cell.blocks);
+        self.within("entry", |writer| writer.blocks(&placed.cell.blocks));
         self.xml.close("entry");
+    }
+
+    /// A table where DocBook allows none, in a table's cell beside other content: its title
+    /// and each row as a paragraph of its cells' text, with a warning.
+    fn table_as_text(&mut self, block: &ViewBlock, table: &ViewTable) {
+        self.warn(
+            "a table inside a table's cell, with more beside it, is written as its rows of text, \
+             since DocBook allows a table there only on its own",
+            Some(&block.span),
+        );
+        self.title_para(&block.title);
+        let rows = table
+            .header
+            .iter()
+            .chain(&table.rows)
+            .chain(table.footer.iter());
+        for row in rows {
+            let cells: Vec<String> = row
+                .iter()
+                .map(|cell| {
+                    cell.blocks
+                        .iter()
+                        .map(crate::blocks::block_text)
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .collect();
+            self.xml
+                .element("para", &[("role", "row")], &cells.join(" | "));
+        }
     }
 }
 

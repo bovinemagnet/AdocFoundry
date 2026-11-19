@@ -136,10 +136,35 @@ impl Writer<'_> {
                     AdmonitionKind::Caution => "caution",
                     AdmonitionKind::Warning => "warning",
                 };
-                self.xml.open(name, &role);
-                self.block_title(block);
-                self.body(blocks);
-                self.xml.close(name);
+                if self.forbidden(name) {
+                    // Inside another admonition or a note: its label and content, set apart by
+                    // its role, since DocBook does not nest them.
+                    self.warn(
+                        format!(
+                            "a {name} inside another admonition is written as its content, which \
+                             DocBook allows there"
+                        ),
+                        Some(&block.span),
+                    );
+                    let mut attributes = role.clone();
+                    attributes.retain(|(attribute, _)| *attribute != "role");
+                    attributes.push(("role", name));
+                    self.xml.open("para", &attributes);
+                    self.xml.open("emphasis", &[("role", "strong")]);
+                    if block.title.is_empty() {
+                        self.xml.text(admonition_label(name));
+                    } else {
+                        self.inlines(&block.title);
+                    }
+                    self.xml.close("emphasis");
+                    self.xml.close("para");
+                    self.blocks(blocks);
+                } else {
+                    self.xml.open(name, &role);
+                    self.block_title(block);
+                    self.within(name, |writer| writer.body(blocks));
+                    self.xml.close(name);
+                }
             }
             ViewKind::Code {
                 language,
@@ -186,20 +211,37 @@ impl Writer<'_> {
                 self.xml.close("blockquote");
             }
             ViewKind::Sidebar(blocks) => {
-                self.xml.open("sidebar", &role);
-                self.block_title(block);
-                self.body(blocks);
-                self.xml.close("sidebar");
+                if self.forbidden("sidebar") {
+                    // A sidebar in a sidebar: its title and content, since DocBook does not
+                    // nest them.
+                    self.title_para(&block.title);
+                    let wrote = self.blocks(blocks);
+                    if !wrote && block.title.is_empty() {
+                        return false;
+                    }
+                } else {
+                    self.xml.open("sidebar", &role);
+                    self.block_title(block);
+                    self.within("sidebar", |writer| writer.body(blocks));
+                    self.xml.close("sidebar");
+                }
             }
             ViewKind::Example(blocks) => {
-                let name = if block.title.is_empty() {
-                    "informalexample"
-                } else {
-                    "example"
-                };
+                let formal = !block.title.is_empty() && !self.forbidden("example");
+                let name = if formal { "example" } else { "informalexample" };
                 self.xml.open(name, &role);
-                self.block_title(block);
-                self.body(blocks);
+                if formal {
+                    self.block_title(block);
+                } else {
+                    // An untitled example, or a titled one where an `example` may not be (in
+                    // another, a figure, a table or an equation), keeps its title as a `para`.
+                    self.title_para(&block.title);
+                }
+                if formal {
+                    self.within("example", |writer| writer.body(blocks));
+                } else {
+                    self.body(blocks);
+                }
                 self.xml.close(name);
             }
             ViewKind::Open(blocks) => {
@@ -564,5 +606,16 @@ fn push_text(block: &ViewBlock, lines: &mut Vec<String>) {
             lines.push(source.clone());
         }
         ViewKind::ThematicBreak | ViewKind::PageBreak | ViewKind::Toc => {}
+    }
+}
+
+/// An admonition's label, as a reader sees it.
+fn admonition_label(name: &str) -> &'static str {
+    match name {
+        "tip" => "Tip",
+        "important" => "Important",
+        "caution" => "Caution",
+        "warning" => "Warning",
+        _ => "Note",
     }
 }

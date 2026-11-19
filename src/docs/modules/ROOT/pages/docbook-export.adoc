@@ -57,7 +57,7 @@ For the full table of constructs and elements, see xref:crates:adoc-docbook.adoc
 |The matching DocBook blocks, with their titles.
 
 |Tables
-|CALS tables, with column and row spans, header and footer rows, and tables inside cells.
+|CALS tables, with column and row spans, header and footer rows, and tables inside cells (as a nested CALS table where the cell holds nothing else).
 
 |Pictures
 |Figures with their descriptions, copied beside the document.
@@ -152,8 +152,11 @@ Unsaved edits are exported, because the export reads open buffers.
 The project's tests validate every DocBook document they write, including the whole reference book, against the official DocBook 5.2.1 RELAX NG schema.
 The validation runs in process, in pure Rust, with no Java or other program, and the schema is kept in the repository and never downloaded.
 
-The schema's embedded Schematron rules are not run, so that part of conformance is partial.
-Of those rules, the export's own check covers only that the root has a version and that a `footnoteref` points at a `footnote`.
+The schema's embedded Schematron rules are only partly run, so that part of conformance is partial.
+The export's own check enforces every rule that keeps an element out of another's descendants: no admonition in an admonition, no sidebar in a sidebar, no example, figure, table or equation inside an example, figure or equation, no example, figure or equation inside a table, no table inside a table's cell, and no block inside a footnote.
+It also checks the root's version and that a `footnoteref` points at a `footnote`.
+The other rules are not run, since they concern elements the export does not write: other kinds of links, `coref`, glossaries, synopses, XLink typing and transclusion.
+The project's tests also write every AsciiDoc page of the repository's fixtures and documentation as an article and check each one this way.
 
 Every export also runs its own structural check before the document is written.
 It requires well-formed XML, no DOCTYPE or processing instruction other than the line break, the right root element, namespace and version, unique valid identifiers, every `linkend` resolving, and relative picture paths.
@@ -179,6 +182,7 @@ Warnings cover these cases.
 * A diagram that nothing has drawn, whose source is kept.
 * A formula, for which no MathML is made.
 * A reference that leads out of the publication, with no site address to link to.
+* An admonition inside an admonition, or a table beside other content in a table cell, which the schema's rules forbid and the export lowers.
 
 The document is still written.
 
@@ -195,7 +199,10 @@ DocBook export does not do the following.
 * An inline passthrough is written as text, without a warning.
 * There is no XInclude: each export is one document.
 * There is no DocBook import, preview or processing.
-* The Schematron rules are not checked; see <<validation>>.
+* Only the Schematron rules that keep an element out of another's descendants are checked; see <<validation>>.
+* A nested admonition or sidebar is flattened: an admonition inside an admonition is a paragraph with its label, and a sidebar inside a sidebar is its title and content.
+* A table beside other content in a table cell becomes text, its rows written as paragraphs of cells separated by `|`, with a warning.
+* Inside a code span, a nested code span, a formula, a key, a button or a menu is written as its text.
 * Consumers have not yet been checked by hand; the checks are listed in `docs/qa/docbook.md` in the repository.
 
 == Performance

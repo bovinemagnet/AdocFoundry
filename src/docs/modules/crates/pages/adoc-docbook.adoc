@@ -149,7 +149,8 @@ No `procedure` is written in the first release: nothing is guessed to be one.
 |`emphasis`, with `role="strong"` for strong and `role="marked"` for highlighted text.
 
 |Monospace
-|`literal`.
+|`literal`, which may hold only text, emphasis, links, phrases, footnotes, subscripts, superscripts, index terms and inline pictures.
+Inside a code span, a nested code span, a formula, a key, a button or a menu is written as its text, and an inline anchor is written just after the span, so a reference to it still lands.
 
 |Superscript and subscript
 |`superscript` and `subscript`.
@@ -290,7 +291,10 @@ A table is written as CALS:
 * One `tgroup` holds a `colspec` for each column, with `colname` set to `col_1`, `col_2` and so on, a proportional `colwidth` and `align`.
 * Then come `thead`, `tfoot` and `tbody`, in the order CALS requires.
 * Each `entry` has `align` and `valign`, `namest` and `nameend` for a column span and `morerows` for a row span, placed on the grid as the table lays out.
-* Blocks in cells are kept, and so is a table in a cell: an `informaltable` inside the `entry`.
+* Blocks in cells are kept.
+A table that is all its cell holds becomes that cell's CALS `entrytbl`, the table CALS allows in a cell.
+Its footer rows end its body, since an `entrytbl` has no footer group, and a cell that spans rows keeps no `entrytbl`, since one cannot.
+A table beside other content in a cell is written as its rows, each a paragraph of its cells' text separated by `|`, with a warning.
 
 The edge cases are handled as follows:
 
@@ -298,6 +302,14 @@ The edge cases are handled as follows:
 * A table with no rows is left out, with a warning.
 * A span that runs past the edge of the table is cut back, with a warning.
 * A row whose every cell is covered by a span from above is folded into those spans.
+
+=== Nestings the schema forbids
+
+The schema's Schematron rules forbid some nestings that its RELAX NG part allows, so the writer lowers what a container forbids.
+
+* An admonition inside another admonition is a `para` with its label (Note, Tip and so on) in strong emphasis and `role` set to its kind, followed by its content, with a warning.
+* A sidebar inside a sidebar is its title, a `para` with `role="title"`, and its content.
+* A titled example, figure, table or equation where its formal element may not be is its informal element (`informalexample`, `informalfigure`, `informaltable` or `informalequation`), with its title as a `para` with `role="title"` before it.
 
 == A book's structure
 
@@ -354,6 +366,8 @@ It requires:
 * every `fileref` a relative path below the document's folder, or an `http` or `https` address.
 With the reference policy, the paths from the document's folder to the pictures are allowed too.
 
+* none of the nestings the schema's Schematron rules forbid: no admonition inside an admonition, no sidebar in a sidebar, no example, figure, table or equation inside an example, figure or equation, no example, figure or equation inside a table, no table inside a table's cell (`entry`), and no admonition, sidebar, table, figure, example, equation or footnote inside a footnote.
+
 It is not schema validation.
 
 == Validation
@@ -363,8 +377,9 @@ The schema is committed unchanged, with its notice, as `crates/adoc-docbook/sche
 It is checked through the `oxixml-relaxng` crate (Apache-2.0, pure Rust), which is a dependency only of the crate's `test-support` feature, so no shipped binary carries it.
 
 The feature gives the `testing` module: `assert_valid`, `schema_problems` and `parse`.
-The schema's embedded Schematron rules are not run, so that part of conformance is partial.
-Of those rules, `check` covers only that the root has a version and that a `footnoteref` points at a `footnote`.
+The schema's embedded Schematron rules are only partly run, so that part of conformance is partial.
+`check` enforces the root's version, that a `footnoteref` points at a `footnote`, and every rule that keeps an element out of another's descendants (listed under <<Checks>>).
+The other rules are not run: they concern elements the export does not write, namely other kinds of links, `coref`, glossaries, synopses, XLink typing and transclusion.
 The tests validate every document they write, including the whole reference book.
 
 == In the engine
@@ -397,7 +412,10 @@ The structure and metadata are tested in `crates/adoc-docbook/tests/structure.rs
 
 The blocks, inlines and tables are tested in `crates/adoc-docbook/tests/content.rs`, which holds `docbook_rich_content_uses_docbook_elements`, `docbook_tables_are_cals` and `docbook_unsupported_nodes_warn`.
 The placement of cells on the table's grid has unit tests in `crates/adoc-docbook/src/table.rs`.
-Every document in these tests is checked against the DocBook 5.2.1 RELAX NG schema.
+`nestings_the_schema_forbids_are_lowered` and `code_spans_hold_only_what_a_literal_may` in the same file check the lowerings above.
+Every document in these tests is checked against the DocBook 5.2.1 RELAX NG schema and the export's own check, exclusions included.
+
+`corpus` (`crates/adoc-docbook/tests/corpus.rs`) writes every AsciiDoc page of the repository's fixtures and documentation (255 pages) as an article and checks each against the RELAX NG schema and the check, exclusions included.
 
 Pictures, diagrams and formulas are tested in `crates/adoc-docbook/tests/media.rs`, which holds `docbook_assets_are_copied_and_relative`, `docbook_missing_media_is_reported`, `docbook_formulas_have_a_fallback` and `diagrams_are_pictures_or_their_source`.
 In the engine, `docbook_pictures_go_beside_the_document` in `crates/adoc-engine/tests/docbook_export.rs` exports the reference book and checks that every `fileref` leads to a file in the assets folder, that a later export with fewer pictures leaves only those, and the reference policy.
