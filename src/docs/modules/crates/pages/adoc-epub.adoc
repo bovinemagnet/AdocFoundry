@@ -8,9 +8,8 @@ It is at layer L2, beside `adoc-render` and `adoc-ebook`, which it reads.
 The book model, its mapping, pictures and metadata live in xref:crates:adoc-ebook.adoc[adoc-ebook], which Kindle export writes too.
 The specification is `docs/prd/PRD-AdocFoundry_EPUB_Export.md` in the repository, which is not part of this site.
 
-IMPORTANT: The crate is the first package of EPUB export (issue #638) and is not yet reachable from the app, the CLI or the MCP server.
-It is not wired into the engine either, so there is no way to export an EPUB yet.
-Later packages add the engine feature, the front ends, full semantic XHTML, links, media, CSS and metadata.
+IMPORTANT: The engine reaches the crate through its `epub` feature (`Engine::export_epub_blocking` and the commands `export.epub_page` and `export.epub_component`), but the app, the CLI and the MCP server do not yet, so there is no user-facing way to export an EPUB.
+Later packages add the front ends, full semantic XHTML, links, media, CSS and metadata.
 
 == What it does
 

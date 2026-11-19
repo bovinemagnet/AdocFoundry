@@ -35,7 +35,7 @@ cargo run -p adocfoundry-cli -- check tests/fixtures/antora-single-component
 
 `default-members` is the app crate, so a bare `cargo test` covers only the app: pass `--workspace` or `-p <crate>`.
 
-`adoc-engine`'s features `typst` (PDF export and typeset STEM), `docx` (DOCX export through `adoc-docx`, with no Typst), `kindle` (Kindle export through `adoc-kindle`, with no Typst and no other exporter) and `git` (`adoc-git`) are on by default for the crate but off in `[workspace.dependencies]`, so each front end names the ones it wants; `adoc-ls` builds none of them by default, the engine built with `docx` and without `typst` compiles neither `adoc-pdf` nor Typst, and the engine built with `kindle` alone compiles no other exporter, `adoc-math` or Typst, which `cargo xtask layers` checks. `typst`, `docx` and `kindle` each turn on `export`, the pipeline they share; front ends never name `export`.
+`adoc-engine`'s features `typst` (PDF export and typeset STEM), `docx` (DOCX export through `adoc-docx`, with no Typst), `kindle` (Kindle export through `adoc-kindle`, with no Typst and no other exporter), `epub` (EPUB export through `adoc-epub`, likewise; no front end names it until EPUB 8/9) and `git` (`adoc-git`) are on by default for the crate but off in `[workspace.dependencies]`, so each front end names the ones it wants; `adoc-ls` builds none of them by default, the engine built with `docx` and without `typst` compiles neither `adoc-pdf` nor Typst, and the engine built with `kindle` alone compiles no other exporter, `adoc-math` or Typst, which `cargo xtask layers` checks. `typst`, `docx` and `kindle` each turn on `export`, the pipeline they share; front ends never name `export`.
 
 ## Coding Style and Conventions
 

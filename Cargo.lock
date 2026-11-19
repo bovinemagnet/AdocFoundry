@@ -223,6 +223,8 @@ dependencies = [
  "adoc-diagrams",
  "adoc-docx",
  "adoc-dom",
+ "adoc-ebook",
+ "adoc-epub",
  "adoc-git",
  "adoc-graph",
  "adoc-impact",

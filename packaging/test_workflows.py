@@ -181,6 +181,16 @@ class DocxWithoutTypst(unittest.TestCase):
         self.assertIn("run: cargo check -p adoc-engine --no-default-features --features docx", lint)
 
 
+class EpubBuildsAlone(unittest.TestCase):
+    """EPUB export builds without Typst or another exporter
+    (docs/prd/PRD-AdocFoundry_EPUB_Export.md, test 5): `cargo xtask layers` checks the
+    dependency tree, and CI compiles the engine that way."""
+
+    def test_the_engine_is_compiled_with_epub_alone(self):
+        lint = "\n".join(jobs(read("ci.yml"))["lint"])
+        self.assertIn("run: cargo check -p adoc-engine --no-default-features --features epub", lint)
+
+
 class KindleBuildsAlone(unittest.TestCase):
     """Kindle export builds without Typst or another exporter
     (docs/prd/PRD-AdocFoundry_Kindle_Export.md, test 2): `cargo xtask layers` checks the

@@ -522,6 +522,30 @@ fn kindle_engine_packages(root: &Path) -> Result<BTreeSet<String>, String> {
     )
 }
 
+/// The packages the engine compiles with EPUB export alone: `--no-default-features --features
+/// epub`.
+fn epub_engine_packages(root: &Path) -> Result<BTreeSet<String>, String> {
+    build_packages(
+        root,
+        "adoc-engine",
+        &["--no-default-features", "--features", "epub"],
+    )
+}
+
+/// What EPUB export must never compile, in `adoc-epub` or in the engine built with `epub`
+/// alone: books are written through the shared book model, never through another format's
+/// exporter or Typst (EPUB PRD §8).
+const EPUB_EXCLUDED: &[&str] = &["adoc-pdf", "adoc-docx", "adoc-kindle", "adoc-math", "typst"];
+
+/// A violation for each crate of [`EPUB_EXCLUDED`] in an EPUB build.
+fn epub_violations(packages: &BTreeSet<String>) -> Vec<String> {
+    EPUB_EXCLUDED
+        .iter()
+        .filter(|name| packages.contains(**name))
+        .map(|name| format!("EPUB export builds {name}; it needs no other exporter or Typst"))
+        .collect()
+}
+
 /// What Kindle export must never compile, in `adoc-kindle` or in the engine built with `kindle`
 /// alone: books are written from the view tree, never through another format's exporter or
 /// Typst (Kindle PRD §9).
@@ -639,6 +663,8 @@ pub fn run(root: &Path) -> Result<Vec<String>, String> {
         "adoc-kindle",
     )?));
     violations.extend(kindle_violations(&kindle_engine_packages(root)?));
+    violations.extend(epub_violations(&default_build_packages(root, "adoc-epub")?));
+    violations.extend(epub_violations(&epub_engine_packages(root)?));
     violations.extend(kindle_licence_violations(&kindle_licences(root)?));
     Ok(violations)
 }
@@ -972,6 +998,31 @@ libc = "=0.2.0"
             "std::process::Command::new(\"x\")".to_owned(),
         );
         assert_eq!(check_sources("adoc-kindle", &sources).len(), 2);
+    }
+
+    /// EPUB PRD §11 test 5: EPUB export alone, in `adoc-epub` and in the engine built with
+    /// `epub` and no other format, compiles neither Typst nor another exporter.
+    #[test]
+    fn epub_builds_alone() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let packages = default_build_packages(&root, "adoc-epub").unwrap();
+        assert!(packages.contains("adoc-ebook"), "{packages:?}");
+        assert_eq!(epub_violations(&packages), Vec::<String>::new());
+
+        let engine = epub_engine_packages(&root).unwrap();
+        assert!(engine.contains("adoc-epub"), "{engine:?}");
+        assert_eq!(epub_violations(&engine), Vec::<String>::new());
+
+        let with_others: BTreeSet<String> = ["adoc-epub", "adoc-kindle", "typst"]
+            .map(str::to_owned)
+            .into();
+        assert_eq!(
+            epub_violations(&with_others),
+            [
+                "EPUB export builds adoc-kindle; it needs no other exporter or Typst",
+                "EPUB export builds typst; it needs no other exporter or Typst",
+            ]
+        );
     }
 
     /// Kindle PRD §12 test 19: `adoc-kindle`, and `adoc-ebook`, whose book model it writes,

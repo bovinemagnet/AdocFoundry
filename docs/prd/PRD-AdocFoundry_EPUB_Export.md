@@ -300,6 +300,25 @@ The epic starts with a package of its own, before E1: Kindle export's book model
 - `dc:date` is not written, since `revdate` is free text and EPUB needs a date. E6 decides.
 - The acceptance tests are `epub_package_is_valid_ocf`, `epub_text_is_escaped` and `epub_output_is_deterministic` (`crates/adoc-epub/tests/package.rs`). They read the archive back with the crate's own reader (`testing`, feature `test-support`), so they never trust a ZIP library to forgive the bytes.
 
+
+### E2 (#639): the engine's `epub` feature
+
+- **The feature:** `adoc-engine`'s `epub` feature turns on the shared export pipeline, `adoc-epub` and `adoc-ebook`.
+  - It is a default of the engine crate, and off in `[workspace.dependencies]`. No front end names it until E8, so the app's palette test lists the two new commands as exceptions, as Kindle's were.
+  - `epub_builds_alone` (in `xtask`) and CI's lint job hold the engine built with `epub` alone to no Typst and no other exporter.
+- **No new planner:** the shared plan (#619) was already extracted by the DOCX epic, so this package is shaped like Kindle's K2. Kindle and EPUB share the hand-over of the arranged pages to `adoc-ebook` (`to_book`) and the write to a temporary file renamed over the output through the job's commit (`write_book_file`).
+- **The commands:** `export.epub_page` and `export.epub_component`, with `EpubExportArgs`, and `Engine::export_epub_blocking`. The output must be an `.epub` file (any letter case), not a folder or a link.
+- **Read-only pages are refused:** an EPUB carries no editing restriction, so `ExportFormat::Epub` refuses a page asking for one before anything is read, as Kindle and HTML do.
+- **The modification time:**
+  - It is chosen in this order: the arguments' `modified` (a profile's, from E7), then `SOURCE_DATE_EPOCH`, then the time of the export.
+  - The time of the export is reported as an information note, not a warning, since an interactive export is not wrong for being unrepeatable. So `--fail-on warning` does not fail on it.
+  - A time outside 1980 to 2107 fails the export.
+- **No settings yet:** E7 adds `[epub]` and its profiles, so this package takes metadata from the arguments only.
+- **Tests:**
+  - In `crates/adoc-engine/tests/epub_export.rs`: `epub_and_pdf_select_the_same_pages` and `epub_failed_export_keeps_existing_output`, with `epub_outputs_must_be_epub_files` and `epub_refuses_a_read_only_page` beside them.
+  - `epub_builds_alone` in `xtask`.
+  - A unit test of the time's order.
+
 ## 16. References
 
 - W3C, [EPUB 3.3](https://www.w3.org/TR/epub-33/) (Recommendation)
