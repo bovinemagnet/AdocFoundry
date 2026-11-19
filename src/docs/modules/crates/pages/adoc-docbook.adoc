@@ -7,7 +7,7 @@ Paul Snow
 It is at layer L2, beside `adoc-render` and `adoc-epub`.
 The specification is `docs/prd/PRD-AdocFoundry_DocBook_Export.md` in the repository, which is not part of this site.
 
-NOTE: This is the first package of the DocBook export (DocBook 1/9, issue #649, of epic #615).
+NOTE: The crate is the DocBook export of epic #615, built in packages: the crate and its XML writer (DocBook 1/9, #649), the engine's feature (DocBook 2/9, #650), and a book's structure and metadata (DocBook 3/9, #651).
 The crate is headless.
 The engine reaches it through its `docbook` feature (the second package, DocBook 2/9, issue #650), which the app, the command line and the MCP server do not yet name.
 Later packages wire those in.
@@ -41,17 +41,49 @@ The 5.2.1 schema accepts any text there and its Schematron only requires a versi
 
 == What is written so far
 
-In this first package:
-
 * a page's title, sections and paragraphs, with emphasis, strong, code, superscript and subscript;
-* a book's parts, where a part is opened by its first page, and one chapter for each page.
-A part with no pages is left out, with a warning.
+* a book's structure, from the engine's publication plan;
+* the metadata in the root's `info`.
 
 Every other block keeps its text in a `para` or a `literallayout`, with a warning.
 Later packages replace those.
 
-A page without a title is titled with its file's name, with a warning.
-An article, chapter or section that would be empty gets an empty `para`, since DocBook does not allow them empty.
+An article, chapter or section with nothing at all gets an empty `para`, since DocBook does not allow them empty.
+A page with no blocks of its own but pages under it needs no empty paragraph.
+
+== A book's structure
+
+A book follows the engine's publication plan:
+
+* The start page that the navigation does not list leads as the `preface`.
+The engine marks it in the plan, and other formats ignore the mark.
+Only a book's first item can be the preface.
+* Each navigation list's title is a `part`.
+* A top-level heading of the navigation with no page of its own is a `part` when it is not inside a list title's part.
+When it is inside one, it is a `chapter` holding its pages, because DocBook parts do not nest.
+* A top-level page is a `chapter`.
+* A page or heading that the navigation nests under another is a `section` of it, at any depth, written after the page's own sections.
+A page's own sections nest as they do in the page.
+* A part or heading with no page under it is left out with one warning, since DocBook allows neither empty.
+
+== Metadata
+
+The root's `info` holds only what the attributes give, as Asciidoctor's DocBook converter writes it, and nothing is made up:
+
+* The title and subtitle.
+A page title of plain text is split at its last `": "` into title and subtitle, as Asciidoctor does.
+A title with markup is kept whole.
+* One `author` for each author on the header's author line, with `firstname`, `othername` (from `middlename`), `surname` and `email`.
+Failing that, an `authors` attribute gives names separated by semicolons, or by commas when there is no semicolon, each a `personname`.
+* `date`, from `revdate`.
+* A `revhistory` of one `revision` when there is a date and a `revnumber` or `revremark`.
+A `revnumber` with no date gives a `releaseinfo` instead, because a `revision` must have a date.
+* A `keywordset`, from `keywords` (separated by commas), and an `abstract`, from `description`.
+
+A book's attributes are its component's, so its `revnumber` is the component version and its title is the component's title.
+
+A page with no title, after the navigation's text for it, takes its file's name, with a warning located at the page.
+A book with no title is "Untitled", with a warning.
 
 == Escaping
 
@@ -103,6 +135,9 @@ It writes no file: the caller puts the document in place.
 == Tests
 
 The acceptance tests are `docbook_root_is_wellformed_and_versioned`, `docbook_text_is_escaped` and `docbook_output_is_deterministic`, in `crates/adoc-docbook/tests/root.rs`.
+
+The structure and metadata are tested in `crates/adoc-docbook/tests/structure.rs`, including `docbook_article_has_metadata`.
+In the engine, `docbook_book_hierarchy_follows_the_plan` in `crates/adoc-engine/tests/docbook_export.rs` checks the hierarchy over the PDF book fixture and the reference fixture of several components and versions.
 
 == Where it sits
 

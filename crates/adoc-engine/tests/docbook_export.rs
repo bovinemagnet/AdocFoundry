@@ -418,3 +418,142 @@ fn docbook_starts_no_diagram_program() {
     );
     assert!(document_text(&output).contains("digraph { a -> b }"));
 }
+
+/// `node`'s structural children as `element: title`, nested by indentation.
+fn outline(node: roxmltree::Node<'_, '_>, depth: usize, out: &mut Vec<String>) {
+    for child in node.children().filter(roxmltree::Node::is_element) {
+        let name = child.tag_name().name();
+        if matches!(name, "preface" | "part" | "chapter" | "section") {
+            let title: String = child
+                .children()
+                .find(|child| child.has_tag_name((adoc_docbook::NAMESPACE, "title")))
+                .map(|title| {
+                    title
+                        .descendants()
+                        .filter(roxmltree::Node::is_text)
+                        .filter_map(|node| node.text())
+                        .collect()
+                })
+                .unwrap_or_default();
+            out.push(format!("{}{name}: {title}", "  ".repeat(depth)));
+            outline(child, depth + 1, out);
+        }
+    }
+}
+
+/// The document at `path`, checked, as its outline and its `info` element's text by child.
+fn outline_and_info(path: &Path) -> (Vec<String>, Vec<(String, String)>) {
+    let xml = fs::read_to_string(path).unwrap();
+    adoc_docbook::testing::assert_valid(&xml);
+    let document = adoc_docbook::testing::parse(&xml);
+    let mut lines = Vec::new();
+    outline(document.root_element(), 0, &mut lines);
+    let info = document.root_element().first_element_child().expect("info");
+    let info = info
+        .children()
+        .filter(roxmltree::Node::is_element)
+        .map(|child| {
+            let text: String = child
+                .descendants()
+                .filter(roxmltree::Node::is_text)
+                .filter_map(|node| node.text())
+                .collect();
+            (child.tag_name().name().to_owned(), text)
+        })
+        .collect();
+    (lines, info)
+}
+
+/// PRD §11 test 7: a component version is a book that follows the plan PDF export follows:
+/// the start page the navigation does not list is the preface, each navigation list's title a
+/// part, top-level pages chapters, nested pages and headings sections, each page once. In a
+/// workspace of several components and versions, the version asked for is the one exported,
+/// with its own metadata.
+#[test]
+fn docbook_book_hierarchy_follows_the_plan() {
+    let (directory, _root, mut engine) = book_workspace();
+    let output = directory.path().join("guide.xml");
+    engine
+        .export_docbook_blocking(docbook(book(), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let (lines, info) = outline_and_info(&output);
+    assert_eq!(
+        lines,
+        [
+            "preface: Welcome",
+            "part: Getting Started",
+            "  chapter: Install",
+            "    section: Requirements",
+            "    section: Configure",
+            "      section: Options",
+            "  chapter: Use",
+            "part: Administration",
+            "  chapter: Administering the Guide",
+            "  chapter: Backup",
+            "  chapter: Recovery",
+            "    section: Restore",
+            "  chapter: Empty Page",
+        ]
+    );
+    assert_eq!(
+        info,
+        [
+            ("title".to_owned(), "The Guide".to_owned()),
+            ("releaseinfo".to_owned(), "1.0".to_owned()),
+        ]
+    );
+
+    // Several components and versions: each version is its own book.
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path().join("reference");
+    copy_tree(&fixture("docx/reference"), &root);
+    let mut settings = Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    let manual = |version: &str| ExportTarget::Component {
+        name: "manual".to_owned(),
+        version: Some(version.to_owned()),
+    };
+    let output = workspace.path().join("manual-2.xml");
+    engine
+        .export_docbook_blocking(docbook(manual("2.0"), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let (lines, info) = outline_and_info(&output);
+    let chapters: Vec<&str> = lines
+        .iter()
+        .filter(|line| !line.starts_with("    "))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        chapters,
+        [
+            "preface: The Manual",
+            "part: Using the product",
+            "  chapter: Installing",
+            "  chapter: Media",
+            "  chapter: Links",
+            "part: Administration",
+            "  chapter: Security",
+        ],
+        "{lines:#?}"
+    );
+    assert!(
+        lines.contains(&"    section: Tables".to_owned()),
+        "{lines:#?}"
+    );
+    assert!(info.contains(&("author".to_owned(), "Paul Snow".to_owned())));
+    assert!(info.contains(&("releaseinfo".to_owned(), "2.0".to_owned())));
+    let titles: Vec<&String> = lines.iter().collect();
+    let unique: std::collections::BTreeSet<&String> = titles.iter().copied().collect();
+    assert_eq!(unique.len(), titles.len(), "each page once: {lines:#?}");
+
+    let output = workspace.path().join("manual-1.xml");
+    engine
+        .export_docbook_blocking(docbook(manual("1.0"), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let (lines, info) = outline_and_info(&output);
+    assert_eq!(lines, ["chapter: The Old Manual"]);
+    assert!(info.contains(&("releaseinfo".to_owned(), "1.0".to_owned())));
+}

@@ -395,6 +395,9 @@ enum PlanItem {
         path: PathBuf,
         depth: u8,
         nav_title: Option<String>,
+        /// The start page, leading the book because the navigation does not list it: a
+        /// DocBook book's preface. Other formats read it as any page.
+        preface: bool,
     },
 }
 
@@ -1691,6 +1694,7 @@ impl Engine {
                 path: start,
                 depth: 1,
                 nav_title: None,
+                preface: true,
             });
         }
         for (title, entries) in &groups {
@@ -1707,6 +1711,7 @@ impl Engine {
                         path,
                         depth: 1,
                         nav_title: Some(title.title.clone()),
+                        preface: false,
                     });
                 }
             }
@@ -1767,6 +1772,7 @@ impl Engine {
                         path,
                         depth,
                         nav_title: Some(entry.title.clone()),
+                        preface: false,
                     });
                 }
                 Some(_) => {}
@@ -2163,6 +2169,8 @@ enum ArrangedItem {
         key: String,
         view: ViewTree,
         depth: u8,
+        /// The start page as the book's preface ([`PlanItem::Page`]).
+        preface: bool,
     },
 }
 
@@ -2189,6 +2197,7 @@ fn arrange(plan: &Plan, views: Vec<(PathBuf, ViewTree)>) -> Arranged {
                         path,
                         depth,
                         nav_title,
+                        preface,
                     } => {
                         let mut view = views.remove(path)?;
                         if view.title.is_none() {
@@ -2201,6 +2210,7 @@ fn arrange(plan: &Plan, views: Vec<(PathBuf, ViewTree)>) -> Arranged {
                             key: format!("p{index}"),
                             view,
                             depth: *depth,
+                            preface: *preface,
                         })
                     }
                 })
@@ -2252,9 +2262,9 @@ fn to_pdf(arranged: Arranged) -> adoc_pdf::Document {
                 .map(|item| match item {
                     ArrangedItem::Part(title) => BookItem::Part(title),
                     ArrangedItem::Heading { title, depth } => BookItem::Heading { title, depth },
-                    ArrangedItem::Page { key, view, depth } => {
-                        BookItem::Page(PageView { key, view, depth })
-                    }
+                    ArrangedItem::Page {
+                        key, view, depth, ..
+                    } => BookItem::Page(PageView { key, view, depth }),
                 })
                 .collect(),
         }),
@@ -2283,9 +2293,9 @@ fn to_docx(arranged: Arranged) -> adoc_docx::DocxDocument {
                 .map(|item| match item {
                     ArrangedItem::Part(title) => BookItem::Part(title),
                     ArrangedItem::Heading { title, depth } => BookItem::Heading { title, depth },
-                    ArrangedItem::Page { key, view, depth } => {
-                        BookItem::Page(DocxPage { key, view, depth })
-                    }
+                    ArrangedItem::Page {
+                        key, view, depth, ..
+                    } => BookItem::Page(DocxPage { key, view, depth }),
                 })
                 .collect(),
         }),
@@ -2980,9 +2990,9 @@ fn to_book(arranged: Arranged) -> adoc_ebook::Document {
                 .map(|item| match item {
                     ArrangedItem::Part(title) => BookItem::Part(title),
                     ArrangedItem::Heading { title, depth } => BookItem::Heading { title, depth },
-                    ArrangedItem::Page { key, view, depth } => {
-                        BookItem::Page(Page { key, view, depth })
-                    }
+                    ArrangedItem::Page {
+                        key, view, depth, ..
+                    } => BookItem::Page(Page { key, view, depth }),
                 })
                 .collect(),
         }),
@@ -3124,8 +3134,18 @@ fn to_docbook(arranged: Arranged) -> adoc_docbook::DocBookDocument {
                 .map(|item| match item {
                     ArrangedItem::Part(title) => BookItem::Part(title),
                     ArrangedItem::Heading { title, depth } => BookItem::Heading { title, depth },
-                    ArrangedItem::Page { key, view, depth } => {
-                        BookItem::Page(Page { key, view, depth })
+                    ArrangedItem::Page {
+                        key,
+                        view,
+                        depth,
+                        preface,
+                    } => {
+                        let page = Page { key, view, depth };
+                        if preface {
+                            BookItem::Preface(page)
+                        } else {
+                            BookItem::Page(page)
+                        }
                     }
                 })
                 .collect(),

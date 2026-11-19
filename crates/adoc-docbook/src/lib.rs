@@ -21,6 +21,7 @@ pub use check::check;
 mod blocks;
 mod check;
 mod document;
+mod info;
 mod inlines;
 #[cfg(feature = "test-support")]
 pub mod testing;
@@ -62,6 +63,9 @@ pub struct Book {
 /// One item of a book, in order.
 #[derive(Clone, Debug)]
 pub enum BookItem {
+    /// The start page, when the navigation does not list it: the book's `preface`. Only a
+    /// book's first item is read so; a later one is a chapter.
+    Preface(Page),
     /// A part's title.
     Part(String),
     /// A heading of the navigation with no page of its own, at a depth (1 at the top).
