@@ -181,13 +181,12 @@ impl Writer<'_> {
                 self.xml.close("div");
             }
             Block::Table { anchor, rows } => self.table(anchor.as_deref(), rows),
-            Block::Figure { anchor, alt, .. } => {
-                // Pictures are embedded with EPUB 5/9; until then, their description.
+            Block::Figure { anchor, asset, alt } => {
                 let mut attributes: Vec<(&str, &str)> = id(anchor.as_deref()).into_iter().collect();
-                attributes.push(("class", "figure"));
-                self.xml.open("div", &attributes);
-                self.xml.element("p", &[], alt);
-                self.xml.close("div");
+                attributes.push(("class", "image"));
+                self.xml.open("figure", &attributes);
+                self.picture(*asset, alt, None);
+                self.xml.close("figure");
             }
             Block::Rule => self.xml.empty("hr", &[]),
             // A separator, not a page: a reflowable book has none (PRD §5.1).
@@ -195,6 +194,18 @@ impl Writer<'_> {
             Block::Notes(notes) => self.notes(notes),
         }
         self.xml.newline();
+    }
+
+    /// A picture of the book, sized by the reading system's style rather than in pixels, so
+    /// it shrinks to a small screen with its proportions kept.
+    fn picture(&mut self, asset: usize, alt: &str, class: Option<&str>) {
+        let src = format!(
+            "../{}",
+            crate::package::picture_file(asset, &self.book.assets[asset])
+        );
+        let mut attributes = vec![("src", src.as_str()), ("alt", alt)];
+        attributes.extend(class.map(|class| ("class", class)));
+        self.xml.empty("img", &attributes);
     }
 
     fn table(&mut self, anchor: Option<&str>, rows: &[Row]) {
@@ -337,8 +348,7 @@ impl Writer<'_> {
                 }
                 self.xml.close("sup");
             }
-            // Pictures are embedded with EPUB 5/9; until then, their description.
-            Inline::Image { alt, .. } => self.xml.text(alt),
+            Inline::Image { asset, alt } => self.picture(*asset, alt, Some("inline")),
             Inline::LineBreak => self.xml.empty("br", &[]),
         }
     }

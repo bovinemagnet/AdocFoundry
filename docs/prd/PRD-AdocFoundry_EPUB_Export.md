@@ -365,6 +365,28 @@ The epic starts with a package of its own, before E1: Kindle export's book model
   - `epub_nav_matches_the_plan` (in `adoc-epub`): parts, headings and pages at three depths, with a page's sections.
   - `epub_internal_links_resolve` (in the engine, over the Word and Kindle reference fixtures with a page alias and a missing id added): links across modules, through an alias, to an id two pages define, out of the book, and to a missing id.
 
+
+### E5 (#642): pictures, diagrams, formulas and the cover
+
+- **Pictures** come from the shared model's `media.rs`:
+  - read through the export's `FileAccess`, recognised by their bytes, checked whole and within limits;
+  - kept once however often shown;
+  - a remote picture is never fetched.
+
+  Each is written once as `EPUB/images/i<n>.<extension>`, with its media type in the manifest. In a chapter it is an `img` with its description as `alt`, in a `figure` for a block picture. No `width` or `height` is written, so the reading system sizes it to the screen.
+- **SVG (§14):** rasterised by `resvg`, at twice its size on white, as Word and Kindle do. Nothing is loaded from outside the file, and no SVG is packed, so no script, external reference or entity can reach the book. Sanitised SVG is not offered: a rasterised drawing loses nothing a reader needs, and the PNG is safe by construction.
+- **Diagrams drawn by external tools (§14):** §7 covers the EPUB writing alone, as Kindle's K6 settled. Diagrams are embedded as the export's diagram workers drew them, Graphviz, PlantUML and D2 from tools on `PATH` among them, as for PDF, Word and Kindle. One not drawn is its source, with a warning.
+- **MathML (§14):** not in the first release. A formula is the drawing the STEM provider made, with its source as the description. With no drawing (a build without Typst) it is its source as code, with a warning.
+- **The cover:**
+  - It is the export's own, else the first page's `front-cover-image`.
+  - It is listed with `properties="cover-image"`, shown alone in `EPUB/cover.xhtml`, first in the spine, with a `cover` landmark.
+  - `title-logo-image` is not used, since EPUB has no title page.
+- **Message wording:** the shared mapping's message for a file that is not a picture names the format's reader (`Format::reader`). Kindle's wording, "a Kindle", is unchanged, and Kindle's bytes were compared again.
+- **`testing::assert_links_resolve`** also checks that every `img` is an image of the manifest and has an `alt`.
+- **Tests:**
+  - `epub_media_is_embedded`: a cover, a PNG shown twice and held once, a JPEG, a diagram, and display and inline formulas.
+  - `epub_bad_assets_are_reported`: an oversized, a truncated, a missing, a remote and an outside picture, text named as a PNG, and an SVG with a script and a `file:` link.
+
 ## 16. References
 
 - W3C, [EPUB 3.3](https://www.w3.org/TR/epub-33/) (Recommendation)

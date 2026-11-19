@@ -2,7 +2,7 @@
 //! package document, the navigation document and the chapters. Paths are fixed and named from
 //! the book's own chapter ids, never from a source path.
 
-use adoc_ebook::{Book, Chapter, Target, TocEntry};
+use adoc_ebook::{Asset, Book, Chapter, Target, TocEntry};
 
 use crate::{xml::Xml, zip::ZipWriter, EpubError, Modified};
 
@@ -34,13 +34,49 @@ fn files(book: &Book, modified: Modified) -> Vec<(String, Vec<u8>)> {
         (PACKAGE.to_owned(), package(book, modified)),
         (format!("EPUB/{NAV}"), nav(book)),
     ];
+    if book.cover.is_some() {
+        files.push((format!("EPUB/{COVER}"), cover(book)));
+    }
     for (index, chapter) in book.chapters.iter().enumerate() {
         files.push((
             format!("EPUB/{}", chapter_file(chapter)),
             crate::xhtml::chapter(book, index),
         ));
     }
+    for (index, asset) in book.assets.iter().enumerate() {
+        files.push((
+            format!("EPUB/{}", picture_file(index, asset)),
+            asset.bytes.clone(),
+        ));
+    }
     files
+}
+
+/// The cover document, relative to the package document.
+const COVER: &str = "cover.xhtml";
+
+/// A picture's file, relative to the package document: `images/i<n>.<extension>`, each picture
+/// once however often it is shown.
+pub(crate) fn picture_file(index: usize, asset: &Asset) -> String {
+    format!("images/i{}.{}", index + 1, asset.kind.extension())
+}
+
+/// The cover document: the cover picture, alone.
+fn cover(book: &Book) -> Vec<u8> {
+    let mut xml = Xml::xhtml(&book.metadata.language, &book.metadata.title);
+    xml.open("body", &[]);
+    xml.newline();
+    xml.open("section", &[("epub:type", "cover"), ("class", "cover")]);
+    if let Some(index) = book.cover {
+        let src = picture_file(index, &book.assets[index]);
+        xml.empty("img", &[("src", &src), ("alt", &book.metadata.title)]);
+    }
+    xml.close("section");
+    xml.newline();
+    xml.close("body");
+    xml.close("html");
+    xml.newline();
+    xml.into_bytes()
 }
 
 /// A chapter's content document, relative to the package document.
@@ -141,6 +177,13 @@ fn package(book: &Book, modified: Modified) -> Vec<u8> {
         ],
     );
     xml.newline();
+    if book.cover.is_some() {
+        xml.empty(
+            "item",
+            &[("id", "cover"), ("href", COVER), ("media-type", XHTML)],
+        );
+        xml.newline();
+    }
     for chapter in &book.chapters {
         xml.empty(
             "item",
@@ -152,10 +195,28 @@ fn package(book: &Book, modified: Modified) -> Vec<u8> {
         );
         xml.newline();
     }
+    for (index, asset) in book.assets.iter().enumerate() {
+        let id = format!("i{}", index + 1);
+        let href = picture_file(index, asset);
+        let mut attributes = vec![
+            ("id", id.as_str()),
+            ("href", href.as_str()),
+            ("media-type", asset.kind.media_type()),
+        ];
+        if book.cover == Some(index) {
+            attributes.push(("properties", "cover-image"));
+        }
+        xml.empty("item", &attributes);
+        xml.newline();
+    }
     xml.close("manifest");
     xml.newline();
     xml.open("spine", &[]);
     xml.newline();
+    if book.cover.is_some() {
+        xml.empty("itemref", &[("idref", "cover")]);
+        xml.newline();
+    }
     for chapter in &book.chapters {
         xml.empty("itemref", &[("idref", &chapter.id)]);
         xml.newline();
@@ -228,10 +289,13 @@ fn landmarks(xml: &mut Xml, book: &Book) {
             anchor: None,
         },
     );
-    for (kind, href, title) in [
-        ("toc", "nav.xhtml#toc", "Contents"),
-        ("bodymatter", first.as_str(), "Start of content"),
-    ] {
+    let mut landmarks = Vec::new();
+    if book.cover.is_some() {
+        landmarks.push(("cover", COVER, "Cover"));
+    }
+    landmarks.push(("toc", "nav.xhtml#toc", "Contents"));
+    landmarks.push(("bodymatter", first.as_str(), "Start of content"));
+    for (kind, href, title) in landmarks {
         xml.open("li", &[]);
         xml.element("a", &[("epub:type", kind), ("href", href)], title);
         xml.close("li");

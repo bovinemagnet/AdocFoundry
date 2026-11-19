@@ -9,7 +9,7 @@ The book model, its mapping, pictures and metadata live in xref:crates:adoc-eboo
 The specification is `docs/prd/PRD-AdocFoundry_EPUB_Export.md` in the repository, which is not part of this site.
 
 IMPORTANT: The engine reaches the crate through its `epub` feature (`Engine::export_epub_blocking` and the commands `export.epub_page` and `export.epub_component`), but the app, the CLI and the MCP server do not yet, so there is no user-facing way to export an EPUB.
-Later packages add the front ends, media, CSS and metadata.
+Later packages add the front ends, CSS and metadata.
 
 == What it does
 
@@ -23,7 +23,8 @@ The publication is an OCF container holding:
 * `META-INF/container.xml`;
 * the package document `EPUB/package.opf`: EPUB 3 (`version="3.0"`), with `dc:identifier` as the unique identifier, `dc:title`, `dc:language`, a `dc:creator` for each author, the publisher and description where known, one `dcterms:modified`, a manifest with exactly one `nav` item, and a spine of the chapters;
 * the navigation document `EPUB/nav.xhtml`, with the table of contents and the landmarks (see below);
-* one XHTML content document for each chapter, `EPUB/text/c<n>.xhtml`.
+* one XHTML content document for each chapter, `EPUB/text/c<n>.xhtml`;
+* each picture, `EPUB/images/i<n>.<extension>`, and the cover document `EPUB/cover.xhtml` when there is a cover (see below).
 
 The chapters are semantic XHTML, written by `xhtml.rs`.
 
@@ -52,7 +53,7 @@ Parts come first, then their pages and navigation headings, then each page's sec
 
 The landmarks are a second `nav` with `epub:type="landmarks"`, hidden with `hidden="hidden"`.
 `toc` leads to `nav.xhtml#toc`, and `bodymatter` leads to the first chapter.
-A cover landmark comes with the cover, in a later package.
+When the book has a cover, a `cover` landmark leads to `cover.xhtml`.
 
 == Links
 
@@ -72,7 +73,46 @@ Every mark is a `sup` holding an `a` with `epub:type="noteref"`, and a repeated 
 
 Passthrough is shown as text with a located warning, never as markup.
 An unsupported block is its source with a located warning.
-Pictures are still written as their description, until a later package embeds them.
+
+== Pictures
+
+Pictures come from the shared book model of xref:crates:adoc-ebook.adoc[adoc-ebook] (its `media.rs`), as they do for Kindle export.
+They are read through the export's `FileAccess`, recognised by their bytes, and checked whole and within limits: 16 MiB a file, 40 megapixels and 256 MiB a book.
+Each picture is kept once, however often it is shown.
+PNG, JPEG and GIF are kept as they are.
+SVG is drawn as a PNG at twice its size by `resvg`, with nothing loaded from outside the file, so no script, external reference or entity reaches the book.
+A remote picture is never fetched.
+
+Each picture is written once as `EPUB/images/i<n>.<extension>` and listed in the manifest with its media type.
+
+In a chapter, a block picture is a `figure` with the class `image` holding an `img`, and an inline one is an `img` with the class `inline`.
+Each has its description as `alt`.
+No `width` or `height` is written, so the reading system's style sizes the picture to the screen with its proportions kept.
+The stylesheet comes with a later package.
+
+Diagrams are embedded as the export's diagram workers drew them: Mermaid in process, and the other tools when they are on `PATH`, as for PDF, Word and Kindle export.
+A diagram that was not drawn is its source, with a warning.
+
+A formula is the drawing the engine's STEM provider made, with the formula's source as its description.
+With no drawing, as when Typst is not built in, it is the source as code, with a warning.
+MathML is not written yet.
+
+=== The cover
+
+The cover is the export's own picture, else the `front-cover-image` of the first page.
+It is listed in the manifest with `properties="cover-image"` and shown alone in the cover document `EPUB/cover.xhtml`, which is first in the spine and has a `cover` landmark.
+
+=== Pictures that cannot be shown
+
+A picture is its description in the text, with a warning at its line, when it cannot be shown because it is:
+
+* missing or unreadable;
+* malformed;
+* too large;
+* outside the folders the export may read;
+* not a picture.
+
+A remote picture is a link to it, with a warning.
 
 == Checks
 
@@ -96,11 +136,13 @@ The `test-support` feature gives the `testing` module: a ZIP reader of its own (
 `testing::assert_links_resolve` checks every link of the book's XHTML files as a reading system follows it.
 A link inside the book must lead to a document of the manifest and, with a fragment, to an element with that id.
 Any other link must be an address of `testing::SCHEMES` (http, https, mailto, ftp, ftps and tel), never `file:` or `antora:`.
+It checks every `img` too: its `src` must be an image of the manifest, and it must have an `alt`.
 It returns every link as an `Href`: the file it is in, the href and its text.
 
 The acceptance tests are `epub_package_is_valid_ocf`, `epub_text_is_escaped` and `epub_output_is_deterministic`, in `crates/adoc-epub/tests/package.rs`.
 The content tests are `epub_content_is_wellformed_xhtml`, `epub_footnotes_link_both_ways` and `epub_unsupported_nodes_warn`, in `crates/adoc-epub/tests/content.rs`.
 The navigation tests are `epub_nav_matches_the_plan` and `links_inside_and_out_of_a_book`, in `crates/adoc-epub/tests/navigation.rs`.
+The media tests are `epub_media_is_embedded` and `epub_bad_assets_are_reported`, in `crates/adoc-epub/tests/media.rs`.
 `epub_internal_links_resolve`, in `crates/adoc-engine/tests/epub_export.rs`, exports the Word and Kindle reference fixtures with a page alias and a missing id added, and checks every link.
 
 == Where it sits

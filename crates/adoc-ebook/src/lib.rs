@@ -86,6 +86,15 @@ impl Format {
             Self::Epub => "an EPUB",
         }
     }
+
+    /// What reads the format, as a diagnostic says it: "a Kindle", "an EPUB reader".
+    #[must_use]
+    pub fn reader(self) -> &'static str {
+        match self {
+            Self::Kindle => "a Kindle",
+            Self::Epub => "an EPUB reader",
+        }
+    }
 }
 
 /// How a book is made. The metadata given here wins over the document's attributes.

@@ -907,7 +907,8 @@ impl Mapper<'_> {
     }
 
     fn load(&mut self, path: &std::path::Path) -> Result<usize, String> {
-        self.media.load(path, &self.options.access)
+        self.media
+            .load(path, &self.options.access, self.options.format)
     }
 
     /// What an image that is not embedded becomes: its description, and a link to a remote

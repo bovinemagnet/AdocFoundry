@@ -37,7 +37,12 @@ pub(crate) struct Media {
 impl Media {
     /// The asset for the picture at `path`, or why it cannot be shown, as the end of a
     /// sentence naming it.
-    pub(crate) fn load(&mut self, path: &Path, access: &FileAccess) -> Result<usize, String> {
+    pub(crate) fn load(
+        &mut self,
+        path: &Path,
+        access: &FileAccess,
+        format: crate::Format,
+    ) -> Result<usize, String> {
         if let Some(index) = self.by_path.get(path) {
             return Ok(*index);
         }
@@ -57,8 +62,12 @@ impl Media {
         let asset = if looks_like_svg(&bytes) {
             self.svg(&bytes)?
         } else {
-            let kind =
-                kind_of(&bytes).ok_or("is not a picture a Kindle shows (PNG, JPEG, GIF or SVG)")?;
+            let kind = kind_of(&bytes).ok_or_else(|| {
+                format!(
+                    "is not a picture {} shows (PNG, JPEG, GIF or SVG)",
+                    format.reader()
+                )
+            })?;
             let (width, height) = raster_size(kind, &bytes)?;
             check_size(width, height)?;
             Asset {

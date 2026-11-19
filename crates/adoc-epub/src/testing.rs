@@ -397,9 +397,37 @@ pub fn assert_links_resolve(bytes: &[u8]) -> Vec<Href> {
             .collect();
         ids.insert(path.as_str(), found);
     }
+    let images: BTreeSet<&String> = package
+        .manifest
+        .values()
+        .filter(|(_, media, _)| media.starts_with("image/"))
+        .map(|(path, _, _)| path)
+        .collect();
     let mut links = Vec::new();
     for from in &documents {
         let document = parse(from, text(&files, from));
+        // Every picture is one of the book's, listed with an image type.
+        for img in document
+            .descendants()
+            .filter(|node| node.has_tag_name((XHTML, "img")))
+        {
+            let src = img
+                .attribute("src")
+                .unwrap_or_else(|| panic!("{from}: an img with no src"));
+            assert!(
+                !src.contains(':'),
+                "{from}: the picture {src} is outside the book"
+            );
+            let target = resolve(from, src);
+            assert!(
+                images.contains(&target),
+                "{from}: the picture {src} is not an image of the manifest"
+            );
+            assert!(
+                img.attribute("alt").is_some(),
+                "{from}: {src} has no alt attribute"
+            );
+        }
         for a in document
             .descendants()
             .filter(|node| node.has_tag_name((XHTML, "a")))
