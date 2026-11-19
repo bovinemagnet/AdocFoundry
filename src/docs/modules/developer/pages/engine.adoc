@@ -625,7 +625,7 @@ An unknown key or a bad value is a warning when the settings are read, as for ev
 `[docbook.profiles.<name>]` (`DocBookProfile`) is a DocBook publication.
 It has exactly one of `page`, `component` or `nav`, which repeats the content and never names another format's profile, an `output` (an `.xml` file inside the first workspace root, `<name>.xml` there when unset), `attributes` and `assets`, which overrides `[docbook] assets`.
 Any other key, an output that is not `.xml` and an unknown `assets` value are refused when the settings are read.
-An export's own policy wins over the profile's, which wins over `[docbook]`'s, which wins over copying.
+An export's own policy wins over the profile's, which wins over the policy in `[docbook]`, which wins over copying.
 The assets folder's name, the self-check and the diagnostic threshold are not settings: the folder is always `<name>_assets`, since the rule for replacing it depends on it, the check always runs, and the threshold is the command line's `--fail-on`.
 `Engine::docbook_profile_export_args(name)` gives the `DocBookExportArgs` (an output outside the workspace is refused), `docbook_profile_problems(name)` finds, without exporting, a missing component or version or an assets folder holding files the export did not write, and `docbook_profiles()` lists the names.
 No PDF setting is read for DocBook and DocBook's change nothing in another format, which `docbook_settings_leave_pdf_unchanged` holds; `docbook_profiles_resolve_and_validate` holds the profiles.

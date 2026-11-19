@@ -1141,7 +1141,7 @@ It is `<name>.xml` there by default.
 A profile repeats its content: it never names a PDF, Word, Kindle or EPUB profile.
 Any other key, an output that is not an `.xml` file and an unknown `assets` value are refused when the settings are read.
 
-An export's own choice, from the command line, wins over the profile's, which wins over `[docbook]`'s, which wins over copying.
+An export's own choice, from the command line, wins over the profile's, which wins over the policy in `[docbook]`, which wins over copying.
 The workspace's settings override the user's, key by key, and a profile replaces one of the same name whole.
 
 [source,toml]
