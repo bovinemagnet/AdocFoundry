@@ -8,8 +8,8 @@ It is at layer L2, beside `adoc-render` and `adoc-ebook`, which it reads.
 The book model, its mapping, pictures and metadata live in xref:crates:adoc-ebook.adoc[adoc-ebook], which Kindle export writes too.
 The specification is `docs/prd/PRD-AdocFoundry_EPUB_Export.md` in the repository, which is not part of this site.
 
-IMPORTANT: The engine reaches the crate through its `epub` feature (`Engine::export_epub_blocking` and the commands `export.epub_page` and `export.epub_component`), but the app, the CLI and the MCP server do not yet, so there is no user-facing way to export an EPUB.
-What remains is settings and profiles, the front ends and conformance checks.
+NOTE: EPUB export is complete: the engine, the app, the command line and the MCP server all export it.
+What remains is manual checks in reading applications, listed in `docs/qa/epub.md` in the repository.
 
 == What it does
 
@@ -164,6 +164,24 @@ An archive name is refused as `EpubError::Invalid` when it is absolute, holds `.
 A name used twice is refused the same way.
 `EpubError::TooLarge` reports more than a ZIP archive holds.
 
+== Validation
+
+`adoc_epub::validate(bytes) -> Vec<String>` is the in-process validator (`src/validate.rs`).
+It reads an archive back with bounds-checked reads, so a damaged archive gives problems and never a panic, and an entry may inflate to at most 512 MB.
+It lists every problem it finds, not only the first.
+
+* The archive: `mimetype` not first, compressed, with an extra field or not exact; unsafe or repeated names; encrypted entries.
+* The container: one naming no package.
+* The package: one that is not EPUB 3, or has no unique identifier, `dc:title` or `dc:language`, or does not have exactly one `dcterms:modified`.
+* The manifest: items missing, outside the book, listed with the wrong media type for their extension or listed twice, and a file of the book that is not listed; not exactly one navigation document.
+* The spine: an empty one, or one naming something that is not a content document.
+* The content: XML that is not well-formed; a navigation document without exactly one `toc`.
+* Links: a link out of the book by a scheme other than http, https, mailto, ftp, ftps or tel; a link to no document or no element.
+* Resources: a picture or stylesheet that is not a file of the book of its kind; a picture without `alt`.
+
+`write_epub` and `write_book` run it on every book before returning it, and fail with `EpubError::Invalid` and the problems.
+It is not EPUBCheck and certifies no conformance.
+
 == Same input, same bytes
 
 The crate reads no clock and no environment.
@@ -176,6 +194,7 @@ The ZIP writer (`zip.rs`, deflate through `flate2` and CRC-32 through `crc32fast
 
 The `test-support` feature gives the `testing` module: a ZIP reader of its own (`entries`, `files`, `text` and `parse`) and `assert_valid_ocf`, which checks the container and the package as a reading system does.
 
+`testing` keeps its own independent reader, so the tests check the validator as well as the writer.
 `testing::assert_links_resolve` checks every link of the book's XHTML files as a reading system follows it.
 A link inside the book must lead to a document of the manifest and, with a fragment, to an element with that id.
 Any other link must be an address of `testing::SCHEMES` (http, https, mailto, ftp, ftps and tel), never `file:` or `antora:`.
@@ -187,6 +206,7 @@ The content tests are `epub_content_is_wellformed_xhtml`, `epub_footnotes_link_b
 The navigation tests are `epub_nav_matches_the_plan` and `links_inside_and_out_of_a_book`, in `crates/adoc-epub/tests/navigation.rs`.
 The media tests are `epub_media_is_embedded` and `epub_bad_assets_are_reported`, in `crates/adoc-epub/tests/media.rs`.
 The style tests are `epub_metadata_is_complete_or_reported`, `epub_css_has_no_external_dependencies` and `epub_accessibility_structure`, in `crates/adoc-epub/tests/style.rs`.
+The validator's test is `the_validator_finds_what_breaks_a_book`, in `crates/adoc-epub/tests/validate.rs`, which damages a good book eighteen ways.
 `epub_internal_links_resolve`, in `crates/adoc-engine/tests/epub_export.rs`, exports the Word and Kindle reference fixtures with a page alias and a missing id added, and checks every link.
 
 == Where it sits

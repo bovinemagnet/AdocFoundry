@@ -106,6 +106,9 @@ Each run restores the dependencies' build output with `Swatinem/rust-cache`, key
 |`pdf-standards`
 |On Ubuntu: builds `adocfoundry-cli` in release mode and exports `tests/fixtures/pdf/reference/article.adoc` as PDF/A-2a and as PDF/UA-1, and as PDF/A-1b and PDF/A-1a. It exports the book fixture (`tests/fixtures/pdf/book`, component `guide`) with both of those standards too, but not under PDF/A-1, because its Mermaid diagram uses transparency. veraPDF 1.30.3 validates every file through the `verapdf/cli:v1.30.3` container image, and any failed check fails the job.
 
+|`epubcheck`
+|On Ubuntu: builds `adocfoundry-cli` and exports the reference book (the Word reference book with the Kindle fixture laid over it), the book fixture and the reference article as EPUB with `SOURCE_DATE_EPOCH` fixed. It downloads a pinned EPUBCheck release (`EPUBCHECK_VERSION`, 5.4.0), checks it against `EPUBCHECK_SHA256` with `sha256sum -c` before it runs, and runs it with `--failonwarnings` on each book, with the Java the runner has. It is the only job that runs Java, and no test and no build needs it; `EpubCheck` in `packaging/test_workflows.py` holds both.
+
 |`grammar`
 |Installs `tree-sitter-cli` 0.27.1 (`cargo install --version 0.27.1 --locked`), builds the submodule grammars and runs their corpus tests with `tree-sitter test`, then runs the `queries_compile` test, so a grammar bump that breaks highlighting fails here and not in the app.
 |===

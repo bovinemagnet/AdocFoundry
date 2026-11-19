@@ -562,11 +562,16 @@ fn kindle_violations(packages: &BTreeSet<String>) -> Vec<String> {
 
 /// Each package Kindle export builds, with its licence expression, from `cargo tree`.
 fn kindle_licences(root: &Path) -> Result<Vec<(String, String)>, String> {
+    licences(root, "adoc-kindle")
+}
+
+/// Each package `package` builds, with its licence expression, from `cargo tree`.
+fn licences(root: &Path, package: &str) -> Result<Vec<(String, String)>, String> {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let output = Command::new(cargo)
         .current_dir(root)
         // Every platform's dependencies, whichever the check runs on.
-        .args(["tree", "--locked", "--target", "all", "-p", "adoc-kindle"])
+        .args(["tree", "--locked", "--target", "all", "-p", package])
         .args([
             "-e",
             "normal,build",
@@ -627,6 +632,18 @@ fn kindle_licence_violations(licences: &[(String, String)]) -> Vec<String> {
         .collect()
 }
 
+/// A violation for each package of EPUB export that may be used only under a copyleft licence,
+/// or declares none (EPUB PRD §7, as Kindle's).
+fn epub_licence_violations(licences: &[(String, String)]) -> Vec<String> {
+    licences
+        .iter()
+        .filter(|(_, licence)| !permissive(licence))
+        .map(|(name, licence)| {
+            format!("EPUB export builds {name}, licensed `{licence}`; no copyleft is allowed")
+        })
+        .collect()
+}
+
 /// Runs every check over the workspace rooted at `root`.
 pub fn run(root: &Path) -> Result<Vec<String>, String> {
     let crates = root.join("crates");
@@ -666,6 +683,7 @@ pub fn run(root: &Path) -> Result<Vec<String>, String> {
     violations.extend(epub_violations(&default_build_packages(root, "adoc-epub")?));
     violations.extend(epub_violations(&epub_engine_packages(root)?));
     violations.extend(kindle_licence_violations(&kindle_licences(root)?));
+    violations.extend(epub_licence_violations(&licences(root, "adoc-epub")?));
     Ok(violations)
 }
 
@@ -1052,6 +1070,36 @@ libc = "=0.2.0"
             ("either".to_owned(), "Apache-2.0 OR GPL-2.0-only".to_owned()),
         ];
         assert_eq!(kindle_licence_violations(&copyleft).len(), 3);
+    }
+
+    /// EPUB PRD §11 test 22: `adoc-epub`, and `adoc-ebook`, whose book model it writes, name
+    /// no process and no network path, and nothing EPUB export builds is under a copyleft
+    /// licence (`cargo deny` checks the rest of the tree).
+    #[test]
+    fn epub_is_in_process() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        for (name, least) in [("adoc-epub", 5), ("adoc-ebook", 4)] {
+            let mut sources = BTreeMap::new();
+            collect_sources(&root.join("crates").join(name).join("src"), &mut sources);
+            assert!(sources.len() > least, "{name}: {}", sources.len());
+            assert_eq!(check_sources(name, &sources), Vec::<String>::new());
+        }
+        // A source naming a process is caught.
+        let mut sources = BTreeMap::new();
+        sources.insert(
+            PathBuf::from("x.rs"),
+            "std::process::Command::new(\"epubcheck\")".to_owned(),
+        );
+        assert_eq!(check_sources("adoc-epub", &sources).len(), 2);
+
+        let licences = licences(&root, "adoc-epub").unwrap();
+        assert!(
+            licences.iter().any(|(name, _)| name == "roxmltree"),
+            "{licences:?}"
+        );
+        assert_eq!(epub_licence_violations(&licences), Vec::<String>::new());
+        let copyleft = [("boko".to_owned(), "GPL-3.0-or-later".to_owned())];
+        assert_eq!(epub_licence_violations(&copyleft).len(), 1);
     }
 
     /// The Word looks PRD, §9 test 1: themes load without Typst, so Word export can read them

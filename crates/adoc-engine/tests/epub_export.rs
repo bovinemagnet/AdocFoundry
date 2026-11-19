@@ -767,3 +767,167 @@ modified = "2026-11-19"
         "`[epub]` changes an EPUB"
     );
 }
+
+/// The reference workspace with `[epub]` settings and a profile added to its own.
+fn epub_reference(folder: &Path) -> (PathBuf, Engine) {
+    let root = folder.join("reference");
+    copy_tree(&fixture("docx/reference"), &root);
+    copy_tree(&fixture("kindle/reference"), &root);
+    let settings_file = root.join(".adocfoundry.toml");
+    let mut settings_text = fs::read_to_string(&settings_file).unwrap();
+    settings_text.push_str(
+        "\n[epub]\npublisher = \"AdocFoundry\"\nlanguage = \"en-GB\"\nmodified = \"2026-11-19\"\n\n\
+         [epub.profiles.handbook]\ncomponent = \"2.0@manual\"\noutput = \"build/handbook.epub\"\n",
+    );
+    fs::write(&settings_file, settings_text).unwrap();
+    let mut settings = Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    (root, engine)
+}
+
+/// PRD §11 test 23: a versioned book of two components with nested navigation, partials,
+/// footnotes, Japanese and Greek text, code, tables, a cover, PNG, JPEG and SVG pictures, a
+/// diagram, formulas, a missing picture, a malformed page, page aliases and an id two pages
+/// define passes the in-process validator, with every link resolving and nothing dropped; and
+/// it is the same bytes from another engine in another folder, and from its profile.
+#[test]
+fn epub_reference_book_is_complete() {
+    let directory = tempfile::tempdir().unwrap();
+    let (root, mut engine) = epub_reference(&directory.path().join("a"));
+    let output = directory.path().join("manual.epub");
+    let target = ExportTarget::Component {
+        name: "manual".to_owned(),
+        version: Some("2.0".to_owned()),
+    };
+    let summary = engine
+        .export_epub_blocking(EpubExportArgs::new(target.clone(), output.clone()), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let relative: Vec<String> = summary
+        .sources
+        .iter()
+        .map(|path| {
+            path.strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect();
+    assert_eq!(
+        relative,
+        [
+            "manual/modules/ROOT/pages/index.adoc",
+            "manual/modules/ROOT/pages/install.adoc",
+            "manual/modules/ROOT/pages/tables.adoc",
+            "manual/modules/ROOT/pages/media.adoc",
+            "manual/modules/ROOT/pages/links.adoc",
+            "manual/modules/ROOT/pages/extras.adoc",
+            "manual/modules/admin/pages/security.adoc",
+        ]
+    );
+    let bytes = fs::read(&output).unwrap();
+    assert_eq!(adoc_epub::validate(&bytes), Vec::<String>::new());
+    adoc_epub::testing::assert_links_resolve(&bytes);
+    let (files, package) = adoc_epub::testing::assert_valid_ocf(&bytes);
+
+    // The metadata, `[epub]`'s over the page's, and the accessibility the content shows.
+    assert_eq!(package.title, "The Manual");
+    assert_eq!(package.language, "en-GB");
+    assert_eq!(package.modified, "2026-11-19T00:00:00Z");
+    let opf = adoc_epub::testing::text(&files, &package.path);
+    for wanted in [
+        "<dc:publisher>AdocFoundry</dc:publisher>",
+        "<meta property=\"schema:accessMode\">visual</meta>",
+        "<meta property=\"schema:accessibilityFeature\">structuralNavigation</meta>",
+    ] {
+        assert!(opf.contains(wanted), "{wanted}");
+    }
+
+    // The cover first, and the pictures: the cover and logo (PNG), the photograph (JPEG), the
+    // SVG drawn as PNG, and, with Typst, the diagram and formulas drawn.
+    assert_eq!(package.spine[0], "cover");
+    let images: Vec<&(String, String, Option<String>)> = package
+        .manifest
+        .values()
+        .filter(|(_, media, _)| media.starts_with("image/"))
+        .collect();
+    assert!(images.iter().any(|(_, media, _)| media == "image/jpeg"));
+    assert!(images
+        .iter()
+        .any(|(_, _, properties)| properties.as_deref() == Some("cover-image")));
+    assert!(images.len() >= 4, "{images:?}");
+
+    // What the pages hold, partials included, and nothing of the other version or component.
+    let mut text = String::new();
+    let mut markup = String::new();
+    for idref in &package.spine {
+        let (path, _, _) = &package.manifest[idref];
+        let source = adoc_epub::testing::text(&files, path);
+        markup.push_str(source);
+        let document = adoc_epub::testing::parse(path, source);
+        for node in document.descendants() {
+            if node.is_text() {
+                text.push_str(node.text().unwrap_or_default());
+            }
+            if let Some(alt) = node.attribute("alt") {
+                text.push_str(alt);
+            }
+            text.push(' ');
+        }
+    }
+    for wanted in [
+        "日本語のテキストを読む",
+        "Καλημέρα",
+        "A missing picture",
+        "never closed",
+        "The note, written once.",
+        "The pipeline drawn as SVG",
+    ] {
+        assert!(text.contains(wanted), "{wanted}");
+    }
+    for absent in ["OLD-VERSION-MARKER", "API-COMPONENT-MARKER"] {
+        assert!(!text.contains(absent), "{absent}");
+    }
+    for element in [
+        "<thead>",
+        "epub:type=\"noteref\"",
+        "epub:type=\"footnote\"",
+        "<pre class=\"listing\">",
+        "class=\"admonition",
+    ] {
+        assert!(markup.contains(element), "{element}");
+    }
+    #[cfg(feature = "typst")]
+    assert!(
+        text.contains("A = pi r^2"),
+        "the formula's source is its description"
+    );
+    // The missing picture is reported where it is written.
+    assert!(summary.diagnostics.iter().any(|diagnostic| {
+        diagnostic.message.contains("missing.png")
+            && diagnostic
+                .location
+                .as_ref()
+                .is_some_and(|(path, _)| path.ends_with("extras.adoc"))
+    }));
+
+    // Another engine, in another folder, writes the same bytes, and so does the profile.
+    let (_, mut second) = epub_reference(&directory.path().join("b/elsewhere"));
+    let moved = directory.path().join("moved.epub");
+    second
+        .export_epub_blocking(EpubExportArgs::new(target, moved.clone()), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        fs::read(&moved).unwrap() == bytes,
+        "another engine and folder"
+    );
+    engine
+        .export_epub_blocking(engine.epub_profile_export_args("handbook").unwrap(), WAIT)
+        .unwrap();
+    assert!(
+        fs::read(root.join("build/handbook.epub")).unwrap() == bytes,
+        "the profile"
+    );
+}

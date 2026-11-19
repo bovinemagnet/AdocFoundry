@@ -181,6 +181,25 @@ class DocxWithoutTypst(unittest.TestCase):
         self.assertIn("run: cargo check -p adoc-engine --no-default-features --features docx", lint)
 
 
+class EpubCheck(unittest.TestCase):
+    """EPUBCheck checks the EPUB exports in a job of its own, never in the tests or the build
+    (docs/prd/PRD-AdocFoundry_EPUB_Export.md §7 and §14): a pinned release, its checksum checked
+    before it runs, warnings failing the job."""
+
+    def test_epubcheck_is_pinned_and_checked(self):
+        job = "\n".join(jobs(read("ci.yml"))["epubcheck"])
+        self.assertRegex(job, r"EPUBCHECK_VERSION: \d+\.\d+\.\d+\n")
+        self.assertRegex(job, r"EPUBCHECK_SHA256: [0-9a-f]{64}\n")
+        self.assertIn("sha256sum -c", job)
+        self.assertIn("--failonwarnings", job)
+        self.assertIn("SOURCE_DATE_EPOCH", job)
+
+    def test_no_other_job_runs_java(self):
+        for name, lines in jobs(read("ci.yml")).items():
+            if name != "epubcheck":
+                self.assertNotIn("java -jar", "\n".join(lines), name)
+
+
 class EpubBuildsAlone(unittest.TestCase):
     """EPUB export builds without Typst or another exporter
     (docs/prd/PRD-AdocFoundry_EPUB_Export.md, test 5): `cargo xtask layers` checks the

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft, 2026-11-16; not yet approved for implementation. The open decisions in §14 are settled in the work package they affect |
+| Status | Implemented, 2026-11-19, as packages 0 and E1–E9 (stack #732); the open decisions of §14 are settled in §15. Manual checks in reading applications remain (`docs/qa/epub.md`) |
 | Date | 2026-11-16 |
 | Scope | A native publication backend that writes reflowable EPUB 3.3 books for a page, an Antora component version or selected navigation files, entirely in Rust, through the engine, CLI, desktop app and MCP server |
 | Repository | [bovinemagnet/AdocFoundry](https://github.com/bovinemagnet/AdocFoundry) |
@@ -468,6 +468,28 @@ The epic starts with a package of its own, before E1: Kindle export's book model
   - `epub_cli_exports_and_gates` (`crates/adocfoundry-cli/tests/cli.rs`);
   - `epub_mcp_export_is_write_gated` (`crates/adoc-mcp/tests/epub.rs`);
   - `epub_app_exports_through_engine` (`crates/adocfoundry/src/ui_tests.rs`).
+
+
+### E9 (#646): conformance, interoperability and release QA
+
+- **The in-process validator** is `adoc_epub::validate(bytes)` in `src/validate.rs`. It checks:
+  - the container and the package;
+  - the manifest, against the archive and media types;
+  - the spine and the navigation;
+  - well-formed XML;
+  - every link, picture and stylesheet reference.
+
+  It reads with bounds checks, so a damaged archive gives problems, never a panic. `write_epub` and `write_book` run it on every book before returning it, as Kindle's writers check theirs. `testing` keeps its own reader, so the tests check the validator too: `the_validator_finds_what_breaks_a_book` damages a good book eighteen ways. The validator certifies no conformance, and the documentation says so.
+- **EPUBCheck (§14):** an optional job of its own in CI, `epubcheck`, like veraPDF's `pdf-standards`.
+  - It runs a pinned release (5.4.0, checked against its SHA-256), with `--failonwarnings`, on the reference book, the book fixture and the reference article, each dated by a fixed `SOURCE_DATE_EPOCH`.
+  - It is the only job that runs Java. No test and no build needs EPUBCheck, which keeps §7.
+  - `packaging/test_workflows.py`'s `EpubCheck` holds both rules.
+- **The acceptance tests:**
+  - `epub_is_in_process` (`xtask`): `adoc-epub` and `adoc-ebook` name no process or network, and nothing EPUB export builds is copyleft.
+  - `epub_reference_book_is_complete`: the Word reference book with the Kindle fixture laid over it, with `[epub]` settings. It passes the validator and the link check, holds every page's text and pictures, the cover, footnotes, tables and code, reports the missing picture, and is the same bytes from another engine in another folder and from its profile.
+  - `epub_large_book_is_bounded`: 600 pages and 50 pictures, within Kindle's large-book budgets. Locally the export took about 5 s and no pump over 0.2 s.
+- **Fuzzing:** `fuzz/fuzz_targets/epub_write.rs` writes any page's book, validates it and resolves every link. It is seeded by `fuzz/seed.py` and scheduled in `fuzz.yml`.
+- **Interoperability:** the checks in reading applications are in `docs/qa/epub.md`, still to be done by hand: Apple Books, Thorium, Calibre and an e-reader, with read-aloud. Until they pass, the epic stays open.
 
 ## 16. References
 

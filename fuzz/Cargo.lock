@@ -49,7 +49,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "adoc-antora"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "adoc-core",
  "globset",
@@ -59,7 +59,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-audit"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "adoc-antora",
  "adoc-core",
@@ -71,11 +71,11 @@ dependencies = [
 
 [[package]]
 name = "adoc-core"
-version = "0.11.0"
+version = "0.12.0"
 
 [[package]]
 name = "adoc-diagrams"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "merman",
  "rustix 1.1.6",
@@ -84,15 +84,26 @@ dependencies = [
 
 [[package]]
 name = "adoc-dom"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "acdc-parser",
  "adoc-core",
 ]
 
 [[package]]
+name = "adoc-ebook"
+version = "0.12.0"
+dependencies = [
+ "adoc-core",
+ "adoc-dom",
+ "adoc-render",
+ "resvg 0.46.0",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "adoc-engine"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "adoc-antora",
  "adoc-audit",
@@ -121,12 +132,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "adoc-epub"
+version = "0.12.0"
+dependencies = [
+ "adoc-core",
+ "adoc-ebook",
+ "crc32fast",
+ "flate2",
+ "roxmltree 0.21.2",
+]
+
+[[package]]
 name = "adoc-graph"
-version = "0.11.0"
+version = "0.12.0"
 
 [[package]]
 name = "adoc-impact"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "adoc-antora",
  "adoc-core",
@@ -137,7 +159,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-index"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "adoc-core",
  "adoc-parser",
@@ -145,19 +167,16 @@ dependencies = [
 
 [[package]]
 name = "adoc-kindle"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
- "adoc-core",
- "adoc-dom",
- "adoc-render",
- "resvg 0.46.0",
+ "adoc-ebook",
  "sha1_smol",
  "sha2 0.10.9",
 ]
 
 [[package]]
 name = "adoc-lang"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "adoc-antora",
  "adoc-core",
@@ -167,7 +186,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-math"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "asciimath-parser",
  "mitex",
@@ -177,7 +196,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-model"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "adoc-core",
  "adoc-dom",
@@ -186,14 +205,14 @@ dependencies = [
 
 [[package]]
 name = "adoc-parser"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "adoc-core",
 ]
 
 [[package]]
 name = "adoc-pdf"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "adoc-core",
  "adoc-math",
@@ -228,7 +247,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-render"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "adoc-core",
  "adoc-dom",
@@ -238,7 +257,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-spell"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "adoc-core",
  "spellbook",
@@ -247,7 +266,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-theme"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "adoc-core",
  "regex",
@@ -263,6 +282,7 @@ dependencies = [
  "adoc-core",
  "adoc-dom",
  "adoc-engine",
+ "adoc-epub",
  "adoc-kindle",
  "adoc-math",
  "adoc-model",

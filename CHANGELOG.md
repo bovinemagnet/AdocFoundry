@@ -2,6 +2,23 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- EPUB export (#614). File › Export Page to EPUB… writes the active page as a reflowable EPUB 3.3 book, and Export Component to EPUB… writes its component version as a book, from the same plan as the PDF's: the pages in navigation order, each once, the start page as a preface. Export EPUB Profile… exports an `[epub.profiles.<name>]` publication. All three are in the File menu and the command palette, in `adocfoundry-cli epub`, and in the MCP server's `export_epub` (with `--allow-write`). The book is written in-house, in process, with no Calibre, Pandoc, EPUBCheck, Java or other program, and nothing opens it afterwards.
+  - **Content:** chapters are semantic XHTML a reading system can reflow, restyle and read aloud: headings, lists, tables with header and footer rows, spans and nested tables, code, admonitions, sidebars, examples, quotes, keys, buttons and menus. Footnotes link both ways. The table of contents follows the book's navigation, with landmarks.
+  - **Pictures:** pictures, diagrams, formulas (as pictures, with their source as the description) and a cover (`front-cover-image`, `[epub] cover` or a profile's) are embedded, and a remote image is linked, never fetched. Passthrough is shown as text, with a warning.
+  - **Style and metadata:** a small default stylesheet leaves the font, its size and the margins to the reader, and `[epub] css` adds your own, refused if it imports or names anything. `[epub]` gives the metadata (title, creator, language, identifier, publisher).
+  - **Warnings:** a missing language, title or picture description, a skipped heading level and a table with no header row each give a warning. The accessibility metadata claims only what the content shows.
+  - **Repeatable books:** `[epub] modified`, a profile's `modified` or `SOURCE_DATE_EPOCH` dates the book, so the same sources give the same bytes. Otherwise the export notes that it used the time of the export.
+  - **Checks:** a page that asks to be read-only is refused, as for Kindle. Every book is read back and checked before it is written: the container, the package, the navigation, the XML, and every link and picture reference. A CI job checks the reference books with EPUBCheck. Reading applications have not been checked yet (`docs/qa/epub.md`).
+  - **For developers:** new crates `adoc-ebook` (the book model Kindle and EPUB export share, moved out of `adoc-kindle`; Kindle books are unchanged) and `adoc-epub`. `adoc-engine` gains the `epub` feature, `export.epub_page`, `export.epub_component` and `export.epub_profile`.
+
+### Changed
+
+- `--fail-on warning` no longer fails an export on an information note, only on a warning or an error, as the option has always been described. Only EPUB export gives an information note: that it was dated with the time of the export.
+
 ## 0.12.0 — 2026-11-18
 
 ### Added

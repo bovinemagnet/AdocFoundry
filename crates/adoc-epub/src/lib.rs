@@ -6,7 +6,8 @@
 //! Kindle export writes too, then writes that book as an OCF container in memory: `mimetype`
 //! first and stored, `META-INF/container.xml`, the package document `EPUB/package.opf`, the
 //! navigation document and a content document per chapter, semantic XHTML (`xhtml.rs`). Every
-//! XML file is checked to be well-formed before the bytes are returned.
+//! XML file is checked to be well-formed as it is written, and the archive is read back and
+//! checked as a whole ([`validate`]) before the bytes are returned.
 //!
 //! The crate reads no clock and no environment: the modification time is given ([`Modified`]),
 //! so the same input always gives the same bytes. It does no IO but reading the pictures it
@@ -15,6 +16,8 @@
 
 use std::fmt;
 
+pub use validate::validate;
+
 pub use adoc_ebook::{
     Book, BookItem, Diagnostic, Document, Format, Options as BookOptions, Page, Plan, Severity,
 };
@@ -22,6 +25,7 @@ pub use adoc_ebook::{
 mod package;
 #[cfg(feature = "test-support")]
 pub mod testing;
+mod validate;
 mod xhtml;
 mod xml;
 mod zip;
@@ -153,7 +157,7 @@ pub fn write_epub(document: &Document, options: &EpubOptions) -> Result<EpubOutp
         ..options.book.clone()
     };
     let (book, diagnostics) = Book::build(document, &book_options);
-    let bytes = package::write(&book, options.modified, options.stylesheet.as_deref())?;
+    let bytes = written(&book, options.modified, options.stylesheet.as_deref())?;
     Ok(EpubOutput {
         bytes,
         diagnostics,
@@ -164,7 +168,22 @@ pub fn write_epub(document: &Document, options: &EpubOptions) -> Result<EpubOutp
 /// Writes `book` as an EPUB dated `modified`, with the default stylesheet, every XML file
 /// checked.
 pub fn write_book(book: &Book, modified: Modified) -> Result<Vec<u8>, EpubError> {
-    package::write(book, modified, None)
+    written(book, modified, None)
+}
+
+/// `book`'s archive, read back and validated as a whole before it is handed out.
+fn written(
+    book: &Book,
+    modified: Modified,
+    stylesheet: Option<&str>,
+) -> Result<Vec<u8>, EpubError> {
+    let bytes = package::write(book, modified, stylesheet)?;
+    let problems = validate(&bytes);
+    if problems.is_empty() {
+        Ok(bytes)
+    } else {
+        Err(EpubError::Invalid(problems.join("; ")))
+    }
 }
 
 /// The most a user stylesheet may hold.
