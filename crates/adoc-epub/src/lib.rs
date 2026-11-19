@@ -95,6 +95,9 @@ pub struct EpubOptions {
     /// files the export may read.
     pub book: BookOptions,
     pub modified: Modified,
+    /// A stylesheet of the user's, linked after the default one so it overrides it. It may
+    /// change only how the book looks: one that imports or names anything is refused.
+    pub stylesheet: Option<String>,
 }
 
 impl EpubOptions {
@@ -103,6 +106,7 @@ impl EpubOptions {
         Self {
             book: BookOptions::default(),
             modified,
+            stylesheet: None,
         }
     }
 }
@@ -140,13 +144,16 @@ impl std::error::Error for EpubError {}
 /// returned, so whoever owns the output writes them somewhere temporary and moves them into
 /// place only once this returns `Ok`.
 pub fn write_epub(document: &Document, options: &EpubOptions) -> Result<EpubOutput, EpubError> {
+    if let Some(stylesheet) = &options.stylesheet {
+        check_stylesheet(stylesheet).map_err(EpubError::Invalid)?;
+    }
     // Whatever format the options name, the book is made for EPUB.
     let book_options = BookOptions {
         format: Format::Epub,
         ..options.book.clone()
     };
     let (book, diagnostics) = Book::build(document, &book_options);
-    let bytes = write_book(&book, options.modified)?;
+    let bytes = package::write(&book, options.modified, options.stylesheet.as_deref())?;
     Ok(EpubOutput {
         bytes,
         diagnostics,
@@ -154,9 +161,50 @@ pub fn write_epub(document: &Document, options: &EpubOptions) -> Result<EpubOutp
     })
 }
 
-/// Writes `book` as an EPUB dated `modified`, every XML file checked.
+/// Writes `book` as an EPUB dated `modified`, with the default stylesheet, every XML file
+/// checked.
 pub fn write_book(book: &Book, modified: Modified) -> Result<Vec<u8>, EpubError> {
-    package::write(book, modified)
+    package::write(book, modified, None)
+}
+
+/// The most a user stylesheet may hold.
+const STYLESHEET_LIMIT: usize = 256 * 1024;
+
+/// Refuses a user stylesheet that could make the book depend on anything outside it or run
+/// anything (PRD §5.6): an `@import`, a `url(` (no file of the book is the user's to name), a
+/// font face, a binding, an expression or a script address, in any letter case or escaped.
+/// A conservative check, not a CSS parser: what it cannot be sure of, it refuses.
+pub fn check_stylesheet(stylesheet: &str) -> Result<(), String> {
+    if stylesheet.len() > STYLESHEET_LIMIT {
+        return Err(format!(
+            "the stylesheet is larger than {} KB",
+            STYLESHEET_LIMIT / 1024
+        ));
+    }
+    if stylesheet.contains('\\') {
+        return Err(
+            "the stylesheet holds a backslash escape, which could hide what it names".to_owned(),
+        );
+    }
+    let lower = stylesheet.to_ascii_lowercase();
+    for (needle, what) in [
+        ("@import", "imports another stylesheet"),
+        ("url(", "names a file or address"),
+        ("@font-face", "brings in a font"),
+        ("@namespace", "declares a namespace"),
+        ("expression(", "holds a script expression"),
+        ("javascript:", "holds a script address"),
+        ("-moz-binding", "binds a script"),
+        ("behavior", "binds a script"),
+        ("</", "holds markup"),
+    ] {
+        if lower.contains(needle) {
+            return Err(format!(
+                "the stylesheet {what} ({needle}), so it is refused"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

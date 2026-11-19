@@ -87,6 +87,7 @@ fn epub_package_is_valid_ocf() {
             "META-INF/container.xml",
             "EPUB/package.opf",
             "EPUB/nav.xhtml",
+            "EPUB/css/book.css",
             "EPUB/text/c1.xhtml"
         ]
     );

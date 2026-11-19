@@ -19,7 +19,7 @@ The book holds:
 
 * chapters in reading order, with the ids `c1`, `c2` and so on, and their blocks and inlines;
 * a nested table of contents;
-* metadata: the title, authors, language, a stable `urn:uuid:` identifier derived from the title, authors and version (and no clock), the publisher, the description, the date (from `revdate`) and the version (from `revnumber`);
+* metadata: the title, authors, language, a stable `urn:uuid:` identifier derived from the title, authors and version (and no clock), the publisher, the description, the date (from `revdate`), the subjects (`subjects`, from `keywords`) and the version (from `revnumber`);
 * assets, the embedded pictures.
 
 Problems are reported as `Diagnostic` values, each with a `Severity` and a location at its source.
@@ -83,6 +83,13 @@ It names the format a book is made for, where the formats differ in what they ca
 
 For Kindle the mapping is exactly as before: the AZW3 and KFX bytes are unchanged, checked against `main`.
 Kindle's writers never receive `Inline::Styled`, and would write its content if they did.
+
+For an EPUB only, and never for a Kindle book, whose diagnostics are unchanged, the mapping also warns:
+
+* at the line where it applies, about a picture with no description of its own, whose file name stands for it (told by `adoc_render::ViewImage::has_default_alt`);
+* at the line where it applies, about a section that skips a heading level;
+* at the line where it applies, about a table with no header row;
+* for the whole book, about a missing title, and about a missing or invalid language, for which `en` is used.
 
 Two additions are made in every format:
 

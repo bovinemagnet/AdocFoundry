@@ -2598,6 +2598,7 @@ impl Engine {
                 access: self.file_access.clone(),
             },
             modified,
+            stylesheet: None,
         };
         let sender = self.worker_sender.clone();
         self.workers_running += 1;

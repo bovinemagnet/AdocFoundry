@@ -29,8 +29,9 @@ impl Xml {
     }
 
     /// An XHTML content document, up to its open `body`: the declaration, the doctype, the
-    /// root with its namespaces and language, and a `head` with `title`.
-    pub(crate) fn xhtml(language: &str, title: &str) -> Self {
+    /// root with its namespaces and language, and a `head` with `title` and a link to each of
+    /// `stylesheets`.
+    pub(crate) fn xhtml(language: &str, title: &str, stylesheets: &[String]) -> Self {
         let mut xml = Self::file();
         xml.raw("<!DOCTYPE html>\n");
         xml.open(
@@ -45,6 +46,12 @@ impl Xml {
         xml.open("head", &[]);
         xml.empty("meta", &[("charset", "UTF-8")]);
         xml.element("title", &[], title);
+        for href in stylesheets {
+            xml.empty(
+                "link",
+                &[("rel", "stylesheet"), ("type", "text/css"), ("href", href)],
+            );
+        }
         xml.close("head");
         xml
     }

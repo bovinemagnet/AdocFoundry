@@ -168,6 +168,13 @@ impl ViewImage {
     pub fn is_missing(&self) -> bool {
         self.path.is_none() && self.url.is_none()
     }
+
+    /// Whether its alt text is the default Asciidoctor gives an image the page described not
+    /// at all: its file's name.
+    #[must_use]
+    pub fn has_default_alt(&self) -> bool {
+        self.alt == image_alt(&self.target)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

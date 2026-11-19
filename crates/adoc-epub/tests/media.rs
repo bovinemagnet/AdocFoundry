@@ -45,7 +45,7 @@ fn page(folder: &Path) -> Document {
     ] {
         std::fs::copy(fixture(from), folder.join(to)).unwrap();
     }
-    let text = "= Pictures\n:front-cover-image: image:cover.png[]\n\nimage::logo.png[The logo]\n\n\
+    let text = "= Pictures\n:front-cover-image: image:cover.png[]\n:lang: en-GB\n\nimage::logo.png[The logo]\n\n\
                 image::photo.jpg[A photograph]\n\n.The pipeline\n[mermaid]\n....\ngraph LR; a-->b\n....\n\n\
                 [stem]\n++++\nx^2\n++++\n\nInline stem:[y_1] and image:logo.png[the logo again] in text.\n";
     let mut view = view(&folder.join("page.adoc"), text);

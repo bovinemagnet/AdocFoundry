@@ -9,7 +9,7 @@ The book model, its mapping, pictures and metadata live in xref:crates:adoc-eboo
 The specification is `docs/prd/PRD-AdocFoundry_EPUB_Export.md` in the repository, which is not part of this site.
 
 IMPORTANT: The engine reaches the crate through its `epub` feature (`Engine::export_epub_blocking` and the commands `export.epub_page` and `export.epub_component`), but the app, the CLI and the MCP server do not yet, so there is no user-facing way to export an EPUB.
-Later packages add the front ends, CSS and metadata.
+What remains is settings and profiles, the front ends and conformance checks.
 
 == What it does
 
@@ -21,10 +21,11 @@ The publication is an OCF container holding:
 
 * `mimetype`, first and stored, with no extra field and exactly `application/epub+zip`;
 * `META-INF/container.xml`;
-* the package document `EPUB/package.opf`: EPUB 3 (`version="3.0"`), with `dc:identifier` as the unique identifier, `dc:title`, `dc:language`, a `dc:creator` for each author, the publisher and description where known, one `dcterms:modified`, a manifest with exactly one `nav` item, and a spine of the chapters;
+* the package document `EPUB/package.opf`: EPUB 3 (`version="3.0"`), with `dc:identifier` as the unique identifier, `dc:title`, `dc:language`, a `dc:creator` for each author, the publisher and description where known, one `dcterms:modified`, the subjects and date (see below), the accessibility metadata (see below), a manifest with exactly one `nav` item, and a spine of the chapters;
 * the navigation document `EPUB/nav.xhtml`, with the table of contents and the landmarks (see below);
 * one XHTML content document for each chapter, `EPUB/text/c<n>.xhtml`;
-* each picture, `EPUB/images/i<n>.<extension>`, and the cover document `EPUB/cover.xhtml` when there is a cover (see below).
+* each picture, `EPUB/images/i<n>.<extension>`, and the cover document `EPUB/cover.xhtml` when there is a cover (see below);
+* the stylesheet `EPUB/css/book.css`, and `EPUB/css/user.css` when a user stylesheet is given (see below).
 
 The chapters are semantic XHTML, written by `xhtml.rs`.
 
@@ -88,7 +89,7 @@ Each picture is written once as `EPUB/images/i<n>.<extension>` and listed in the
 In a chapter, a block picture is a `figure` with the class `image` holding an `img`, and an inline one is an `img` with the class `inline`.
 Each has its description as `alt`.
 No `width` or `height` is written, so the reading system's style sizes the picture to the screen with its proportions kept.
-The stylesheet comes with a later package.
+The stylesheet is described below.
 
 Diagrams are embedded as the export's diagram workers drew them: Mermaid in process, and the other tools when they are on `PATH`, as for PDF, Word and Kindle export.
 A diagram that was not drawn is its source, with a warning.
@@ -113,6 +114,48 @@ A picture is its description in the text, with a warning at its line, when it ca
 * not a picture.
 
 A remote picture is a link to it, with a warning.
+
+== Stylesheet
+
+Every document (the chapters, the navigation document and the cover) links the default stylesheet `EPUB/css/book.css`, which is `src/book.css` in the crate and is listed in the manifest as `text/css`.
+It gives readable, reflowable type, headings, lists, wrapped code, tables, figures and footnotes.
+It leaves the font, its size and the margins to the reader, and names nothing outside the book.
+
+`EpubOptions::stylesheet` is an optional user stylesheet.
+It is written as `EPUB/css/user.css` and linked after the default, so it overrides it.
+Nothing yet passes a user stylesheet from settings, which is EPUB 7/9.
+
+`check_stylesheet` refuses a user stylesheet, as `EpubError::Invalid`, when it holds any of:
+
+* `@import`, `@font-face` or `@namespace`;
+* `url(`, since no file of the book is the user's to name;
+* `expression(`, `javascript:`, `-moz-binding` or `behavior`;
+* markup (`</`);
+* a backslash escape, which could hide any of these;
+
+or when it is larger than 256 KB.
+It is a conservative check and not a CSS parser, so it refuses what it cannot be sure of.
+
+== Metadata
+
+Besides the title, language, identifier, creators, publisher, description and `dcterms:modified`, the package document holds:
+
+* a `dc:subject` for each of the page's `keywords`, which are separated by commas;
+* `dc:date` from `revdate`, only when it is a date EPUB can read: `CCYY`, `CCYY-MM` or `CCYY-MM-DD`.
+Free text is not written.
+
+When the export gives no identifier, it is a stable `urn:uuid:` from the title, authors and version, which is the shared model's.
+
+=== Accessibility metadata
+
+Only what the book's content shows is written.
+
+* `schema:accessMode` is `textual`, and `visual` too when the book has pictures.
+* `schema:accessibilityFeature` is `tableOfContents`, and `structuralNavigation` too when the book has headings.
+* `schema:accessibilityHazard` is `unknown`.
+* `schema:accessibilitySummary` says the book has not been checked against an accessibility standard.
+
+No conformance is claimed.
 
 == Checks
 
@@ -143,6 +186,7 @@ The acceptance tests are `epub_package_is_valid_ocf`, `epub_text_is_escaped` and
 The content tests are `epub_content_is_wellformed_xhtml`, `epub_footnotes_link_both_ways` and `epub_unsupported_nodes_warn`, in `crates/adoc-epub/tests/content.rs`.
 The navigation tests are `epub_nav_matches_the_plan` and `links_inside_and_out_of_a_book`, in `crates/adoc-epub/tests/navigation.rs`.
 The media tests are `epub_media_is_embedded` and `epub_bad_assets_are_reported`, in `crates/adoc-epub/tests/media.rs`.
+The style tests are `epub_metadata_is_complete_or_reported`, `epub_css_has_no_external_dependencies` and `epub_accessibility_structure`, in `crates/adoc-epub/tests/style.rs`.
 `epub_internal_links_resolve`, in `crates/adoc-engine/tests/epub_export.rs`, exports the Word and Kindle reference fixtures with a page alias and a missing id added, and checks every link.
 
 == Where it sits

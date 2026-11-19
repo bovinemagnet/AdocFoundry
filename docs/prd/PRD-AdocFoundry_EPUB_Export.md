@@ -387,6 +387,37 @@ The epic starts with a package of its own, before E1: Kindle export's book model
   - `epub_media_is_embedded`: a cover, a PNG shown twice and held once, a JPEG, a diagram, and display and inline formulas.
   - `epub_bad_assets_are_reported`: an oversized, a truncated, a missing, a remote and an outside picture, text named as a PNG, and an SVG with a script and a `file:` link.
 
+
+### E6 (#643): the stylesheet, metadata and accessibility
+
+- **The default stylesheet** is `EPUB/css/book.css`, in the crate as `src/book.css`, and every document links it. It sets readable, reflowable type, headings, lists, wrapped code, tables, figures and footnotes, and leaves font, size and margins to the reader. It names nothing outside the book.
+- **Validating user CSS (§14):** a conservative check, not a CSS parser, and the CSS is refused, not filtered.
+  - `EpubOptions::stylesheet` is written as `EPUB/css/user.css`, linked after the default so it overrides it.
+  - `check_stylesheet` refuses, as `EpubError::Invalid`:
+    - `@import` and `url(`, since no file of the book is the user's to name;
+    - `@font-face`, `@namespace`, `expression(`, `javascript:`, `-moz-binding`, `behavior` and markup;
+    - a backslash escape, which could hide any of these;
+    - more than 256 KB.
+  - E7 passes a stylesheet from `[epub]`.
+- **Default identifier (§14):** derived, never refused. When the export gives none, it is the shared model's stable `urn:uuid:` from the title, authors and version. The same book keeps its identifier from one export to the next, and the documentation says so.
+- **Metadata:**
+  - Added: `dc:subject` from `keywords`, and `dc:date` from `revdate` only when it is `CCYY`, `CCYY-MM` or `CCYY-MM-DD`; free text is left out.
+  - Rights and a subject given in a profile come with E7's profile options, if needed.
+  - A missing title or language, or a language that is no BCP 47 tag, gives a warning saying what was used. This is for an EPUB only: a Kindle book's diagnostics are unchanged.
+- **Accessibility:**
+  - **Metadata:** only what the content shows:
+    - `schema:accessMode` textual, and visual where there are pictures;
+    - `schema:accessibilityFeature` `tableOfContents`, and `structuralNavigation` where there are headings;
+    - `schema:accessibilityHazard` `unknown`;
+    - a summary saying it has not been checked against a standard.
+
+    No conformance is claimed.
+  - **Warnings, for an EPUB at the line concerned:**
+    - a picture with no description of its own, whose file name then stands for it. `adoc-render` gained `ViewImage::has_default_alt` for this, an additive query that leaves `to_html` as it was.
+    - a section that skips a heading level;
+    - a table with no header row.
+- **Kindle's bytes** were compared again and are unchanged.
+
 ## 16. References
 
 - W3C, [EPUB 3.3](https://www.w3.org/TR/epub-33/) (Recommendation)

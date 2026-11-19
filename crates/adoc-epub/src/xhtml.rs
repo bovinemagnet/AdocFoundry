@@ -16,7 +16,7 @@ pub(crate) fn chapter_name(chapter: &Chapter) -> String {
 }
 
 /// The content document of `book`'s chapter `index`.
-pub(crate) fn chapter(book: &Book, index: usize) -> Vec<u8> {
+pub(crate) fn chapter(book: &Book, index: usize, user: bool) -> Vec<u8> {
     let chapter = &book.chapters[index];
     let title = if chapter.title.trim().is_empty() {
         &book.metadata.title
@@ -26,7 +26,11 @@ pub(crate) fn chapter(book: &Book, index: usize) -> Vec<u8> {
     let mut writer = Writer {
         book,
         chapter: index,
-        xml: Xml::xhtml(&book.metadata.language, title),
+        xml: Xml::xhtml(
+            &book.metadata.language,
+            title,
+            &crate::package::stylesheets("../", user),
+        ),
         in_link: false,
     };
     writer.xml.open("body", &[]);

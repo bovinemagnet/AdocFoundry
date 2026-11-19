@@ -45,6 +45,7 @@ pub(crate) fn build(document: &Document, options: &Options) -> (Book, Vec<Diagno
         notes_used: Vec::new(),
         diagnostics: Vec::new(),
         in_table: false,
+        section_level: 0,
         media: crate::media::Media::default(),
     };
     let mut chapters = Vec::new();
@@ -85,7 +86,30 @@ pub(crate) fn build(document: &Document, options: &Options) -> (Book, Vec<Diagno
             ..Chapter::default()
         });
     }
-    let metadata = metadata::metadata(document, options);
+    let (metadata, defaults) = metadata::metadata(document, options);
+    if options.format == Format::Epub {
+        mapper.span = None;
+        // An EPUB's metadata is read by reading systems and stores: what was not given is
+        // said, never invented silently (EPUB PRD §5.1, §5.6). A Kindle book's is as before.
+        if defaults.title {
+            mapper.warn(
+                None,
+                format!(
+                    "the book has no title, so it is titled {:?}; give the page a title or the export one",
+                    metadata.title
+                ),
+            );
+        }
+        if let Some(given) = &defaults.language {
+            let message = match given {
+                Some(given) => format!(
+                    "the language {given:?} is not a language tag such as en or en-GB, so the book is marked English (en)"
+                ),
+                None => "the book names no language (the lang attribute, or the export's), so it is marked English (en), which a screen reader then speaks it as".to_owned(),
+            };
+            mapper.warn(None, message);
+        }
+    }
     let cover = mapper.cover(document);
     let book = Book {
         metadata,
@@ -327,6 +351,8 @@ struct Mapper<'a> {
     diagnostics: Vec<Diagnostic>,
     /// Whether the blocks being mapped are in a table's cell.
     in_table: bool,
+    /// The level of the page's last section, 0 at its title, to find a skipped level.
+    section_level: u8,
     media: crate::media::Media,
 }
 
@@ -388,6 +414,7 @@ impl Mapper<'_> {
     fn page(&mut self, page: &Page, index: usize, toc: &mut Toc) -> Chapter {
         self.source = page.view.source.clone();
         self.span = None;
+        self.section_level = 0;
         self.footnotes = page
             .view
             .footnotes
@@ -531,6 +558,16 @@ impl Mapper<'_> {
                     content.push(Inline::Text(format!("{number} ")));
                 }
                 content.extend(self.inlines(title));
+                if self.options.format == Format::Epub && *level > self.section_level + 1 {
+                    let previous = self.section_level;
+                    self.warn(
+                        None,
+                        format!(
+                            "a level {level} section follows a level {previous} heading, skipping a level, so the outline a screen reader gives has a gap"
+                        ),
+                    );
+                }
+                self.section_level = *level;
                 let text = crate::book::plain_text(&content);
                 if let (Some(anchor), true) = (&anchor, *level <= TOC_SECTION_LEVELS) {
                     sections.push((*level, text, anchor.clone()));
@@ -725,6 +762,13 @@ impl Mapper<'_> {
                 }
             }
             ViewKind::Table(table) => {
+                if self.options.format == Format::Epub && table.header.is_none() {
+                    self.warn(
+                        None,
+                        "the table has no header row, so a screen reader cannot name its columns"
+                            .to_owned(),
+                    );
+                }
                 let mut rows = Vec::new();
                 let was_in_table = std::mem::replace(&mut self.in_table, true);
                 let mut push = |mapper: &mut Self,
@@ -758,7 +802,7 @@ impl Mapper<'_> {
                 out.push(Block::Table { anchor, rows });
             }
             ViewKind::Image(image) => {
-                let alt = alt_of(image);
+                let alt = self.alt(image);
                 match self.picture(image) {
                     Some(asset) => out.push(Block::Figure { anchor, asset, alt }),
                     None => out.push(Block::Paragraph {
@@ -888,6 +932,23 @@ impl Mapper<'_> {
         }
     }
 
+    /// An image's description, else its file's name; for an EPUB, a missing description is
+    /// said, since a screen reader then reads the file's name aloud.
+    fn alt(&mut self, image: &adoc_render::ViewImage) -> String {
+        if self.options.format == Format::Epub
+            && (image.alt.trim().is_empty() || image.has_default_alt())
+        {
+            self.warn(
+                None,
+                format!(
+                    "the image {} has no description, so its file name stands for it",
+                    image.target
+                ),
+            );
+        }
+        alt_of(image)
+    }
+
     /// The picture a local image shows, embedded; `None`, with a warning, where it cannot be.
     fn picture(&mut self, image: &adoc_render::ViewImage) -> Option<usize> {
         let path = image.path.as_ref()?;
@@ -987,7 +1048,7 @@ impl Mapper<'_> {
                 }
             }
             ViewInline::Image(image) => {
-                let alt = alt_of(image);
+                let alt = self.alt(image);
                 match self.picture(image) {
                     Some(asset) => out.push(Inline::Image { asset, alt }),
                     None => out.extend(self.picture_fallback(image, alt)),

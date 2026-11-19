@@ -14,8 +14,27 @@ const NAV: &str = "nav.xhtml";
 const XHTML: &str = "application/xhtml+xml";
 
 /// The book's archive, every XML file checked first.
-pub(crate) fn write(book: &Book, modified: Modified) -> Result<Vec<u8>, EpubError> {
-    let files = files(book, modified);
+/// The default stylesheet: readable, reflowable, naming nothing outside the book.
+pub(crate) const BOOK_CSS: &str = include_str!("book.css");
+
+/// The stylesheets every document links to, from a document `prefix` away from the package
+/// document: the default, then the user's, which comes after it to override it.
+pub(crate) fn stylesheets(prefix: &str, user: bool) -> Vec<String> {
+    let mut links = vec![format!("{prefix}css/book.css")];
+    if user {
+        links.push(format!("{prefix}css/user.css"));
+    }
+    links
+}
+
+/// The book's archive, with `stylesheet`, already checked, after the default one; every XML
+/// file checked first.
+pub(crate) fn write(
+    book: &Book,
+    modified: Modified,
+    stylesheet: Option<&str>,
+) -> Result<Vec<u8>, EpubError> {
+    let files = files(book, modified, stylesheet);
     for (name, data) in &files {
         check_xml(name, data)?;
     }
@@ -28,19 +47,27 @@ pub(crate) fn write(book: &Book, modified: Modified) -> Result<Vec<u8>, EpubErro
 }
 
 /// Every file but `mimetype`, in archive order.
-fn files(book: &Book, modified: Modified) -> Vec<(String, Vec<u8>)> {
+fn files(book: &Book, modified: Modified, stylesheet: Option<&str>) -> Vec<(String, Vec<u8>)> {
+    let user = stylesheet.is_some();
     let mut files = vec![
         ("META-INF/container.xml".to_owned(), container()),
-        (PACKAGE.to_owned(), package(book, modified)),
-        (format!("EPUB/{NAV}"), nav(book)),
+        (PACKAGE.to_owned(), package(book, modified, user)),
+        (format!("EPUB/{NAV}"), nav(book, user)),
+        ("EPUB/css/book.css".to_owned(), BOOK_CSS.as_bytes().to_vec()),
     ];
+    if let Some(stylesheet) = stylesheet {
+        files.push((
+            "EPUB/css/user.css".to_owned(),
+            stylesheet.as_bytes().to_vec(),
+        ));
+    }
     if book.cover.is_some() {
-        files.push((format!("EPUB/{COVER}"), cover(book)));
+        files.push((format!("EPUB/{COVER}"), cover(book, user)));
     }
     for (index, chapter) in book.chapters.iter().enumerate() {
         files.push((
             format!("EPUB/{}", chapter_file(chapter)),
-            crate::xhtml::chapter(book, index),
+            crate::xhtml::chapter(book, index, user),
         ));
     }
     for (index, asset) in book.assets.iter().enumerate() {
@@ -62,8 +89,12 @@ pub(crate) fn picture_file(index: usize, asset: &Asset) -> String {
 }
 
 /// The cover document: the cover picture, alone.
-fn cover(book: &Book) -> Vec<u8> {
-    let mut xml = Xml::xhtml(&book.metadata.language, &book.metadata.title);
+fn cover(book: &Book, user: bool) -> Vec<u8> {
+    let mut xml = Xml::xhtml(
+        &book.metadata.language,
+        &book.metadata.title,
+        &stylesheets("", user),
+    );
     xml.open("body", &[]);
     xml.newline();
     xml.open("section", &[("epub:type", "cover"), ("class", "cover")]);
@@ -121,7 +152,7 @@ fn container() -> Vec<u8> {
     xml.into_bytes()
 }
 
-fn package(book: &Book, modified: Modified) -> Vec<u8> {
+fn package(book: &Book, modified: Modified, user: bool) -> Vec<u8> {
     let metadata = &book.metadata;
     let mut xml = Xml::file();
     xml.open(
@@ -157,12 +188,25 @@ fn package(book: &Book, modified: Modified) -> Vec<u8> {
         xml.element("dc:description", &[], description);
         xml.newline();
     }
+    for subject in &metadata.subjects {
+        xml.element("dc:subject", &[], subject);
+        xml.newline();
+    }
+    // `revdate` is free text: only a date EPUB can read is written as one.
+    if let Some(date) = metadata.date.as_deref().filter(|date| w3c_date(date)) {
+        xml.element("dc:date", &[], date);
+        xml.newline();
+    }
     xml.element(
         "meta",
         &[("property", "dcterms:modified")],
         &modified.to_w3c(),
     );
     xml.newline();
+    for (property, value) in accessibility(book) {
+        xml.element("meta", &[("property", property)], value);
+        xml.newline();
+    }
     xml.close("metadata");
     xml.newline();
     xml.open("manifest", &[]);
@@ -177,6 +221,26 @@ fn package(book: &Book, modified: Modified) -> Vec<u8> {
         ],
     );
     xml.newline();
+    xml.empty(
+        "item",
+        &[
+            ("id", "css"),
+            ("href", "css/book.css"),
+            ("media-type", "text/css"),
+        ],
+    );
+    xml.newline();
+    if user {
+        xml.empty(
+            "item",
+            &[
+                ("id", "css-user"),
+                ("href", "css/user.css"),
+                ("media-type", "text/css"),
+            ],
+        );
+        xml.newline();
+    }
     if book.cover.is_some() {
         xml.empty(
             "item",
@@ -228,11 +292,53 @@ fn package(book: &Book, modified: Modified) -> Vec<u8> {
     xml.into_bytes()
 }
 
+/// Whether `date` is a date `dc:date` may hold: `CCYY`, `CCYY-MM` or `CCYY-MM-DD`.
+fn w3c_date(date: &str) -> bool {
+    let parts: Vec<&str> = date.split('-').collect();
+    let digits = |part: &str, length: usize| {
+        part.len() == length && part.bytes().all(|byte| byte.is_ascii_digit())
+    };
+    match parts.as_slice() {
+        [year] => digits(year, 4),
+        [year, month] => digits(year, 4) && digits(month, 2),
+        [year, month, day] => digits(year, 4) && digits(month, 2) && digits(day, 2),
+        _ => false,
+    }
+}
+
+/// The accessibility properties the book can be shown to have from what it is made of, and no
+/// more (PRD §5.6): textual, with pictures where it has any; a table of contents always; headings
+/// to navigate by where it has any. It claims no conformance and no absence of hazards.
+fn accessibility(book: &Book) -> Vec<(&'static str, &'static str)> {
+    let mut properties = vec![("schema:accessMode", "textual")];
+    if !book.assets.is_empty() {
+        properties.push(("schema:accessMode", "visual"));
+    }
+    properties.push(("schema:accessibilityFeature", "tableOfContents"));
+    let headings = book.chapters.iter().any(|chapter| {
+        chapter
+            .blocks
+            .iter()
+            .any(|block| matches!(block, adoc_ebook::Block::Heading { .. }))
+    });
+    if headings {
+        properties.push(("schema:accessibilityFeature", "structuralNavigation"));
+    }
+    properties.push(("schema:accessibilityHazard", "unknown"));
+    properties.push((
+        "schema:accessibilitySummary",
+        "Reflowable text with a table of contents and headings to navigate by. Pictures carry \
+         the descriptions their source gives. The publication has not been checked against an \
+         accessibility standard.",
+    ));
+    properties
+}
+
 /// The navigation document: the book's table of contents as one `toc` navigation, or, for a
 /// book with none, its chapters in order.
-fn nav(book: &Book) -> Vec<u8> {
+fn nav(book: &Book, user: bool) -> Vec<u8> {
     let language = &book.metadata.language;
-    let mut xml = Xml::xhtml(language, &book.metadata.title);
+    let mut xml = Xml::xhtml(language, &book.metadata.title, &stylesheets("", user));
     xml.open("body", &[]);
     xml.newline();
     xml.open("nav", &[("epub:type", "toc"), ("id", "toc")]);

@@ -35,6 +35,8 @@ pub struct Metadata {
     /// The date as written (`revdate`); never the time of the export.
     pub date: Option<String>,
     pub version: Option<String>,
+    /// What the book is about, from `keywords`, separated by commas.
+    pub subjects: Vec<String>,
 }
 
 /// A unit of the reading order: a page, a part's title or a heading of the navigation.
