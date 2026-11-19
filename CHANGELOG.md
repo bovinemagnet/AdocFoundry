@@ -2,7 +2,7 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.13.0 — 2026-11-19
 
 ### Added
 
@@ -14,6 +14,12 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
   - **Repeatable books:** `[epub] modified`, a profile's `modified` or `SOURCE_DATE_EPOCH` dates the book, so the same sources give the same bytes. Otherwise the export notes that it used the time of the export.
   - **Checks:** a page that asks to be read-only is refused, as for Kindle. Every book is read back and checked before it is written: the container, the package, the navigation, the XML, and every link and picture reference. A CI job checks the reference books with EPUBCheck. Reading applications have not been checked yet (`docs/qa/epub.md`).
   - **For developers:** new crates `adoc-ebook` (the book model Kindle and EPUB export share, moved out of `adoc-kindle`; Kindle books are unchanged) and `adoc-epub`. `adoc-engine` gains the `epub` feature, `export.epub_page`, `export.epub_component` and `export.epub_profile`.
+- DocBook export (#615). File › Export Page as DocBook… writes the active page as a DocBook 5.2 `article`, and Export Component as DocBook… writes its component version as a `book`, from the same plan as the PDF's: the start page as the `preface`, navigation headings as parts, pages as chapters with their sections. Export DocBook Profile… exports a `[docbook.profiles.<name>]` publication. All three are in the File menu and the command palette, in `adocfoundry-cli docbook`, and in the MCP server's `export_docbook` (with `--allow-write`). The XML is for a DocBook toolchain: it is written in-house, in process, from the same view the preview draws, with no DocBook processor, Java or other program, and nothing opens it afterwards.
+  - **Content:** headings, lists (checklists, description lists and questions and answers included), code with callouts, admonitions, sidebars, examples, quotes, CALS tables with spans, header and footer rows, and footnotes are written as their DocBook elements. `info` holds the title, subtitle, authors, date, revision history, keywords and abstract from the page's attributes.
+  - **Links:** every page and anchor has a stable `xml:id` made from its Antora resource (`manual-2.0-ROOT-install`), so reordering the navigation does not change it. A cross reference within the document is a `link` to it, one to a page outside it its published address when known, and otherwise text with a warning. Only web, mail, FTP and telephone addresses become links.
+  - **Pictures:** pictures, drawn diagrams and drawn formulas are copied into a `<name>_assets` folder beside the XML, each distinct picture once, or with `[docbook] assets = "reference"` (`--assets reference`) left where they are and referred to from the document's folder. A formula with no picture is a `mathphrase` holding its source, with a warning that no MathML is written. A DocBook export starts no diagram program: a Graphviz, PlantUML or D2 diagram the preview has not drawn stays as its source, with a warning. A remote image is linked, never fetched; audio and video are linked.
+  - **Checks:** a page that asks to be read-only is refused. Every document is checked before it is written: well formed, unique ids, every link resolving, every picture inside its folder, and none of the nesting DocBook forbids (a table in a table's cell, for example, is written as an `entrytbl` or as text). The tests validate what the exporter writes, every fixture and documentation page included, against the official DocBook 5.2.1 RELAX NG schema. The XML and its assets folder replace an earlier export together or not at all, and a folder that is not an earlier export's is never touched. DocBook toolchains have not been checked by hand yet (`docs/qa/docbook.md`).
+  - **For developers:** a new crate `adoc-docbook`. `adoc-engine` gains the `docbook` feature, `export.docbook_page`, `export.docbook_component` and `export.docbook_profile`.
 
 ### Changed
 
