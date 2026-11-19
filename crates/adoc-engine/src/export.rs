@@ -194,17 +194,21 @@ pub struct EpubExportArgs {
     /// Attributes every page is read with before its own header, after Antora's, and that a
     /// book's own attributes take.
     pub attributes: Vec<(String, String)>,
-    /// Metadata in place of the document's: a profile's.
+    /// Metadata in place of the document's and `[epub]`'s: a profile's.
     pub title: Option<String>,
     pub creator: Option<String>,
     pub language: Option<String>,
     pub identifier: Option<String>,
-    /// The cover, in place of the document's `front-cover-image`.
+    pub publisher: Option<String>,
+    /// The cover, in place of `[epub] cover` and the document's `front-cover-image`.
     pub cover: Option<PathBuf>,
+    /// A stylesheet of the user's, in place of `[epub] css`, linked after the default one. It
+    /// must be inside the workspace; one that imports or names anything fails the export.
+    pub css: Option<PathBuf>,
     /// When the book was last modified, in seconds since the Unix epoch: its
-    /// `dcterms:modified` and the date of every file in it. `None` takes `SOURCE_DATE_EPOCH`,
-    /// else the time of the export, which is reported, since exporting again then gives other
-    /// bytes.
+    /// `dcterms:modified` and the date of every file in it. `None` takes `[epub] modified`,
+    /// else `SOURCE_DATE_EPOCH`, else the time of the export, which is reported, since
+    /// exporting again then gives other bytes.
     pub modified: Option<i64>,
 }
 
@@ -220,7 +224,9 @@ impl EpubExportArgs {
             creator: None,
             language: None,
             identifier: None,
+            publisher: None,
             cover: None,
+            css: None,
             modified: None,
         }
     }
@@ -639,6 +645,17 @@ pub(crate) fn register_export(registry: &mut CommandRegistry) {
             ),
             epub_command,
         );
+        register(
+            registry,
+            spec(
+                ids::EXPORT_EPUB_PROFILE,
+                "Export EPUB Profile…",
+                CommandCategory::Workspace,
+                None,
+                CommandContext::Always,
+            ),
+            epub_profile_command,
+        );
     }
     #[cfg(feature = "docx")]
     {
@@ -722,6 +739,23 @@ fn epub_command(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome
             expected: "an export target and an .epub output path",
         });
     };
+    engine.start_export(Request::Epub(args), false)?;
+    Ok(CommandOutcome::Done)
+}
+
+/// Exports an EPUB publication profile to the output it names.
+#[cfg(feature = "epub")]
+fn epub_profile_command(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Profile(name) = args else {
+        return Err(EngineError::InvalidArguments {
+            command: ids::EXPORT_EPUB_PROFILE,
+            expected: "a profile name",
+        });
+    };
+    let args = engine.epub_profile_export_args(&name)?;
     engine.start_export(Request::Epub(args), false)?;
     Ok(CommandOutcome::Done)
 }
@@ -2567,14 +2601,32 @@ impl Engine {
                 i64::try_from(since.as_secs()).unwrap_or(i64::MAX)
             });
         let source_date_epoch = std::env::var("SOURCE_DATE_EPOCH").ok();
-        let (modified, dated_now) =
-            match epub_modified(args.modified, source_date_epoch.as_deref(), now) {
-                Ok(modified) => modified,
-                Err(error) => {
-                    self.export_finished(job, Err(error));
-                    return;
-                }
-            };
+        // The export's own (a profile's), else `[epub]`'s, else the document's.
+        let defaults = self.settings.epub.clone();
+        let root = self.roots.first().cloned();
+        let in_root = |relative: &str| match &root {
+            Some(root) => crate::normalize_path(&root.join(relative)),
+            None => PathBuf::from(relative),
+        };
+        let given = args.modified.or(defaults.modified);
+        let (modified, dated_now) = match epub_modified(given, source_date_epoch.as_deref(), now) {
+            Ok(modified) => modified,
+            Err(error) => {
+                self.export_finished(job, Err(error));
+                return;
+            }
+        };
+        let css = args
+            .css
+            .clone()
+            .or_else(|| defaults.css.as_deref().map(in_root));
+        let stylesheet = match css.map(|css| self.epub_stylesheet(&css)).transpose() {
+            Ok(stylesheet) => stylesheet,
+            Err(error) => {
+                self.export_finished(job, Err(error));
+                return;
+            }
+        };
         let Written {
             sources,
             arranged,
@@ -2585,12 +2637,15 @@ impl Engine {
         let options = adoc_epub::EpubOptions {
             book: adoc_epub::BookOptions {
                 format: adoc_ebook::Format::Epub,
-                title: args.title.clone(),
-                creator: args.creator.clone(),
-                language: args.language.clone(),
-                identifier: args.identifier.clone(),
-                publisher: None,
-                cover: args.cover.clone(),
+                title: args.title.clone().or(defaults.title),
+                creator: args.creator.clone().or(defaults.creator),
+                language: args.language.clone().or(defaults.language),
+                identifier: args.identifier.clone().or(defaults.identifier),
+                publisher: args.publisher.clone().or(defaults.publisher),
+                cover: args
+                    .cover
+                    .clone()
+                    .or_else(|| defaults.cover.as_deref().map(in_root)),
                 page_urls: self
                     .site_url()
                     .map(|site| self.page_urls(&site))
@@ -2598,7 +2653,7 @@ impl Engine {
                 access: self.file_access.clone(),
             },
             modified,
-            stylesheet: None,
+            stylesheet,
         };
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
@@ -2629,6 +2684,30 @@ impl Engine {
                 });
             let _ = sender.send(WorkerMessage::ExportFinished { job, result });
         });
+    }
+}
+
+#[cfg(feature = "epub")]
+impl Engine {
+    /// A user stylesheet, read through the export's file access and checked: one outside the
+    /// folders the export may read, unreadable, or that could reach outside the book fails the
+    /// export, rather than being left out unseen.
+    fn epub_stylesheet(&self, path: &Path) -> Result<String, String> {
+        if !self.file_access.permits(path) {
+            return Err(format!(
+                "the stylesheet {} is outside the folders the export may read",
+                path.display()
+            ));
+        }
+        let bytes = self
+            .file_access
+            .read(path)
+            .map_err(|error| format!("the stylesheet {}: {error}", path.display()))?;
+        let text = String::from_utf8(bytes)
+            .map_err(|_| format!("the stylesheet {} is not UTF-8 text", path.display()))?;
+        adoc_epub::check_stylesheet(&text)
+            .map_err(|problem| format!("{}: {problem}", path.display()))?;
+        Ok(text)
     }
 }
 

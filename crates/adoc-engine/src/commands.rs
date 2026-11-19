@@ -158,6 +158,7 @@ pub mod ids {
     pub const EXPORT_KINDLE_PROFILE: CommandId = CommandId::new("export.kindle_profile");
     pub const EXPORT_EPUB_PAGE: CommandId = CommandId::new("export.epub_page");
     pub const EXPORT_EPUB_COMPONENT: CommandId = CommandId::new("export.epub_component");
+    pub const EXPORT_EPUB_PROFILE: CommandId = CommandId::new("export.epub_profile");
     pub const EXPORT_HTML_PAGE: CommandId = CommandId::new("export.html_page");
     pub const SPELLING_ADD_TO_WORKSPACE: CommandId = CommandId::new("spelling.add_to_workspace");
     pub const SPELLING_ADD_TO_USER: CommandId = CommandId::new("spelling.add_to_user");

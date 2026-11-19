@@ -20,6 +20,7 @@ mod docx_look;
 mod docx_settings;
 mod edit;
 mod engine;
+mod epub_settings;
 mod error;
 mod event;
 mod expansion;
@@ -120,6 +121,7 @@ pub use docx_settings::{
 };
 pub use edit::TextEdit;
 pub use engine::{Engine, INDEX_SETTLE, MAX_TEXT_FILE};
+pub use epub_settings::{EpubProfile, EpubSettings};
 pub use error::{ConflictKind, EngineError};
 pub use event::EngineEvent;
 pub use expansion::{Branch, SidebarPanel, EXPANSION_SAVE_SETTLE, EXPANSION_STATE_FILE};

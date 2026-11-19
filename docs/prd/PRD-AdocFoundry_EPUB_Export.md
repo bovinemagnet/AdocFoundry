@@ -418,6 +418,32 @@ The epic starts with a package of its own, before E1: Kindle export's book model
     - a table with no header row.
 - **Kindle's bytes** were compared again and are unchanged.
 
+
+### E7 (#644): settings and profiles
+
+- **`[epub]`** (`crates/adoc-engine/src/epub_settings.rs`, built without the `epub` feature too):
+  - `title`, `creator`, `language`, `identifier` and `publisher`;
+  - `cover` and `css`, relative to the first root;
+  - `modified`, a date or a UTC time from 1980 to 2107, so books built again are the same bytes;
+  - `style`, where only `"default"` is accepted, so §5.7's example reads.
+
+  An export takes each value from its own arguments (a profile's), else `[epub]`'s, else the document's. Its date comes from its own `modified`, else `[epub] modified`, else `SOURCE_DATE_EPOCH`, else now.
+- **Profile sharing (§14):** each profile repeats its content, as Word's and Kindle's do (Kindle's K7). `[epub.profiles.<name>]` has:
+  - exactly one of `page`, `component` or `nav`;
+  - an `output`, an `.epub` file inside the workspace, `<name>.epub` by default;
+  - `attributes`, the metadata keys, `cover`, `css` and `modified`.
+
+  It reuses the PDF profiles' helpers (`profile_content`, `profile_attributes`, `profile_target`, `target_problems`).
+- **When a profile is refused:**
+  - an unknown key, another format's `format` among them, or an output that is not `.epub`: when the settings are read;
+  - an output, cover or stylesheet outside the workspace: when the profile is used (`EngineError::Refused`).
+- **The engine's API:** `Engine::epub_profile_export_args`, `epub_profile_problems`, `epub_profiles`, and the command `export.epub_profile`. Through E8, the app's palette test lists the command as an exception.
+- **The user stylesheet** is read on the engine thread through the export's `FileAccess` and checked with `check_stylesheet`. One outside the readable folders, unreadable, not UTF-8 or reaching outside the book fails the export, and nothing is written.
+- **Tests:**
+  - `epub_profiles_resolve_and_validate`: page, component and navigation profiles with `[epub]` defaults; refusals when read and when used; the command; problems found without exporting.
+  - `epub_settings_leave_other_formats_unchanged`: an EPUB profile selects what the equivalent PDF profile does. `[pdf]`, `[docx]` and `[kindle]` leave an EPUB's bytes as they were, and `[epub]` leaves a Kindle book's.
+- **User documentation** of `[epub]` comes with the front ends in E8.
+
 ## 16. References
 
 - W3C, [EPUB 3.3](https://www.w3.org/TR/epub-33/) (Recommendation)

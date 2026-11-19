@@ -495,3 +495,275 @@ fn epub_internal_links_resolve() {
         }
     }
 }
+
+/// PRD §11 test 17: page, component and navigation profiles resolve to the right pages and
+/// outputs, with `[epub]`'s defaults; invalid ones are refused when the settings are read, and
+/// an output, cover or stylesheet outside the workspace when the profile is used.
+#[test]
+fn epub_profiles_resolve_and_validate() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("book");
+    copy_tree(&fixture("pdf/book"), &root);
+    fs::create_dir_all(root.join("style")).unwrap();
+    fs::write(
+        root.join("style/reader.css"),
+        "body { font-family: serif; }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("style/remote.css"),
+        "@import url(https://example.com/x.css);\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".adocfoundry.toml"),
+        r#"
+[epub]
+style = "default"
+creator = "The Team"
+language = "en-GB"
+css = "style/reader.css"
+modified = "2026-11-19T10:30:00Z"
+
+[epub.profiles.page]
+page = "guide/modules/ROOT/pages/install.adoc"
+output = "build/install.epub"
+title = "Installing"
+
+[epub.profiles.handbook]
+component = "1.0@guide"
+modified = "2026-01-01"
+
+[epub.profiles.admin]
+nav = ["guide/modules/admin/nav.adoc"]
+output = "build/admin.epub"
+identifier = "urn:isbn:9780000000002"
+
+[epub.profiles.away]
+page = "guide/modules/ROOT/pages/install.adoc"
+output = "../away.epub"
+
+[epub.profiles.remote]
+page = "guide/modules/ROOT/pages/install.adoc"
+css = "style/remote.css"
+
+[epub.profiles.outside-css]
+page = "guide/modules/ROOT/pages/install.adoc"
+css = "../../elsewhere.css"
+
+[epub.profiles.wrong]
+page = "guide/modules/ROOT/pages/install.adoc"
+output = "wrong.azw3"
+
+[epub.profiles.odd]
+page = "guide/modules/ROOT/pages/install.adoc"
+format = "kfx"
+
+[epub.profiles.unknown]
+component = "nowhere"
+"#,
+    )
+    .unwrap();
+    let mut settings = Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    // Invalid profiles are refused when the settings are read.
+    for name in ["epub.profiles.wrong", "epub.profiles.odd"] {
+        assert!(
+            settings
+                .warnings
+                .iter()
+                .any(|warning| warning.contains(name)),
+            "{name}: {:?}",
+            settings.warnings
+        );
+    }
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    assert_eq!(
+        engine.epub_profiles(),
+        [
+            "admin",
+            "away",
+            "handbook",
+            "outside-css",
+            "page",
+            "remote",
+            "unknown"
+        ]
+    );
+    let package = |path: &Path| {
+        let bytes = fs::read(path).unwrap();
+        let (files, package) = adoc_epub::testing::assert_valid_ocf(&bytes);
+        (files, package)
+    };
+
+    // The page profile: its own title and output, `[epub]`'s creator, language, stylesheet and
+    // date.
+    let args = engine.epub_profile_export_args("page").unwrap();
+    assert_eq!(args.output, root.join("build/install.epub"));
+    assert_eq!(
+        args.css, None,
+        "the default stylesheet is `[epub]`'s, applied on export"
+    );
+    let summary = engine.export_epub_blocking(args, WAIT).unwrap();
+    assert_eq!(summary.sources, [page(&root, "ROOT/pages/install.adoc")]);
+    let (files, opf) = package(&root.join("build/install.epub"));
+    assert_eq!(opf.title, "Installing");
+    assert_eq!(opf.language, "en-GB");
+    assert_eq!(opf.modified, "2026-11-19T10:30:00Z");
+    assert!(
+        adoc_epub::testing::text(&files, &opf.path).contains("<dc:creator>The Team</dc:creator>")
+    );
+    assert_eq!(
+        adoc_epub::testing::text(&files, "EPUB/css/user.css"),
+        "body { font-family: serif; }\n"
+    );
+    assert!(
+        summary
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("dated with the time")),
+        "a date in the settings is repeatable"
+    );
+
+    // The component profile: `<name>.epub` at the root, the whole book, its own date.
+    let args = engine.epub_profile_export_args("handbook").unwrap();
+    assert_eq!(args.output, root.join("handbook.epub"));
+    let summary = engine.export_epub_blocking(args, WAIT).unwrap();
+    assert_eq!(summary.sources.len(), 8);
+    let (_, opf) = package(&root.join("handbook.epub"));
+    assert_eq!(opf.modified, "2026-01-01T00:00:00Z");
+
+    // The navigation profile: the start page as a preface, then the administration guide.
+    let args = engine.epub_profile_export_args("admin").unwrap();
+    let summary = engine.export_epub_blocking(args, WAIT).unwrap();
+    assert_eq!(summary.sources[0], page(&root, "ROOT/pages/index.adoc"));
+    let admin = root.join("guide/modules/admin");
+    assert!(summary.sources[1..]
+        .iter()
+        .all(|source| source.starts_with(&admin)));
+    let (_, opf) = package(&root.join("build/admin.epub"));
+    assert_eq!(opf.identifier, "urn:isbn:9780000000002");
+
+    // Through the command, as the app and MCP server export a profile.
+    fs::remove_file(root.join("build/install.epub")).unwrap();
+    engine
+        .invoke(
+            ids::EXPORT_EPUB_PROFILE,
+            CommandArgs::Profile("page".to_owned()),
+        )
+        .unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    for _ in 0..200 {
+        engine.pump();
+        if root.join("build/install.epub").is_file() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(root.join("build/install.epub").is_file());
+
+    // Unsafe paths are refused, and a stylesheet that reaches outside the book fails the
+    // export, leaving nothing behind.
+    for name in ["away", "outside-css"] {
+        let error = engine.epub_profile_export_args(name).unwrap_err();
+        assert!(
+            matches!(error, EngineError::Refused(_)),
+            "{name}: {error:?}"
+        );
+    }
+    assert!(!directory.path().join("away.epub").exists());
+    let args = engine.epub_profile_export_args("remote").unwrap();
+    let error = engine.export_epub_blocking(args, WAIT).unwrap_err();
+    assert!(error.to_string().contains("@import"), "{error}");
+    assert!(!root.join("remote.epub").exists());
+
+    // Problems found without exporting.
+    assert!(engine.epub_profile_problems("page").is_empty());
+    let problems = engine.epub_profile_problems("unknown");
+    assert!(
+        problems.iter().any(|problem| problem.contains("nowhere")),
+        "{problems:?}"
+    );
+    assert!(engine.epub_profile_export_args("missing").is_err());
+    assert!(engine.epub_profile_export_args("wrong").is_err());
+}
+
+/// PRD §11 test 18: an EPUB profile selects the same pages, in the same order, as the
+/// equivalent PDF profile, and neither format's settings change the other's output.
+#[cfg(all(feature = "typst", feature = "kindle"))]
+#[test]
+fn epub_settings_leave_other_formats_unchanged() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("book");
+    copy_tree(&fixture("pdf/book"), &root);
+    let open = |settings_text: &str| {
+        fs::write(root.join(".adocfoundry.toml"), settings_text).unwrap();
+        let mut settings = Settings::load(None, Some(&root)).unwrap();
+        settings.git.enabled = false;
+        let mut engine = Engine::new(settings);
+        engine.open_workspace(vec![root.clone()]).unwrap();
+        assert!(engine.wait_for_workers(WAIT));
+        engine
+    };
+    let profiles = r#"
+[pdf.profiles.guide]
+component = "1.0@guide"
+output = "guide.pdf"
+
+[epub.profiles.guide]
+component = "1.0@guide"
+output = "guide.epub"
+modified = "2026-11-19"
+"#;
+    let mut engine = open(profiles);
+    let pdf = engine
+        .export_blocking(engine.profile_export_args("guide").unwrap(), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let profiled = engine
+        .export_epub_blocking(engine.epub_profile_export_args("guide").unwrap(), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        profiled.sources, pdf.sources,
+        "the same pages, in the same order"
+    );
+
+    // Every other format's settings, changed, leave the EPUB's bytes as they were; `[epub]`,
+    // changed, leaves a Kindle book's.
+    let kindle = |engine: &mut Engine| {
+        let output = directory.path().join("guide.azw3");
+        engine
+            .export_kindle_blocking(
+                adoc_engine::KindleExportArgs::new(
+                    book(),
+                    adoc_engine::KindleFormat::Azw3,
+                    output.clone(),
+                ),
+                WAIT,
+            )
+            .unwrap_or_else(|error| panic!("{error}"));
+        fs::read(output).unwrap()
+    };
+    let epub_bytes = |engine: &mut Engine| {
+        let output = directory.path().join("guide.epub");
+        engine
+            .export_epub_blocking(epub(book(), &output), WAIT)
+            .unwrap_or_else(|error| panic!("{error}"));
+        fs::read(output).unwrap()
+    };
+    let (plain_epub, plain_kindle) = (epub_bytes(&mut engine), kindle(&mut engine));
+    let mut others = open(&format!(
+        "{profiles}\n[pdf]\ntheme = \"default\"\n\n[docx]\npaper = \"letter\"\n\n[kindle]\ntitle = \"Another Title\"\ncreator = \"Someone Else\"\n"
+    ));
+    assert_eq!(epub_bytes(&mut others), plain_epub);
+    let mut with_epub = open(&format!(
+        "{profiles}\n[epub]\ntitle = \"An EPUB Title\"\ncreator = \"An EPUB Author\"\nlanguage = \"fr\"\n"
+    ));
+    assert_eq!(kindle(&mut with_epub), plain_kindle);
+    assert_ne!(
+        epub_bytes(&mut with_epub),
+        plain_epub,
+        "`[epub]` changes an EPUB"
+    );
+}

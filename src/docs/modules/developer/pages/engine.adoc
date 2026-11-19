@@ -355,6 +355,9 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `Peek`, `E
 |`export.kindle_profile`
 |Export a `[kindle.profiles.<name>]` Kindle profile, with `CommandArgs::Profile`; see <<the-export-service>>.
 
+|`export.epub_profile`
+|Export a `[epub.profiles.<name>]` EPUB profile, with `CommandArgs::Profile`; see <<the-export-service>>.
+
 |`export.docx_profile`
 |Export a `[docx.profiles.<name>]` Word profile, with `CommandArgs::Profile`; see <<the-export-service>>.
 
@@ -591,6 +594,20 @@ The time the book is dated with, its `dcterms:modified` and the date of every ar
 The last is reported as an information note, not a warning, since exporting again then gives other bytes.
 A time outside 1980 to 2107 fails the export.
 Formulas are drawn as pictures for EPUB, as for Word and Kindle.
+`EpubExportArgs` also has a `publisher` and a `css`.
+An export takes each of `title`, `creator`, `language`, `identifier`, `publisher`, `cover` and `css` from its own arguments (a profile's), else from `[epub]`, else, for the first five, from the document.
+The date is its own `modified`, else `[epub] modified`, else `SOURCE_DATE_EPOCH`, else the time of the export, so a book built again is the same bytes when one is set.
+The user stylesheet is read through the export's file access on the engine thread and checked with `adoc_epub::check_stylesheet`.
+A stylesheet outside the folders the export may read, one that cannot be read, one that is not UTF-8 and one that imports or names anything fails the export with nothing written.
+`[epub]` is read by `epub_settings.rs` (`EpubSettings`, built without the `epub` feature too; its module documentation is the schema).
+Its keys are `style` (only `"default"`, so that a file may name it), `title`, `creator`, `language`, `identifier`, `publisher`, `cover` and `css` (paths relative to the first workspace root) and `modified` (a date such as `"2026-11-19"`, at midnight UTC, or a UTC time such as `"2026-11-19T10:30:00Z"`, from 1980 to 2107).
+An unknown key or a bad value is a warning when the settings are read, as for the other formats.
+`[epub.profiles.<name>]` (`EpubProfile`) is an EPUB publication.
+It has exactly one of `page`, `component` or `nav`, which repeats the content and never names another format's profile, as the Word and Kindle profiles do, an `output` (an `.epub` file inside the workspace, `<name>.epub` at the root when unset), `attributes`, and the metadata keys above with `modified`.
+A profile with an unknown key, such as another format's `format`, or an output that is not `.epub` is refused when the settings are read.
+One whose output, cover or stylesheet is outside the workspace is refused when it is used.
+`Engine::epub_profile_export_args(name)` gives the `EpubExportArgs`, `epub_profile_problems(name)` lists what is wrong (an unknown profile, paths outside the workspace, a missing cover or stylesheet, content not in the workspace) and `epub_profiles()` lists the names.
+Nothing in `[epub]` changes another format's output and no other format's settings change an EPUB, which `epub_settings_leave_other_formats_unchanged` holds; `epub_profiles_resolve_and_validate` holds the profiles.
 No front end reaches the EPUB commands yet: the app, the CLI and the MCP server do not name the `epub` feature.
 
 A blocking export that times out abandons its job through a per-job commit lock (`Commit`), which each writer takes to rename its file over the output.

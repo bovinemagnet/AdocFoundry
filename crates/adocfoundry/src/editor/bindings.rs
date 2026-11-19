@@ -614,6 +614,7 @@ mod tests {
             // (#645) gives these actions, but a workspace build turns it on for every crate.
             ids::EXPORT_EPUB_PAGE,
             ids::EXPORT_EPUB_COMPONENT,
+            ids::EXPORT_EPUB_PROFILE,
         ];
         let engine = Engine::new(Settings::default());
         let missing: Vec<&str> = engine
