@@ -117,6 +117,14 @@ language = "en-GB"
 page = "docs/modules/ROOT/pages/quick-start.adoc"
 output = "build/quick-start.azw3"
 
+[epub]                           # EPUB export; nothing here is read for other formats
+language = "en-GB"
+modified = "2026-11-19"
+
+[epub.profiles.quick-start]      # a named EPUB book, run by name
+page = "docs/modules/ROOT/pages/quick-start.adoc"
+output = "build/quick-start.epub"
+
 [spelling]
 enabled = true                   # underline misspelt words in prose
 language = "en_GB"               # for pages with no lang attribute
@@ -446,6 +454,11 @@ These settings never affect PDF export (`pdf.theme`), HTML or the Antora site.
 |tables
 |see <<kindle-settings>>
 |The Kindle export's format and metadata, and named Kindle publication profiles in `[kindle.profiles.<name>]`. See <<kindle-settings>>.
+
+|`epub.*`
+|tables
+|see <<epub-settings>>
+|The EPUB export's metadata, stylesheet and repeatable date, and named EPUB publication profiles in `[epub.profiles.<name>]`. See <<epub-settings>>.
 
 |`history.enabled`
 |boolean
@@ -981,6 +994,95 @@ component = "2.0@guide"
 format = "azw3"
 output = "build/admin-guide.azw3"
 cover = "images/cover.png"
+----
+
+[#epub-settings]
+== EPUB export settings
+
+The `[epub]` table sets the metadata, cover, stylesheet and date of the EPUB books the engine writes, and `[epub.profiles.<name>]` saves EPUB publications under a name.
+These settings are what Export Page to EPUB…, Export Component to EPUB…, Export EPUB Profile…, `adocfoundry-cli epub` and the MCP `export_epub` tool read.
+See xref:epub-export.adoc[Exporting to EPUB] for the export itself.
+Nothing is read from `[pdf]`, `[docx]` or `[kindle]`, and nothing here changes another format.
+An unknown key, or an output that is not a `.epub` file, is reported when the settings are read.
+
+[cols="2,2,2,4"]
+|===
+|Key |Type |Default |Meaning
+
+|`epub.style`
+|string
+|`"default"`
+|The book's style. Only `"default"` exists.
+
+|`epub.title`, `creator`, `identifier` and `publisher`
+|strings
+|from the book
+|The book's metadata, which replaces what the pages give.
+
+|`epub.language`
+|string
+|from the book
+|A BCP 47 tag such as `"en-GB"`. Without one the export warns and uses English.
+
+|`epub.cover`
+|string
+|none
+|A picture for the cover, relative to the workspace root. The `front-cover-image` attribute wins over it.
+
+|`epub.css`
+|string
+|none
+|A stylesheet of your own, relative to the workspace root. See <<epub-css>>.
+
+|`epub.modified`
+|string
+|see below
+|The book's modification time: a date such as `"2026-11-19"`, taken as midnight UTC, or a UTC time such as `"2026-11-19T10:30:00Z"`, from 1980 to 2107. Without it the `SOURCE_DATE_EPOCH` environment variable is used, and then the time of the export, when exporting again gives other bytes.
+
+|`epub.profiles.<name>`
+|table
+|none
+|A named EPUB publication. See <<epub-profiles>>.
+|===
+
+[#epub-css]
+=== Your own stylesheet
+
+`css` is linked after the default stylesheet, so it can change how the book looks and never what it holds.
+It may not use `@import`, `url(`, `@font-face`, `@namespace`, script expressions or bindings, markup or backslash escapes, and it may be at most 256 KB.
+Otherwise the export fails and writes nothing.
+
+[#epub-profiles]
+=== EPUB profiles
+
+A profile has exactly one of these.
+
+* `page`, a page.
+* `component`, a component version as `version@name` or `name`.
+* `nav`, an array of navigation files.
+
+It may also have these keys.
+
+* `output`, an `.epub` file inside the workspace.
+It is `<name>.epub` at the root by default.
+* `attributes`, which are set for the export.
+* `title`, `creator`, `language`, `identifier`, `publisher`, `cover`, `css` and `modified`, as for `[epub]`.
+
+A profile repeats its content: it never names a PDF, Word or Kindle profile.
+An output, cover or stylesheet outside the workspace is refused.
+
+[source,toml]
+----
+[epub]
+creator = "Paul Snow"
+language = "en-GB"
+modified = "2026-11-19"
+
+[epub.profiles.admin-guide]
+component = "2.0@guide"
+output = "build/admin-guide.epub"
+cover = "images/cover.png"
+css = "epub/extra.css"
 ----
 
 == What a workspace file may set

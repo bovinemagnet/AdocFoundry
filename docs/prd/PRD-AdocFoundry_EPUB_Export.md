@@ -444,6 +444,31 @@ The epic starts with a package of its own, before E1: Kindle export's book model
   - `epub_settings_leave_other_formats_unchanged`: an EPUB profile selects what the equivalent PDF profile does. `[pdf]`, `[docx]` and `[kindle]` leave an EPUB's bytes as they were, and `[epub]` leaves a Kindle book's.
 - **User documentation** of `[epub]` comes with the front ends in E8.
 
+
+### E8 (#645): the CLI, the app and the MCP server
+
+- **CLI:**
+  - `adocfoundry-cli epub <file|component-dir> [--root] [--component] [--output <file.epub>] [--fail-on]`, and `epub --profile <name>`. These share target selection and reporting with `pdf`, `docx` and `kindle`.
+  - An output that is not `.epub` is refused before anything is read (exit 2).
+  - **`--fail-on` (all formats):** an error always fails, and a warning fails only under `--fail-on warning`. An information note never fails. Before, `--fail-on warning` failed on any diagnostic, and EPUB's "dated with the time of the export" note would have failed every undated export. The doc comment already said "at least as severe".
+- **The app:**
+  - Export Page to EPUB…, Export Component to EPUB… and Export EPUB Profile…, in the File menu and the palette, with the save dialog, the protection question before it, and the result notification.
+  - After an EPUB export the notification offers no Open button, as the other formats' do (`opens_after_export`), since §5.8 says no reading application is launched. This is a choice the maintainer may reverse: Open launches nothing unless clicked.
+  - The palette test's exceptions from E2 and E7 are gone.
+- **MCP:**
+  - `export_epub`, a write tool, listed and callable only with `--allow-write`. It takes exactly one of `path`, `component` or `profile`, and an `output` confined to the roots: not a link, not an indexed file, `.epub` only.
+  - Its answer holds `output`, `pages`, `sources`, `warnings` and `protected`, as PDF's and Word's do.
+  - A read-only page is refused with `export_protection_unsupported`.
+  - It has no metadata arguments: a profile gives them, as for Kindle.
+- **Documentation:**
+  - user pages `epub-export.adoc`, with the `[epub]` settings in `settings.adoc` and the `epub` command and `export_epub` tool in `command-line.adoc` and `mcp-server.adoc`, and EPUB beside Kindle in `read-only-exports.adoc` and `pdf-export.adoc`;
+  - the README;
+  - `docs/qa/epub.md`, the manual checks in reading applications.
+- **Tests:**
+  - `epub_cli_exports_and_gates` (`crates/adocfoundry-cli/tests/cli.rs`);
+  - `epub_mcp_export_is_write_gated` (`crates/adoc-mcp/tests/epub.rs`);
+  - `epub_app_exports_through_engine` (`crates/adocfoundry/src/ui_tests.rs`).
+
 ## 16. References
 
 - W3C, [EPUB 3.3](https://www.w3.org/TR/epub-33/) (Recommendation)

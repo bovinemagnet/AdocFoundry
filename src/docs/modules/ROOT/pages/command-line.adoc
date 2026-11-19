@@ -1,7 +1,7 @@
 = Command line
 Paul Snow
 :revnumber: 0.0.0
-:description: Using adocfoundry-cli to check, search, follow links, render and export to PDF, Word and Kindle headlessly, including in CI.
+:description: Using adocfoundry-cli to check, search, follow links, render and export to PDF, Word, Kindle and EPUB headlessly, including in CI.
 
 `adocfoundry-cli` is a headless front end over the same engine as the desktop application.
 It needs no display, which makes it suitable for continuous integration.
@@ -32,6 +32,10 @@ adocfoundry-cli kindle <file|component-dir> [--root <dir>] [--component [<versio
     [--format azw3|kfx] [--output <file.azw3|file.kfx>] [--fail-on none|warning|error]
 adocfoundry-cli kindle --profile <name> [<root>] [--format azw3|kfx]
     [--output <file.azw3|file.kfx>] [--fail-on none|warning|error]
+adocfoundry-cli epub <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
+    [--output <file.epub>] [--fail-on none|warning|error]
+adocfoundry-cli epub --profile <name> [<root>] [--output <file.epub>]
+    [--fail-on none|warning|error]
 adocfoundry-cli git-status <root> [--format text|json]
 adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--format json|dot|svg]
     [--no-partials] [--no-nav] [--unresolved] [--ages] [--dark]
@@ -388,7 +392,7 @@ Without a version, `--component` uses the latest version of the component.
 |Also write the generated Typst source, for inspection.
 
 |`--fail-on none\|warning\|error`
-|Exit with 1 when the export reports a diagnostic at least this severe, so CI can refuse a PDF with, for example, a diagram left as its source. The PDF is written all the same. The default, `none`, never fails for a diagnostic.
+|Exit with 1 when the export reports a diagnostic at least this severe, so CI can refuse a PDF with, for example, a diagram left as its source. The PDF is written all the same. The default, `none`, never fails for a diagnostic. An information note never fails an export, whatever the threshold.
 |===
 
 The command waits for diagrams to render, then prints `<output> (<n> pages)` on standard output.
@@ -450,7 +454,7 @@ Without a version, `--component` uses the latest version of the component.
 |Where to write the document. It must be a `.docx` file name; any other output is refused.
 
 |`--fail-on none\|warning\|error`
-|Exit with 1 when the export reports a diagnostic at least this severe, so CI can refuse a document with, for example, a diagram left as its source. The document is written all the same. The default, `none`, never fails for a diagnostic.
+|Exit with 1 when the export reports a diagnostic at least this severe, so CI can refuse a document with, for example, a diagram left as its source. The document is written all the same. The default, `none`, never fails for a diagnostic. An information note never fails an export, whatever the threshold.
 |===
 
 The paper, orientation, margins, headers and footers and styles come from the `[docx]` settings, or from the profile, and never from `[pdf]`.
@@ -514,7 +518,7 @@ A directory that holds an `antora.yml`, or `--component`, exports the component 
 |Where to write the book. Its extension must be the format's; any other output is refused.
 
 |`--fail-on none\|warning\|error`
-|Exit with 1 when the export reports a diagnostic at least this severe. The book is written all the same. The default, `none`, never fails for a diagnostic.
+|Exit with 1 when the export reports a diagnostic at least this severe. The book is written all the same. The default, `none`, never fails for a diagnostic. An information note never fails an export, whatever the threshold.
 |===
 
 The command prints `<output> (<n> AsciiDoc pages)` on standard output.
@@ -522,6 +526,59 @@ Warnings print on standard error as `path:line: warning: message`.
 An export that fails, or reports a diagnostic that meets `--fail-on`, exits with 1, and a usage error exits with 2.
 A page that asks for a read-only export (`:export-read-only:`) is refused, since a Kindle book carries no restriction; the command exits with 1 and writes nothing.
 See xref:read-only-exports.adoc[Read-only exports].
+
+[[epub]]
+== epub
+
+`epub` exports a page, or a whole component version, as an EPUB 3.3 book.
+See xref:settings.adoc#epub-settings[EPUB export settings] for the metadata it reads.
+For what the book contains, see xref:epub-export.adoc[Exporting to EPUB].
+
+[source,sh]
+----
+adocfoundry-cli epub docs/modules/ROOT/pages/index.adoc
+adocfoundry-cli epub docs --output docs.epub
+adocfoundry-cli epub docs --root . --component 2.0@guide --fail-on warning
+adocfoundry-cli epub --profile user-guide .
+----
+
+Targets are chosen as `kindle` chooses them.
+A file argument exports that page as an article, and by default the book is written beside the page, as `<page>.epub`.
+A directory that holds an `antora.yml`, or `--component`, exports the component version as a book in navigation order, by default as `<name>.epub` in the current folder.
+
+[cols="2,4"]
+|===
+|Option |Meaning
+
+|`--root <dir>`
+|The workspace root, so that includes, xrefs and images resolve across components.
+
+|`--component [<version>@]<name>`
+|Export this component version as a book, with coordinates written as Antora writes them.
+
+|`--profile <name>`
+|Export the EPUB profile `[epub.profiles.<name>]` from the settings; see xref:settings.adoc#epub-profiles[EPUB profiles]. The workspace root is the argument, `--root <dir>`, or else the current directory. `--output` replaces the profile's output.
+
+|`--output <file.epub>`
+|Where to write the book. An output that is not an `.epub` file is refused before anything is read: the command exits with 2 and writes nothing.
+
+|`--fail-on none\|warning\|error`
+|Exit with 1 when the export reports a diagnostic at least this severe. The book is written all the same. The default, `none`, never fails for a diagnostic. An information note never fails an export, whatever the threshold.
+|===
+
+The command prints `<output> (<n> AsciiDoc pages)` on standard output, counting AsciiDoc pages, and `protected: read-only` after it when the export is protected, as the other formats do.
+Warnings print on standard error as `path:line: warning: message`, and information notes as `info: message`.
+An export that fails always exits with 1, a warning fails only under `--fail-on warning`, and a usage error exits with 2.
+A page that asks for a read-only export (`:export-read-only:`) is refused, since an EPUB carries no restriction; the command exits with 1 and writes nothing.
+See xref:read-only-exports.adoc[Read-only exports].
+
+When neither `[epub] modified`, a profile's `modified` nor `SOURCE_DATE_EPOCH` dates the book, the command prints the note `info: the book is dated with the time of the export`.
+Set `SOURCE_DATE_EPOCH` to make books repeatable in CI.
+
+[source,sh]
+----
+SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) adocfoundry-cli epub --profile user-guide --fail-on warning
+----
 
 [[git-status]]
 == git-status

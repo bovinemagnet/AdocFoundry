@@ -833,6 +833,10 @@ Nothing in a page's text, and nothing in a client's request, can change this.
 |`path`, `component` or `profile`, `format?`, `output?`
 |Exports a page as an article, a component version as a book, or a `[kindle.profiles]` publication, as a Kindle book in AZW3 or KFX. `output` is required unless a profile names one. It returns the output, the format, the page count, the pages exported and any warnings. See below.
 
+|`export_epub`
+|`path`, `component` or `profile`, `output?`
+|Exports a page as an article, a component version as a book, or an `[epub.profiles]` publication, as an EPUB. `output` is required unless a profile is given. It returns the output, the page count, the pages exported, any warnings and `protected`. See <<export-epub>>.
+
 |`export_pdf`
 |`path` or `component`, `output`, `theme?`, `standards?`
 |Exports a page as an article, or a component version as a book. A component is `name` or `version@name`. The standards are `pdf-a-1b`, `pdf-a-1a`, `pdf-a-2a` and `pdf-ua-1`. `output` must be a `.pdf` when a file is there already: an existing file that is not a PDF, or any indexed page, is refused with `invalid_argument`, so a page or `antora.yml` is never replaced. It returns the output, the page count and any warnings.
@@ -872,6 +876,20 @@ It returns `output`, `format`, `pages` (the number of AsciiDoc pages exported), 
 An unknown profile or component is `not_found`, and without `--allow-write` the tool is not listed and a call is refused with `permission_denied`.
 The tool never runs an external program.
 See xref:settings.adoc#kindle-settings[Kindle export settings].
+
+[[export-epub]]
+`export_epub` exports to an EPUB 3.3 book.
+It is a write tool: it is offered and callable only with `--allow-write`, otherwise it is not listed and a call is refused with `permission_denied`.
+Exactly one of `path` (a page, exported as an article), `component` (`name` or `version@name`, exported as a book) or `profile` (an `[epub.profiles.<name>]`) is given.
+`output` is a `.epub` file inside a root, required except with a profile, where it replaces the profile's output.
+An `output` outside the roots, by `../` or through a link that leads out, fails with `outside_workspace`.
+An output that is a link, a page or any other indexed file, or is not a `.epub` file, fails with `invalid_argument`.
+There is no format argument and there are no metadata arguments; use a profile.
+It returns `output`, `pages` (the number of AsciiDoc pages exported), `sources` (those pages in the book's order, as workspace-relative paths), `warnings`, which are strings, and `protected`.
+`protected` is always false: a page that asks for a read-only export is refused with `export_protection_unsupported`, and its `details.requested_by` names the page and line.
+An unknown profile or component is `not_found`.
+The tool never runs an external program.
+See xref:epub-export.adoc[Exporting to EPUB] and xref:settings.adoc#epub-settings[EPUB export settings].
 
 === Creating pages and partials
 
@@ -1012,7 +1030,7 @@ Each tool carries MCP annotations.
 
 * The read-only tools have `readOnlyHint: true` and `openWorldHint: false`.
 * `edit_page`, `revert_page` and `rename_page` have `readOnlyHint: false` and `destructiveHint: true`.
-* `export_pdf`, `export_docx` and `export_kindle` have the same, and `idempotentHint: true`, as has `revert_page`.
+* `export_pdf`, `export_docx`, `export_kindle` and `export_epub` have the same, and `idempotentHint: true`, as has `revert_page`.
 
 Annotations are hints for clients.
 They never grant permission.

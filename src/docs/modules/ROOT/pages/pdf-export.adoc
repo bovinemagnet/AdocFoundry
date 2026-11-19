@@ -164,6 +164,7 @@ Word publications have their own `[docx.profiles]`, which do not read these prof
 See xref:settings.adoc#docx-profiles[Word profiles].
 For the Word export itself, see xref:word-export.adoc[Exporting to Word].
 For Kindle books, see xref:kindle-export.adoc[Exporting to Kindle].
+For EPUB books, see xref:epub-export.adoc[Exporting to EPUB].
 A settings warning names `pdf.profiles.<name>`.
 
 To run a profile in the application, choose File › Export PDF Profile… (`export.pdf_profile`), which is also in the command palette.

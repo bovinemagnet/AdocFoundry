@@ -8,7 +8,7 @@ repository.workspace = true
 
 [dependencies]
 adoc-core.workspace = true
-adoc-engine = { workspace = true, features = ["typst", "git", "docx", "kindle"] }
+adoc-engine = { workspace = true, features = ["typst", "git", "docx", "kindle", "epub"] }
 bytes.workspace = true
 getrandom.workspace = true
 http.workspace = true
@@ -25,6 +25,8 @@ tokio-util.workspace = true
 [dev-dependencies]
 # A Word template to export with, in `docx_look_choice_everywhere`.
 adoc-docx = { workspace = true, features = ["test-support"] }
+# An EPUB read back and checked whole, in `epub_mcp_export_is_write_gated`.
+adoc-epub = { workspace = true, features = ["test-support"] }
 adoc-git = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 

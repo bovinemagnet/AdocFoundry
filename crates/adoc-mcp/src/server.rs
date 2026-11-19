@@ -18,9 +18,9 @@ use std::{
 use adoc_core::{DiagnosticSeverity, LineIndex, SourceRange};
 use adoc_engine::{
     commands::ids, report::display_path, to_svg_laid_out, CommandArgs, CommandOutcome,
-    DefinitionTarget, DocxExportArgs, Engine, EngineEvent, ExportArgs, ExportTarget, FileAccess,
-    GraphFilter, GraphScope, KindleExportArgs, KindleFormat, LookChoice, NavItem, SearchRequest,
-    SvgStyle,
+    DefinitionTarget, DocxExportArgs, Engine, EngineEvent, EpubExportArgs, ExportArgs,
+    ExportTarget, FileAccess, GraphFilter, GraphScope, KindleExportArgs, KindleFormat, LookChoice,
+    NavItem, SearchRequest, SvgStyle,
 };
 use rmcp::{
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
@@ -45,13 +45,14 @@ use crate::{
 };
 
 /// The tools that change files, listed and callable only with `--allow-write`.
-const WRITE_TOOLS: [&str; 11] = [
+const WRITE_TOOLS: [&str; 12] = [
     "edit_page",
     "revert_page",
     "rename_page",
     "export_pdf",
     "export_docx",
     "export_kindle",
+    "export_epub",
     "apply_changes",
     "create_page",
     "create_partial",
@@ -342,6 +343,19 @@ struct ExportKindleArgs {
     format: Option<String>,
     /// The `.azw3` or `.kfx` file to write, inside a root; with a profile, in place of the
     /// profile's. A file there already is replaced only when it is a Kindle book's extension.
+    output: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct ExportEpubArgs {
+    /// The page to export as an article.
+    path: Option<String>,
+    /// Or a component version to export as a book: `name` or `version@name`.
+    component: Option<String>,
+    /// Or a `[epub.profiles.<name>]` of the workspace's settings, exported as it says.
+    profile: Option<String>,
+    /// The `.epub` file to write, inside a root; with a profile, in place of the profile's. A
+    /// file there already is replaced only when it is an `.epub` file.
     output: Option<String>,
 }
 
@@ -1443,6 +1457,55 @@ impl Server {
     }
 
     #[tool(
+        description = "Export a page as an article, a component version as a book, or a `[epub.profiles]` publication, to an EPUB 3 book (.epub) for e-readers and reading apps. A page that asks to be read-only (`:export-read-only:`) is refused, since an EPUB carries no editing restriction. Nothing is opened, sent or uploaded, and no external tool is run.",
+        output_schema = schemas::export_epub(),
+        annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn export_epub(&self, Parameters(args): Parameters<ExportEpubArgs>) -> Answer {
+        self.run(move |state| {
+            let mut export = match (&args.profile, &args.path, &args.component) {
+                (Some(profile), None, None) => state.engine.epub_profile_export_args(profile)?,
+                (None, Some(path), None) => {
+                    let path = state.confine(path)?;
+                    EpubExportArgs::new(ExportTarget::Page(state.open(&path)?.0), PathBuf::new())
+                }
+                (None, None, Some(component)) => {
+                    let (version, name) = match component.split_once('@') {
+                        Some((version, name)) => (Some(version.to_owned()), name.to_owned()),
+                        None => (None, component.clone()),
+                    };
+                    EpubExportArgs::new(ExportTarget::Component { name, version }, PathBuf::new())
+                }
+                _ => {
+                    return Err(Failure::invalid(
+                        "give one of a `path`, a `component` or a `profile`",
+                    ))
+                }
+            };
+            export.output = match &args.output {
+                Some(output) => epub_output(state, Path::new(output), output)?,
+                None if args.profile.is_some() => {
+                    let shown = state.shown(&export.output);
+                    epub_output(state, &export.output, &shown)?
+                }
+                None => return Err(Failure::invalid("give the `output` to write")),
+            };
+            let summary = state
+                .engine
+                .export_epub_blocking(export, TIMEOUT)
+                .map_err(|error| export_failure(state, error))?;
+            Ok(json!({
+                "output": state.shown(&summary.output),
+                "pages": summary.pages,
+                "sources": summary.sources.iter().map(|path| state.shown(path)).collect::<Vec<_>>(),
+                "warnings": summary.diagnostics.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "protected": summary.protected,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
         description = "Export a page as an article, a component version as a book, or a `[docx.profiles]` publication, to an editable Word document (.docx). Nothing is opened and no external tool is run.",
         output_schema = schemas::export_docx(),
         annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = false)
@@ -1608,6 +1671,26 @@ fn docx_output(state: &State, output: &Path, shown: &str) -> Result<PathBuf, Fai
     if !docx || state.engine.workspace().index.file(&output).is_some() {
         return Err(Failure::invalid(format!(
             "{shown} is not a `.docx` file; export to one"
+        )));
+    }
+    Ok(output)
+}
+
+/// `output` checked as an EPUB book to write: inside the roots (`shown` is how the client named
+/// it), not a link, and an `.epub` file that no page is.
+fn epub_output(state: &State, output: &Path, shown: &str) -> Result<PathBuf, Failure> {
+    let output = state.confine(&output.to_string_lossy())?;
+    if std::fs::symlink_metadata(&output).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return Err(Failure::invalid(format!(
+            "{shown} is a link, which is not written through"
+        )));
+    }
+    let epub = output
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("epub"));
+    if !epub || state.engine.workspace().index.file(&output).is_some() {
+        return Err(Failure::invalid(format!(
+            "{shown} is not an `.epub` file; export to one"
         )));
     }
     Ok(output)

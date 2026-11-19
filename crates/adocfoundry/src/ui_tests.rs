@@ -1658,6 +1658,147 @@ fn kindle_app_exports_through_engine(cx: &mut TestAppContext) {
     );
 }
 
+/// The EPUB export PRD, §12 test 21: Export Component to EPUB… and Export Page to EPUB… write,
+/// through the save dialog, the books the engine writes, Export EPUB Profile… exports the
+/// profile chosen, each is reported, and no preview is opened nor any reader offered.
+#[gpui::test]
+fn epub_app_exports_through_engine(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("book"));
+    copy_dir(&fixture("pdf/book"), &root);
+    // Dated, so the app's book and the engine's are the same bytes.
+    std::fs::write(
+        root.join(".adocfoundry.toml"),
+        r#"
+[epub]
+modified = "2026-11-19"
+
+[epub.profiles.handbook]
+component = "1.0@guide"
+output = "build/handbook.epub"
+"#,
+    )
+    .unwrap();
+    let page = root.join("guide/modules/ROOT/pages/use.adoc");
+    let mut settings = Settings::default();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    let events = engine.subscribe();
+    let app = app_with(engine, cx);
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx.new(|cx| {
+            WorkspaceView::new(
+                app.clone(),
+                Some(root.clone()),
+                vec![page.clone()],
+                window,
+                cx,
+            )
+        });
+        Root::new(view, window, cx)
+    });
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| {
+            app.read(cx).engine.active().is_some() && !app.read(cx).engine.is_indexing()
+        })
+    }));
+    assert!(cx.update(|_, cx| app.read(cx).engine.settings().epub.modified.is_some()));
+    let tabs = cx.update(|_, cx| app.read(cx).engine.tab_order().len());
+
+    // The component, through the save dialog.
+    cx.dispatch_action(crate::editor::bindings::ExportComponentEpub);
+    let output = directory.path().join("guide.epub");
+    let summary =
+        finish_export(&app, &events, &output, &mut cx).unwrap_or_else(|error| panic!("{error}"));
+    let from_app = std::fs::read(&output).unwrap();
+    assert!(from_app.starts_with(b"PK"));
+    assert!(summary.sources.len() >= 8, "{:?}", summary.sources);
+    let message = crate::workspace_view::export_message(&output, &Ok(summary.clone()));
+    assert!(
+        message.starts_with(&format!(
+            "Exported guide.epub ({} AsciiDoc pages)",
+            summary.pages
+        )),
+        "{message}"
+    );
+    assert_eq!(
+        crate::workspace_view::export_message(&output, &Err("no space".to_owned())),
+        "EPUB export failed: no space"
+    );
+    // No reading application is offered for the book, as one is for the other formats.
+    assert!(!crate::workspace_view::opens_after_export(&output));
+    assert!(crate::workspace_view::opens_after_export(
+        &directory.path().join("guide.pdf")
+    ));
+
+    // What the engine writes for the same component.
+    let from_engine = directory.path().join("engine.epub");
+    cx.update(|_, cx| {
+        app.update(cx, |app, _| {
+            let (name, version) = ("guide".to_owned(), Some("1.0".to_owned()));
+            app.engine
+                .export_epub_blocking(
+                    adoc_engine::EpubExportArgs::new(
+                        adoc_engine::ExportTarget::Component { name, version },
+                        from_engine.clone(),
+                    ),
+                    std::time::Duration::from_secs(120),
+                )
+                .unwrap();
+        })
+    });
+    assert!(
+        std::fs::read(&from_engine).unwrap() == from_app,
+        "the app's book differs from the engine's"
+    );
+
+    // The active page, through the save dialog, once the engine's own export has reported.
+    events.try_iter().for_each(drop);
+    cx.dispatch_action(crate::editor::bindings::ExportPageEpub);
+    let output = directory.path().join("use.epub");
+    let summary =
+        finish_export(&app, &events, &output, &mut cx).unwrap_or_else(|error| panic!("{error}"));
+    assert!(std::fs::read(&output).unwrap().starts_with(b"PK"));
+    assert_eq!(summary.sources, vec![page.clone()]);
+    let message = crate::workspace_view::export_message(&output, &Ok(summary.clone()));
+    assert!(
+        message.starts_with("Exported use.epub (1 AsciiDoc page)"),
+        "{message}"
+    );
+
+    // The profile, from the picker, to the output it names.
+    cx.dispatch_action(crate::editor::bindings::ExportEpubProfile);
+    cx.run_until_parked();
+    cx.simulate_input("handbook");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    let mut finished = None;
+    assert!(drain_until(&app, &mut cx, |_| {
+        finished = finished.take().or_else(|| {
+            events.try_iter().find_map(|event| match event {
+                adoc_engine::EngineEvent::ExportFinished { output, result } => {
+                    Some((output, result))
+                }
+                _ => None,
+            })
+        });
+        finished.is_some()
+    }));
+    let (output, result) = finished.unwrap();
+    assert_eq!(output, root.join("build/handbook.epub"));
+    let summary = result.unwrap_or_else(|error| panic!("{error}"));
+    assert!(summary.sources.len() >= 8, "{:?}", summary.sources);
+    assert!(std::fs::read(&output).unwrap().starts_with(b"PK"));
+
+    // No tab or preview opened for any of them.
+    assert_eq!(
+        cx.update(|_, cx| app.read(cx).engine.tab_order().len()),
+        tabs
+    );
+}
+
 /// The DOCX export PRD, §10 test 17: Export Component to Word… writes, through the save
 /// dialog, the navigation-ordered book the engine writes, and opens no preview of it.
 #[gpui::test]
