@@ -176,6 +176,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "adoc-docbook"
+version = "0.12.0"
+dependencies = [
+ "adoc-core",
+ "adoc-docbook",
+ "adoc-dom",
+ "adoc-render",
+ "oxixml-relaxng",
+ "roxmltree 0.21.2",
+]
+
+[[package]]
 name = "adoc-docx"
 version = "0.12.0"
 dependencies = [
@@ -7567,6 +7579,95 @@ checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
  "ttf-parser",
 ]
+
+[[package]]
+name = "oxixml-dom"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d32e82201e0bc59027a1a512279fec6496117e4555c14b65c25e5aa938df0d"
+dependencies = [
+ "oxixml-qname",
+ "oxixml-xml",
+]
+
+[[package]]
+name = "oxixml-iri"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "876520f85a4d66ccdbf499d8c9c501a60543ed091eefc7b475141ff1d159d94e"
+dependencies = [
+ "oxixml-support",
+ "oxixml-text",
+]
+
+[[package]]
+name = "oxixml-qname"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9caf21e5676e02e6c7953180af5bff88049a4f6426ffd754702d5753cae8ad8b"
+dependencies = [
+ "oxixml-unicode",
+]
+
+[[package]]
+name = "oxixml-regex"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e765f73cac537d1a8462bc368cfed614e444748f9d856369c4a7c68f9b0c8420"
+dependencies = [
+ "oxixml-unicode",
+]
+
+[[package]]
+name = "oxixml-relaxng"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84cb7a517f0c8694ef255a38d9cc2e2d81e79b4b07fe6263772e326aec3df1d5"
+dependencies = [
+ "oxixml-dom",
+ "oxixml-iri",
+ "oxixml-qname",
+ "oxixml-regex",
+ "oxixml-support",
+ "oxixml-xml",
+ "oxixml-xsd",
+]
+
+[[package]]
+name = "oxixml-support"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "822ab227407d022b23cba7e0f58d9dcb31851636983f6b9852c69fa2b658bd52"
+
+[[package]]
+name = "oxixml-text"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "758208d48bd16d75ce434bbbeea2afa2054cb7b500b8ecfe552add148f1509a0"
+dependencies = [
+ "oxixml-support",
+]
+
+[[package]]
+name = "oxixml-unicode"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f4fe405939d195999b5e957038d6c66e14ee766c94a98b08309afa04548bdb6"
+
+[[package]]
+name = "oxixml-xml"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0397a4a82dc1e65bc2392afdac9a4a134f2a7d1acedf461ecfeee3464a6ea52c"
+dependencies = [
+ "oxixml-support",
+]
+
+[[package]]
+name = "oxixml-xsd"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8ea470c30c6cefe7aa62ef4e2f09178f9042b70fc7a9a13b201f6e523a9550f"
 
 [[package]]
 name = "page_size"

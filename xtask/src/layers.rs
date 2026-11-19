@@ -33,6 +33,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("adoc-docx", 2),
     ("adoc-ebook", 2),
     ("adoc-epub", 2),
+    ("adoc-docbook", 2),
     ("adoc-kindle", 2),
     ("adoc-audit", 2),
     ("adoc-impact", 2),
@@ -56,6 +57,7 @@ pub const SAME_LAYER_ALLOWED: &[(&str, &str)] = &[
     ("adoc-kindle", "adoc-ebook"),
     ("adoc-epub", "adoc-ebook"),
     ("adoc-epub", "adoc-render"),
+    ("adoc-docbook", "adoc-render"),
 ];
 
 /// Crates whose logic the engine orchestrates: front ends reach them only through
@@ -286,6 +288,9 @@ pub fn check_sources(name: &str, files: &BTreeMap<PathBuf, String>) -> Vec<Strin
         "adoc-kindle" | "adoc-ebook" => ADOC_KINDLE_FORBIDDEN_PATHS,
         // So does EPUB export (EPUB PRD §7).
         "adoc-epub" => ADOC_KINDLE_FORBIDDEN_PATHS,
+        // DocBook export is held as the audit is (DocBook PRD §7): no process and no network,
+        // and no files or threads of its own; the engine writes what it hands back.
+        "adoc-docbook" => ADOC_AUDIT_FORBIDDEN_PATHS,
         _ => return Vec::new(),
     };
     let mut violations = Vec::new();
@@ -441,6 +446,7 @@ const LEAN_EXCLUDED: &[&str] = &[
     "adoc-git",
     "adoc-ebook",
     "adoc-epub",
+    "adoc-docbook",
     "adoc-kindle",
     "typst",
     "gix",

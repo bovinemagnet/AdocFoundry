@@ -40,6 +40,7 @@ adoc-diagrams = { path = "crates/adoc-diagrams" }
 adoc-dom = { path = "crates/adoc-dom" }
 adoc-ebook = { path = "crates/adoc-ebook" }
 adoc-epub = { path = "crates/adoc-epub" }
+adoc-docbook = { path = "crates/adoc-docbook" }
 adoc-docx = { path = "crates/adoc-docx" }
 # Front ends choose its features: `typst` (PDF export, typeset STEM) and `git`.
 adoc-engine = { path = "crates/adoc-engine", default-features = false }
@@ -180,6 +181,8 @@ typst-pdf = "=0.15.1"
 # The root of an SVG, read for its size as asciidoctor-pdf reads it; already in the tree
 # through Typst.
 roxmltree = "=0.21.2"
+# The DocBook 5.2.1 RELAX NG schema, checked in tests only (adoc-docbook's `test-support`).
+oxixml-relaxng = "=0.1.2"
 typst-svg = "=0.15.1"
 unicode-segmentation = "=1.13.3"
 url = "=2.5.8"

@@ -97,7 +97,11 @@ The tool runs in a process group of its own and is stopped with everything it st
 
 |L2
 |`adoc-epub`
-|EPUB export, headless and not yet reachable from the engine, the app, the CLI or the MCP server. `write_epub` maps a `Document` through `Book::build` of `adoc-ebook` and `write_book` writes a reflowable EPUB 3.3 publication in memory: the OCF container (`mimetype` first and stored), `package.opf`, the navigation document and one XHTML content document per chapter, each XML file checked to be well-formed and every archive name checked, with the ZIP and XML writers in-house. In this first package the chapters hold only headings and paragraphs of text. It reads no clock: `EpubOptions` needs a `Modified` time, so the same input gives the same bytes. It depends on `adoc-core`, `adoc-ebook` (an allowed same-layer pair), `crc32fast`, `flate2` and `roxmltree`, with `adoc-render` for its tests, starts no process and uses no network, which `cargo xtask layers` checks. See xref:crates:adoc-epub.adoc[adoc-epub].
+|EPUB export, headless and reached through the engine's `epub` feature from the app, the CLI and the MCP server. `write_epub` maps a `Document` through `Book::build` of `adoc-ebook` and `write_book` writes a reflowable EPUB 3.3 publication in memory: the OCF container (`mimetype` first and stored), `package.opf`, the navigation document and one XHTML content document per chapter, each XML file checked to be well-formed and every archive name checked, with the ZIP and XML writers in-house. It reads no clock: `EpubOptions` needs a `Modified` time, so the same input gives the same bytes. It depends on `adoc-core`, `adoc-ebook` (an allowed same-layer pair), `crc32fast`, `flate2` and `roxmltree`, with `adoc-render` for its tests, starts no process and uses no network, which `cargo xtask layers` checks. See xref:crates:adoc-epub.adoc[adoc-epub].
+
+|L2
+|`adoc-docbook`
+|DocBook export, headless and not yet reachable from the engine, the app, the CLI or the MCP server. `write_docbook` writes a `DocBookDocument` (an article page, or a book of parts, headings and pages) as DocBook 5.2 XML in memory, from the view trees the engine builds, with no HTML in between. Only titles, sections and paragraphs with inline marks are written so far, and every other block keeps its text with a warning. Each document is escaped by the crate's own XML writer and checked structurally by `check` before it is returned, and the tests validate it against the committed DocBook 5.2.1 RELAX NG schema through `oxixml-relaxng`, a dependency of its `test-support` feature only. It depends on `adoc-core`, `adoc-dom`, `adoc-render` (an allowed same-layer pair) and `roxmltree`, reads no clock, starts no process and uses no network, which `cargo xtask layers` checks. See xref:crates:adoc-docbook.adoc[adoc-docbook].
 
 |L2
 |`adoc-kindle`
@@ -139,7 +143,7 @@ The application sees `adoc-model` types only through the engine's re-exports.
 `cargo xtask layers` reads the `Cargo.toml` of every crate under `crates/` and fails the build if:
 
 * a crate is not listed in the layer table in `xtask/src/layers.rs`;
-* a crate depends on a crate in a higher or equal layer, except for the explicit same-layer pairs `adoc-index` to `adoc-parser`, `adoc-lang` to `adoc-parser`, `adoc-index` and `adoc-antora`, `adoc-pdf` to `adoc-render`, `adoc-docx` to `adoc-render`, `adoc-ebook` to `adoc-render`, `adoc-kindle` to `adoc-render`, `adoc-kindle` to `adoc-ebook`, `adoc-epub` to `adoc-ebook`, and `adoc-epub` to `adoc-render`;
+* a crate depends on a crate in a higher or equal layer, except for the explicit same-layer pairs `adoc-index` to `adoc-parser`, `adoc-lang` to `adoc-parser`, `adoc-index` and `adoc-antora`, `adoc-pdf` to `adoc-render`, `adoc-docx` to `adoc-render`, `adoc-ebook` to `adoc-render`, `adoc-kindle` to `adoc-render`, `adoc-kindle` to `adoc-ebook`, `adoc-epub` to `adoc-ebook`, `adoc-epub` to `adoc-render`, and `adoc-docbook` to `adoc-render`;
 * `adoc-core` has any dependency;
 * a UI framework crate (`gpui`, `gpui-pre`, `gpui-pre-platform`, `gpui-component`, `gpui-base`, `gpui-kit-assets`, `egui`, `eframe`) appears outside `adocfoundry`;
 * an LSP crate (`lsp-types`, `lsp-server`) appears outside `adoc-ls`;

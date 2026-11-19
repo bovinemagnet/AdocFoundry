@@ -475,7 +475,8 @@ L2  adoc-render     the view tree and HTML
     adoc-pdf        PDF export
     adoc-docx       DOCX export
     adoc-ebook      the book model Kindle and EPUB export write
-    adoc-epub       EPUB export (not yet in the app or CLI)
+    adoc-epub       EPUB export
+    adoc-docbook    DocBook export (not yet in the app or CLI)
     adoc-kindle     Kindle export (AZW3 and KFX)
     adoc-audit      the documentation quality audit
     adoc-impact     documentation impact analysis

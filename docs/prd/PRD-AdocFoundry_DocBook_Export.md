@@ -243,7 +243,15 @@ Each is settled before work starts on the package it affects, and the outcome is
 
 ## 15. Implementation notes
 
-None yet. Each work package records here where the implementation departs from this document and how the open decisions of §14 were settled.
+Each work package records here where the implementation departs from this document and how the open decisions of §14 were settled.
+
+**DocBook 1/9 (#649).**
+
+- **The root's `version`.** `5.2`, the crate's `VERSION`. The 5.2.1 schema declares `attribute version { text }`, so it accepts any value, and its Schematron requires only that the root has one; DocBook 5.2.1's own release notes, a DocBook document, carry `version='5.2'`. So the value is the convention of DocBook's own documents, not something the schema fixes.
+- **Schema validation.** Full RELAX NG validation against the official 5.2.1 schema is done in process, in the tests: `crates/adoc-docbook/schema/docbook.rng` is the schema unchanged, its copyright notice and permission at its head, never downloaded, compiled by `oxixml-relaxng` 0.1.2 (Apache-2.0, pure Rust, no `unsafe`, no network, no dependency outside its own family; it passes James Clark's RELAX NG test suite). Before it was adopted it accepted a valid article, book, CALS table and figure and refused nine invalid documents (misplaced `info`, a section without a title, an unknown element, a `tgroup` without `cols`, an empty `tbody`, a chapter in an article, a paragraph in a book, the wrong namespace, an empty list). It is a dependency of the crate's `test-support` feature only, so every document a test writes is validated (`adoc_docbook::testing::assert_valid`) and no shipped binary carries the schema. The schema's embedded Schematron rules are **not** run: no Rust Schematron engine is used. An export runs the crate's own structural check, `adoc_docbook::check`, which covers what applies to what the crate writes (well-formed XML with no `DOCTYPE` or processing instruction, the root, namespace and version, unique and valid `xml:id`s, every `linkend` resolving and a `footnoteref` naming a `footnote`, which is one of the Schematron rules, and relative `fileref`s below the document); it is partial, and is described so.
+- **XML writer.** In-house (`xml.rs`, as in the EPUB and DOCX exporters), not `quick-xml`; `roxmltree`, already in the tree, reads documents back in `check` and the tests.
+- **An empty container.** DocBook does not allow an `article`, `chapter` or `section` with no block, which an empty page or a heading with nothing under it would give; one gets an empty `para`, which shows nothing.
+- **Forbidden paths.** The crate is held to the audit's list (no files, processes, network or threads), stricter than §7's "no process, no network": the engine writes what it hands back.
 
 ## 16. References
 

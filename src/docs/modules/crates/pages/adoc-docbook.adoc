@@ -1,0 +1,107 @@
+= adoc-docbook
+Paul Snow
+:revnumber: 0.0.0
+:description: DocBook export: DocBook 5.2 XML written in process from the view trees the engine builds, with no HTML in between.
+
+`adoc-docbook` turns a rendered view tree into a DocBook 5.2 document.
+It is at layer L2, beside `adoc-render` and `adoc-epub`.
+The specification is `docs/prd/PRD-AdocFoundry_DocBook_Export.md` in the repository, which is not part of this site.
+
+NOTE: This is the first package of the DocBook export (DocBook 1/9, issue #649, of epic #615).
+The crate is headless and not yet reachable from the engine, the app, the command line or the MCP server.
+Later packages wire it in.
+
+== What it does
+
+`write_docbook(&DocBookDocument, &DocBookOptions)` writes the document in memory.
+The result is a `DocBookOutput`, or a `DocBookError`.
+
+`DocBookDocument` is either:
+
+* `Article(Page)`, a single page; or
+* `Book(Book)`, with a title, a subtitle, attributes and a list of `BookItem` values: `Part`, `Heading` or `Page`.
+
+A `Page` has a key, its view tree and its navigation depth.
+The crate reads the view trees the engine builds.
+AsciiDoc is not parsed again, and nothing passes through HTML.
+
+`DocBookOutput` holds the XML, a `String` in UTF-8 that starts with its XML declaration, and the diagnostics.
+A `Diagnostic` has a `Severity`, which is `Error` or `Warning`, and an optional source span.
+
+== The document
+
+The root is `article` or `book` in the DocBook namespace `http://docbook.org/ns/docbook`, with the XLink namespace declared.
+It carries:
+
+* `version="5.2"`, the constant `VERSION`.
+The 5.2.1 schema accepts any text there and its Schematron only requires a version on the root, and 5.2 is what the documents of DocBook 5.2.1 carry;
+* `xml:lang`, from the `lang` attribute;
+* an `info` element, with the title first.
+
+== What is written so far
+
+In this first package:
+
+* a page's title, sections and paragraphs, with emphasis, strong, code, superscript and subscript;
+* a book's parts, where a part is opened by its first page, and one chapter for each page.
+A part with no pages is left out, with a warning.
+
+Every other block keeps its text in a `para` or a `literallayout`, with a warning.
+Later packages replace those.
+
+A page without a title is titled with its file's name, with a warning.
+An article, chapter or section that would be empty gets an empty `para`, since DocBook does not allow them empty.
+
+== Escaping
+
+Every document string goes through the crate's own small XML writer (`xml.rs`).
+Characters that XML 1.0 forbids become U+FFFD.
+No `DOCTYPE`, entity, processing instruction or passthrough markup is ever written as XML.
+
+== Checks
+
+`check(xml)` is the export's own structural check.
+It runs on every document before it is returned, and a failure is `DocBookError::Invalid`.
+It requires:
+
+* well-formed XML with no `DOCTYPE` and no processing instruction;
+* the root `article` or `book`, in the DocBook namespace, with version 5.2;
+* every element in the DocBook namespace;
+* every `xml:id` a valid name, and unique;
+* every `linkend` and `linkends` naming an `xml:id`, and every `footnoteref` naming a `footnote`;
+* no empty `xlink:href`;
+* every `fileref` a relative path below the document's folder.
+
+It is not schema validation.
+
+== Validation
+
+The tests check every document against the official DocBook 5.2.1 RELAX NG schema, in process.
+The schema is committed unchanged, with its notice, as `crates/adoc-docbook/schema/docbook.rng`, and is never downloaded.
+It is checked through the `oxixml-relaxng` crate (Apache-2.0, pure Rust), which is a dependency only of the crate's `test-support` feature, so no shipped binary carries it.
+
+The feature gives the `testing` module: `assert_valid`, `schema_problems` and `parse`.
+The schema's embedded Schematron rules are not run.
+The `check` covers the ones that apply to what the crate writes.
+
+== Same input, same bytes
+
+The crate reads no clock, so the same input gives the same bytes.
+It writes no file: the caller puts the document in place.
+
+== Tests
+
+The acceptance tests are `docbook_root_is_wellformed_and_versioned`, `docbook_text_is_escaped` and `docbook_output_is_deterministic`, in `crates/adoc-docbook/tests/root.rs`.
+
+== Where it sits
+
+`adoc-docbook` is headless.
+It depends on `adoc-core`, `adoc-dom`, `adoc-render` and `roxmltree`.
+The pair `adoc-docbook` on `adoc-render` is a same-layer pair listed in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`.
+It starts no process, uses no network, no files and no threads of its own: `cargo xtask layers` holds its sources to the same forbidden paths as `adoc-audit`.
+
+== Related
+
+* xref:adoc-epub.adoc[adoc-epub], the EPUB writer
+* xref:adoc-render.adoc[adoc-render], which builds the view tree
+* xref:index.adoc[Crates]
