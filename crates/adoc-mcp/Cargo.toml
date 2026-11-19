@@ -8,7 +8,7 @@ repository.workspace = true
 
 [dependencies]
 adoc-core.workspace = true
-adoc-engine = { workspace = true, features = ["typst", "git", "docx", "kindle", "epub"] }
+adoc-engine = { workspace = true, features = ["typst", "git", "docx", "kindle", "epub", "docbook"] }
 bytes.workspace = true
 getrandom.workspace = true
 http.workspace = true
@@ -27,6 +27,8 @@ tokio-util.workspace = true
 adoc-docx = { workspace = true, features = ["test-support"] }
 # An EPUB read back and checked whole, in `epub_mcp_export_is_write_gated`.
 adoc-epub = { workspace = true, features = ["test-support"] }
+# A DocBook document checked against its schema, in `docbook_mcp_export_is_write_gated`.
+adoc-docbook = { workspace = true, features = ["test-support"] }
 adoc-git = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 

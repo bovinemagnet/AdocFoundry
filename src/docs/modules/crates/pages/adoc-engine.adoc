@@ -89,7 +89,7 @@ Seven Cargo features, `typst` (PDF export and typeset STEM, through `adoc-pdf` a
 The engine built with `--no-default-features --features docx` compiles `adoc-docx` and neither `adoc-pdf` nor Typst, and with `--features kindle` it compiles `adoc-kindle` and none of `adoc-pdf`, `adoc-docx`, `adoc-math` or Typst, which `cargo xtask layers` checks.
 Without `git` the engine behaves as with `[git] enabled = false`; without `typst` the PDF export commands are not registered, without `docx` the DOCX ones are not, without `kindle` the Kindle ones are not, without `epub` the EPUB ones (`export.epub_page`, `export.epub_component`) are not, and without `docbook` the DocBook ones (`export.docbook_page`, `export.docbook_component`) are not.
 The engine built with `--features epub` compiles `adoc-epub` and `adoc-ebook` and no Typst and no other exporter (`epub_builds_alone`), and with `--features docbook` it compiles `adoc-docbook` and no other exporter, no `adoc-math` and no Typst (`docbook_builds_alone`).
-No front end names `docbook` yet.
+The app, the command line and the MCP server name `docbook`.
 `[docbook]` and `[docbook.profiles.<name>]` are read by `docbook_settings.rs` (`DocBookSettings`, `DocBookProfile`, reached as `Settings::docbook`), which is built without the `docbook` feature too.
 `Engine::docbook_profile_export_args`, `docbook_profile_problems` and `docbook_profiles` serve the profiles, and `export.docbook_profile` ("Export DocBook Profile…", `CommandArgs::Profile`) exports one.
 `[docbook]` has one key, `assets` (`"copy"` or `"reference"`), which a profile may override.

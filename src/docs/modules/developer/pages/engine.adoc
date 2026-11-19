@@ -614,7 +614,7 @@ Nothing in `[epub]` changes another format's output and no other format's settin
 No front end reaches the EPUB commands yet: the app, the CLI and the MCP server do not name the `epub` feature.
 
 `export.docbook_page` ("Export Page as DocBook…") and `export.docbook_component` ("Export Component as DocBook…") take `CommandArgs::ExportDocBook(DocBookExportArgs)`, which has a `target`, an `output` and `attributes`.
-They are registered only with the `docbook` feature, which no front end names yet.
+They are registered only with the `docbook` feature, which the app, the command line and the MCP server name.
 DocBook goes through the same publication plan as PDF, Word, Kindle and EPUB: the same pages in the same order, unsaved buffers included (`docbook_and_pdf_select_the_same_pages`).
 It finishes as the other formats do, with `EngineEvent::ExportFinished`, and `Engine::export_docbook_blocking(args, timeout)` serves front ends without an event loop.
 A page that asks for `:export-read-only:` is refused, since `ExportFormat::DocBook` carries no editing restriction.

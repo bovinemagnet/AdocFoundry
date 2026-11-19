@@ -141,6 +141,9 @@ actions!(
         ExportPageEpub,
         ExportComponentEpub,
         ExportEpubProfile,
+        ExportPageDocBook,
+        ExportComponentDocBook,
+        ExportDocBookProfile,
         ExportPageDocxThemed,
         ExportComponentDocxThemed,
         ExportPagePdfWithTheme,
@@ -310,6 +313,9 @@ fn binding_for(id: CommandId, keys: &str, cx: &App) -> Option<KeyBinding> {
         ids::EXPORT_EPUB_PAGE => key_binding(keys, ExportPageEpub, workspace, cx),
         ids::EXPORT_EPUB_COMPONENT => key_binding(keys, ExportComponentEpub, workspace, cx),
         ids::EXPORT_EPUB_PROFILE => key_binding(keys, ExportEpubProfile, workspace, cx),
+        ids::EXPORT_DOCBOOK_PAGE => key_binding(keys, ExportPageDocBook, workspace, cx),
+        ids::EXPORT_DOCBOOK_COMPONENT => key_binding(keys, ExportComponentDocBook, workspace, cx),
+        ids::EXPORT_DOCBOOK_PROFILE => key_binding(keys, ExportDocBookProfile, workspace, cx),
         ids::EXPORT_DOCX_PAGE_THEMED => key_binding(keys, ExportPageDocxThemed, workspace, cx),
         ids::EXPORT_DOCX_COMPONENT_THEMED => {
             key_binding(keys, ExportComponentDocxThemed, workspace, cx)
@@ -436,6 +442,9 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::EXPORT_EPUB_PAGE => Box::new(ExportPageEpub),
         ids::EXPORT_EPUB_COMPONENT => Box::new(ExportComponentEpub),
         ids::EXPORT_EPUB_PROFILE => Box::new(ExportEpubProfile),
+        ids::EXPORT_DOCBOOK_PAGE => Box::new(ExportPageDocBook),
+        ids::EXPORT_DOCBOOK_COMPONENT => Box::new(ExportComponentDocBook),
+        ids::EXPORT_DOCBOOK_PROFILE => Box::new(ExportDocBookProfile),
         ids::EXPORT_DOCX_PAGE_THEMED => Box::new(ExportPageDocxThemed),
         ids::EXPORT_DOCX_COMPONENT_THEMED => Box::new(ExportComponentDocxThemed),
         ids::SETTINGS_OPEN => Box::new(OpenSettings),
@@ -619,12 +628,6 @@ mod tests {
             ids::APPEARANCE_SAVE,
             // Saved by Select Font Set…, which is the app's own.
             ids::APPEARANCE_SAVE_FONT_SET,
-            // DocBook export: the app does not build the engine's `docbook` feature until
-            // DocBook 8/9 (#656) gives these actions, but a workspace build turns it on for
-            // every crate.
-            ids::EXPORT_DOCBOOK_PAGE,
-            ids::EXPORT_DOCBOOK_COMPONENT,
-            ids::EXPORT_DOCBOOK_PROFILE,
         ];
         let engine = Engine::new(Settings::default());
         let missing: Vec<&str> = engine

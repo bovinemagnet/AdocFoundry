@@ -293,6 +293,39 @@ pub fn export_kindle() -> Arc<JsonObject> {
     )
 }
 
+pub fn export_docbook() -> Arc<JsonObject> {
+    object(
+        json!({
+            "output": { "type": "string" },
+            "assets": {
+                "type": ["string", "null"],
+                "description": "The folder beside the document holding its pictures, or null when it has none.",
+            },
+            "pages": {
+                "type": "integer",
+                "description": "The AsciiDoc pages exported; a DocBook processor lays out its own pages.",
+            },
+            "sources": list(json!({
+                "type": "string",
+                "description": "A page exported, in the document's order.",
+            })),
+            "warnings": list(json!({ "type": "string" })),
+            "protected": {
+                "type": "boolean",
+                "description": "Always false: DocBook carries no editing restriction, so a page that asks for one (`:export-read-only:`) is refused.",
+            },
+        }),
+        &[
+            "output",
+            "assets",
+            "pages",
+            "sources",
+            "warnings",
+            "protected",
+        ],
+    )
+}
+
 pub fn export_epub() -> Arc<JsonObject> {
     object(
         json!({

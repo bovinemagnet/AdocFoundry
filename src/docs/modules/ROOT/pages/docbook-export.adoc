@@ -1,0 +1,140 @@
+= Exporting to DocBook
+Paul Snow
+:revnumber: 0.0.0
+:description: Exporting a page or a whole Antora component to DocBook 5.2 XML: what it contains, how pictures are kept, links, how to export, settings, warnings and validation.
+
+AdocFoundry exports a page, or a whole component version, as a DocBook 5.2 XML document (`.xml`).
+It is for publishing through a DocBook toolchain, such as one that makes HTML, PDF or help files from DocBook.
+AdocFoundry writes the document itself, in Rust, entirely in process.
+It starts no program and needs no network access, and no DocBook processor is part of AdocFoundry.
+For the other formats, see xref:pdf-export.adoc[Exporting to PDF], xref:word-export.adoc[Exporting to Word], xref:kindle-export.adoc[Exporting to Kindle] and xref:epub-export.adoc[Exporting to EPUB].
+
+NOTE: The export checks the document itself, as described under <<validation>>.
+Results from DocBook toolchains, checked by hand, are recorded in the QA notes in the repository.
+
+== What it makes
+
+A page becomes a DocBook `article`.
+A component version becomes a `book` that follows the navigation, as the PDF export does, with each page once.
+
+* The start page, when the navigation does not list it, is the preface.
+* A navigation list title is a part.
+* A top-level page is a chapter.
+* A nested page is a section.
+
+The metadata comes from the page's header (authors, revision, keywords and description) or, for a book, from the component (its title and version).
+
+The common constructs become DocBook elements.
+
+* Lists, description lists and callout lists.
+* Program listings, with their callouts.
+* Admonitions, quotations, sidebars and examples.
+* Tables, as CALS tables, with column and row spans.
+* Footnotes.
+* Keys, buttons and menus.
+* Index terms.
+
+Each page is written whole, never split.
+For the full table of constructs and elements, see xref:crates:adoc-docbook.adoc[adoc-docbook].
+
+== Pictures
+
+A picture is copied once, however many times it is used, into a folder beside the document named after it, as `<name>_assets/`.
+For `guide.xml` the folder is `guide_assets/`, and the files are `i1.png`, `i2.jpg` and so on.
+The document and its folder can then be moved together.
+
+Exporting again replaces that folder, but only when it holds nothing the export did not write.
+When it holds anything else, the export is refused, so a folder of yours is never deleted.
+
+`--assets reference`, or `[docbook] assets = "reference"`, copies nothing and refers to each picture where it is.
+Such a document is not portable.
+
+A remote picture is never fetched: its address is used.
+
+== Diagrams and formulas
+
+Mermaid diagrams are drawn as usual.
+Graphviz, PlantUML and D2 diagrams are used only once the preview has drawn them, because a DocBook export starts no program.
+Otherwise the diagram's source is kept, with a warning.
+
+A formula keeps its source and, where one was drawn, a picture.
+No MathML is made, and a warning says so.
+
+== Links
+
+Every page and anchor in the document has a stable identifier made from its Antora resource.
+For the page `install` in the module `ROOT` of the component `manual`, version `2.0`, it is `manual-2.0-ROOT-install`.
+An anchor in a book adds the anchor's name, as in `manual-2.0-ROOT-install.requirements`.
+
+* A cross reference to a page or anchor inside the publication is a link to its identifier.
+* A cross reference to a page outside it leads to the published site when `[pdf] site_url`, or the playbook's site URL, is set.
+Otherwise it stays as text, with a warning.
+* External web links are kept.
+
+== Exporting
+
+=== In the application
+
+Choose one of these from the File menu.
+Each is also in the command palette.
+
+* Export Page as DocBook… (`export.docbook_page`) exports the active page.
+* Export Component as DocBook… (`export.docbook_component`) exports the component version that holds the active page.
+* Export DocBook Profile… (`export.docbook_profile`) offers a picker of the workspace's `[docbook.profiles]`; see <<settings>>.
+
+The first two ask where to save the file, and suggest `<page>.xml` or `<component>.xml`.
+When the export finishes, a notification says "Exported <name>.xml (N AsciiDoc pages)" and lists any warnings.
+Nothing is previewed, and no application is offered to open the file, since DocBook is for a DocBook toolchain.
+
+A page whose header says `:export-read-only:` is refused before anything is asked, since DocBook carries no editing restriction; see xref:read-only-exports.adoc[Read-only exports].
+
+=== From the command line and MCP
+
+xref:command-line.adoc#docbook[`adocfoundry-cli docbook`] exports from a shell or a build script.
+The `export_docbook` tool of the MCP server does the same for an agent; see xref:mcp-server.adoc#export-docbook[MCP server].
+The tool always copies the pictures beside the document, whatever the settings say.
+Referring to them in place is for the command line.
+
+=== What is exported
+
+The export selects the same pages as the PDF, Word, Kindle and EPUB exports.
+Unsaved edits are exported, because the export reads open buffers.
+
+[#validation]
+== Validation
+
+The project's own tests check every document they write against the official DocBook 5.2.1 RELAX NG schema.
+The schema's Schematron rules are not run.
+
+Every export also runs its own structural check, of identifiers, links and picture paths, before the document is written.
+A document that fails a check is not written.
+
+AdocFoundry does not include a DocBook processor.
+Results from DocBook toolchains, checked by hand, are recorded in `docs/qa/docbook.md` in the repository.
+
+[#settings]
+== Settings
+
+The `[docbook]` table says where pictures are kept, and `[docbook.profiles.<name>]` saves DocBook publications under a name.
+See xref:settings.adoc#docbook-settings[DocBook export settings] for the keys.
+Nothing is read from `[pdf]`, `[docx]`, `[kindle]` or `[epub]`, and nothing in `[docbook]` changes another format.
+
+== Warnings
+
+A problem is reported as a warning that names the file and line, in the page or the partial it comes from.
+Warnings cover these cases.
+
+* A missing or unreadable picture.
+* A diagram that nothing has drawn, whose source is kept.
+* A formula, for which no MathML is made.
+* A reference that leads out of the publication, with no site address to link to.
+
+The document is still written.
+
+== Safety
+
+* The document is written to a temporary file beside the output and renamed over it only when it is complete.
+A failed or timed-out export leaves any existing file untouched.
+* An output that is a link, a folder or not an `.xml` file is refused.
+* An assets folder holding files the export did not write is never replaced.
+* Profiles and the MCP tool write only inside the workspace.

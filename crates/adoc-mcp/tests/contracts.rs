@@ -47,13 +47,14 @@ const EXISTING_READ_TOOLS: [&str; 10] = [
     "symbols",
 ];
 
-const WRITE_TOOLS: [&str; 12] = [
+const WRITE_TOOLS: [&str; 13] = [
     "apply_changes",
     "create_module",
     "create_page",
     "create_project",
     "create_partial",
     "edit_page",
+    "export_docbook",
     "export_docx",
     "export_epub",
     "export_kindle",
@@ -584,6 +585,11 @@ fn failing_calls() -> Vec<(&'static str, Value, &'static str)> {
         (
             "export_epub",
             json!({ "output": "x.epub" }),
+            "invalid_argument",
+        ),
+        (
+            "export_docbook",
+            json!({ "output": "x.xml" }),
             "invalid_argument",
         ),
     ]

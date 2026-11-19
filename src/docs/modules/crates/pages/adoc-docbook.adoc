@@ -7,10 +7,10 @@ Paul Snow
 It is at layer L2, beside `adoc-render` and `adoc-epub`.
 The specification is `docs/prd/PRD-AdocFoundry_DocBook_Export.md` in the repository, which is not part of this site.
 
-NOTE: The crate is the DocBook export of epic #615, built in packages: the crate and its XML writer (DocBook 1/9, #649), the engine's feature (DocBook 2/9, #650), a book's structure and metadata (DocBook 3/9, #651), rich blocks, inlines and CALS tables (DocBook 4/9, #652), pictures, diagrams, formulas and the assets folder (DocBook 5/9, #653), identifiers and cross references (DocBook 6/9, #654), and settings and publication profiles (DocBook 7/9, #655).
+NOTE: The crate is the DocBook export of epic #615, built in packages: the crate and its XML writer (DocBook 1/9, #649), the engine's feature (DocBook 2/9, #650), a book's structure and metadata (DocBook 3/9, #651), rich blocks, inlines and CALS tables (DocBook 4/9, #652), pictures, diagrams, formulas and the assets folder (DocBook 5/9, #653), identifiers and cross references (DocBook 6/9, #654), settings and publication profiles (DocBook 7/9, #655), and the app, command line and MCP server (DocBook 8/9, #656).
 The crate is headless.
-The engine reaches it through its `docbook` feature (the second package, DocBook 2/9, issue #650), which the app, the command line and the MCP server do not yet name.
-Later packages wire those in.
+The engine reaches it through its `docbook` feature (the second package, DocBook 2/9, issue #650).
+The app, the command line and the MCP server name it too (DocBook 8/9, issue #656).
 
 == What it does
 

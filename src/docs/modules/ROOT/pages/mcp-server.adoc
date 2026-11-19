@@ -837,6 +837,10 @@ Nothing in a page's text, and nothing in a client's request, can change this.
 |`path`, `component` or `profile`, `output?`
 |Exports a page as an article, a component version as a book, or an `[epub.profiles]` publication, as an EPUB. `output` is required unless a profile is given. It returns the output, the page count, the pages exported, any warnings and `protected`. See <<export-epub>>.
 
+|`export_docbook`
+|`path`, `component` or `profile`, `output?`
+|Exports a page as an article, a component version as a book, or a `[docbook.profiles]` publication, as DocBook 5.2 XML, with its pictures copied beside it. `output` is required unless a profile is given. It returns the output, the assets folder, the page count, the pages exported, any warnings and `protected`. See <<export-docbook>>.
+
 |`export_pdf`
 |`path` or `component`, `output`, `theme?`, `standards?`
 |Exports a page as an article, or a component version as a book. A component is `name` or `version@name`. The standards are `pdf-a-1b`, `pdf-a-1a`, `pdf-a-2a` and `pdf-ua-1`. `output` must be a `.pdf` when a file is there already: an existing file that is not a PDF, or any indexed page, is refused with `invalid_argument`, so a page or `antora.yml` is never replaced. It returns the output, the page count and any warnings.
@@ -890,6 +894,24 @@ It returns `output`, `pages` (the number of AsciiDoc pages exported), `sources` 
 An unknown profile or component is `not_found`.
 The tool never runs an external program.
 See xref:epub-export.adoc[Exporting to EPUB] and xref:settings.adoc#epub-settings[EPUB export settings].
+
+[[export-docbook]]
+`export_docbook` exports to a DocBook 5.2 XML document.
+It is a write tool: it is offered and callable only with `--allow-write`, otherwise it is not listed and a call is refused with `permission_denied`.
+Exactly one of `path` (a page, exported as an article), `component` (`name` or `version@name`, exported as a book) or `profile` (a `[docbook.profiles.<name>]`) is given.
+`output` is an `.xml` file inside a root, required except with a profile, where it replaces the profile's output.
+The tool always copies the pictures into the `<name>_assets` folder beside the document, whatever the settings say; referring to them in place is for the command line.
+It returns `output`, `assets` (the folder, or null when there are no pictures to copy), `pages` (the number of AsciiDoc pages exported), `sources` (those pages in the document's order, as workspace-relative paths), `warnings`, which are strings, and `protected`, which is always false.
+These calls are refused.
+
+* An `output` outside the roots, by `../` or through a link that leads out, fails with `outside_workspace`.
+* An output that is a link, a page or any other indexed file, or is not an `.xml` file, fails with `invalid_argument`.
+* An assets folder that holds files the export did not write fails with `invalid_argument`.
+* A page that asks for a read-only export fails with `export_protection_unsupported`, since DocBook carries no restriction.
+
+An unknown profile or component is `not_found`.
+The tool never runs an external program.
+See xref:docbook-export.adoc[Exporting to DocBook] and xref:settings.adoc#docbook-settings[DocBook export settings].
 
 === Creating pages and partials
 
@@ -1030,7 +1052,7 @@ Each tool carries MCP annotations.
 
 * The read-only tools have `readOnlyHint: true` and `openWorldHint: false`.
 * `edit_page`, `revert_page` and `rename_page` have `readOnlyHint: false` and `destructiveHint: true`.
-* `export_pdf`, `export_docx`, `export_kindle` and `export_epub` have the same, and `idempotentHint: true`, as has `revert_page`.
+* `export_pdf`, `export_docx`, `export_kindle`, `export_epub` and `export_docbook` have the same, and `idempotentHint: true`, as has `revert_page`.
 
 Annotations are hints for clients.
 They never grant permission.

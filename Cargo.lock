@@ -379,6 +379,7 @@ name = "adoc-mcp"
 version = "0.12.0"
 dependencies = [
  "adoc-core",
+ "adoc-docbook",
  "adoc-docx",
  "adoc-engine",
  "adoc-epub",
@@ -523,6 +524,7 @@ name = "adocfoundry-cli"
 version = "0.12.0"
 dependencies = [
  "adoc-core",
+ "adoc-docbook",
  "adoc-docx",
  "adoc-dom",
  "adoc-engine",

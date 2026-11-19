@@ -14,7 +14,7 @@ The tools fall into groups, each a router of its own: discovery (`list_pages`, `
 
 The rules it keeps are:
 
-* Write tools (`edit_page`, `rename_page`, `export_pdf`, `export_docx`, `export_kindle`, `export_epub` and the creation tools) are removed unless `--allow-write` is given, and `build_site` is offered only with `--allow-build`.
+* Write tools (`edit_page`, `rename_page`, `export_pdf`, `export_docx`, `export_kindle`, `export_epub`, `export_docbook` and the creation tools) are removed unless `--allow-write` is given, and `build_site` is offered only with `--allow-build`.
 * Every path goes through `paths::confine`, inside a root lexically and once links are followed.
 * The HTTP listener binds loopback addresses only and answers 401 to any request without the bearer token (`ADOC_MCP_TOKEN`, else a random token printed once).
 * Answers follow one contract (`responses.rs`): JSON as text and as structured content, stable error codes, and opaque cursors bound to a query and the workspace revision.
