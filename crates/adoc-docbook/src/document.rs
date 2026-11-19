@@ -15,16 +15,17 @@ use adoc_dom::SourceSpan;
 use adoc_render::{ViewFootnote, ViewInline, ViewTree};
 
 use crate::{
-    xml::Xml, Book, BookItem, Diagnostic, DocBookDocument, DocBookOptions, Page, Severity,
-    NAMESPACE, VERSION, XLINK,
+    media::Media, xml::Xml, Asset, Book, BookItem, Diagnostic, DocBookDocument, DocBookOptions,
+    Page, Severity, NAMESPACE, VERSION, XLINK,
 };
 
 /// What writes the document: the XML so far and what was found on the way.
 pub(crate) struct Writer<'a> {
     pub(crate) xml: Xml,
     pub(crate) diagnostics: Vec<Diagnostic>,
-    #[allow(dead_code)]
     pub(crate) options: &'a DocBookOptions,
+    /// The pictures written so far.
+    pub(crate) media: Media,
     /// The page being written.
     pub(crate) page: PageContext,
     /// Inside a `link`, where another link keeps only its text.
@@ -45,6 +46,8 @@ pub(crate) struct PageContext {
     pub(crate) callouts: Vec<(usize, String)>,
     /// The footnotes written so far, which a repeated reference leads to.
     pub(crate) noted: std::collections::BTreeSet<u32>,
+    /// How many formulas the page has written, each as its source and picture.
+    pub(crate) formulas: usize,
 }
 
 impl PageContext {
@@ -56,6 +59,7 @@ impl PageContext {
             listings: 0,
             callouts: Vec::new(),
             noted: std::collections::BTreeSet::new(),
+            formulas: 0,
         }
     }
 
@@ -89,11 +93,12 @@ impl Writer<'_> {
 pub(crate) fn write(
     document: &DocBookDocument,
     options: &DocBookOptions,
-) -> (String, Vec<Diagnostic>) {
+) -> (String, Vec<Asset>, Vec<Diagnostic>) {
     let mut writer = Writer {
         xml: Xml::file(),
         diagnostics: Vec::new(),
         options,
+        media: Media::default(),
         page: PageContext::default(),
         in_link: false,
         in_footnote: false,
@@ -103,7 +108,11 @@ pub(crate) fn write(
         DocBookDocument::Book(book) => writer.book(book),
     }
     writer.xml.newline();
-    (writer.xml.into_string(), writer.diagnostics)
+    (
+        writer.xml.into_string(),
+        writer.media.assets,
+        writer.diagnostics,
+    )
 }
 
 /// A page or a heading of the navigation, with what is nested under it.
@@ -318,6 +327,20 @@ impl Writer<'_> {
     /// anything, as DocBook asks of an article, chapter or section.
     fn page_content(&mut self, view: &ViewTree, children: &[Node<'_>]) {
         let wrote = self.blocks(&view.blocks);
+        // Once a page: a formula is its source and the picture drawn of it, never MathML.
+        if self.page.formulas > 0 {
+            let count = self.page.formulas;
+            let source = self.page.span();
+            self.warn(
+                format!(
+                    "{count} formula{} written as {} source and, where drawn, a picture, not \
+                     as MathML",
+                    if count == 1 { " is" } else { "s are" },
+                    if count == 1 { "its" } else { "their" },
+                ),
+                source.as_ref(),
+            );
+        }
         let nested = children.iter().any(Node::has_page);
         if !wrote && !nested {
             self.xml.empty("para", &[]);

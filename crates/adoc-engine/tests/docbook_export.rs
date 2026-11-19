@@ -557,3 +557,100 @@ fn docbook_book_hierarchy_follows_the_plan() {
     assert_eq!(lines, ["chapter: The Old Manual"]);
     assert!(info.contains(&("releaseinfo".to_owned(), "1.0".to_owned())));
 }
+
+/// The reference fixture copied and indexed: several components and versions, pictures (PNG,
+/// JPEG, SVG), a Mermaid diagram and formulas.
+fn reference_workspace() -> (tempfile::TempDir, Engine) {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path().join("reference");
+    copy_tree(&fixture("docx/reference"), &root);
+    let mut settings = Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    (workspace, engine)
+}
+
+fn manual() -> ExportTarget {
+    ExportTarget::Component {
+        name: "manual".to_owned(),
+        version: Some("2.0".to_owned()),
+    }
+}
+
+/// Every `fileref` in the document at `output`.
+fn filerefs(output: &Path) -> Vec<String> {
+    let xml = fs::read_to_string(output).unwrap();
+    adoc_docbook::testing::parse(&xml)
+        .descendants()
+        .filter_map(|node| node.attribute("fileref"))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// PRD §11 test 12, through the engine: a book's pictures, its in-process diagram and its
+/// drawn formulas are written once each into the assets folder beside the document, every
+/// `fileref` leading there by a relative path, nothing naming the checkout; exporting again
+/// with fewer pictures leaves only those; referred to where they are, nothing is copied.
+#[test]
+fn docbook_pictures_go_beside_the_document() {
+    let (workspace, mut engine) = reference_workspace();
+    let out = workspace.path().join("out");
+    let output = out.join("manual.xml");
+    let summary = engine
+        .export_docbook_blocking(docbook(manual(), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    document_text(&output);
+    let assets = out.join("manual_assets");
+    let refs = filerefs(&output);
+    assert!(refs.len() >= 5, "{refs:?}");
+    for fileref in &refs {
+        assert!(fileref.starts_with("manual_assets/i"), "{fileref}");
+        assert!(out.join(fileref).is_file(), "{fileref} is written");
+    }
+    let mut written = names(&assets);
+    written.retain(|name| name.ends_with(".png") || name.ends_with(".jpg"));
+    assert!(written.len() >= 2, "{written:?}");
+    let distinct: std::collections::BTreeSet<&String> = refs.iter().collect();
+    assert_eq!(
+        names(&assets).len(),
+        distinct.len(),
+        "each picture once, and nothing else"
+    );
+    let xml = fs::read_to_string(&output).unwrap();
+    assert!(!xml.contains(&*workspace.path().to_string_lossy()));
+    assert!(
+        summary
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("not as MathML")),
+        "{:?}",
+        summary.diagnostics
+    );
+
+    // Exported again as a page with one picture: the folder holds only that one.
+    let root = workspace.path().join("reference/manual/modules/ROOT/pages");
+    let page = root.join("one-picture.adoc");
+    fs::write(&page, "= One Picture\n\nimage::logo.png[The logo]\n").unwrap();
+    engine
+        .export_docbook_blocking(docbook(ExportTarget::File(page.clone()), &output), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(names(&assets), ["i1.png"]);
+    assert_eq!(filerefs(&output), ["manual_assets/i1.png"]);
+
+    // Referred to where they are: nothing copied, the old folder gone, paths from the document.
+    let referenced = DocBookExportArgs {
+        assets: Some(adoc_engine::DocBookAssets::Reference),
+        ..docbook(ExportTarget::File(page), &output)
+    };
+    engine
+        .export_docbook_blocking(referenced, WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(!assets.exists());
+    let refs = filerefs(&output);
+    assert_eq!(refs.len(), 1);
+    assert!(refs[0].starts_with("../reference/"), "{refs:?}");
+    assert!(out.join(&refs[0]).is_file());
+    adoc_docbook::testing::assert_valid_referenced(&fs::read_to_string(&output).unwrap());
+}

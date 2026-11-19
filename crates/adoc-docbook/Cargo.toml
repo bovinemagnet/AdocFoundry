@@ -22,6 +22,7 @@ adoc-docbook = { path = ".", features = ["test-support"] }
 adoc-dom.workspace = true
 adoc-render.workspace = true
 roxmltree.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

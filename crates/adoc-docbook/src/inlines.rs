@@ -73,6 +73,10 @@ impl Writer<'_> {
                 }
             }
             ViewInline::Icon(name) => self.xml.element("phrase", &[("role", "icon")], name),
+            ViewInline::Image(image) => self.inline_picture(image),
+            ViewInline::Stem {
+                source, rendered, ..
+            } => self.inline_equation(source, rendered.as_ref()),
             ViewInline::FootnoteRef { number, repeat, .. } => self.footnote(*number, *repeat),
             ViewInline::IndexTerm { terms, content } => {
                 let terms: Vec<&String> = terms.iter().filter(|term| !term.is_empty()).collect();

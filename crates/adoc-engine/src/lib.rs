@@ -128,8 +128,8 @@ pub use expansion::{Branch, SidebarPanel, EXPANSION_SAVE_SETTLE, EXPANSION_STATE
 #[cfg(feature = "docbook")]
 pub use export::docbook_assets_folder;
 pub use export::{
-    DocBookExportArgs, DocxExportArgs, EpubExportArgs, ExportArgs, ExportDiagnostic, ExportSummary,
-    ExportTarget, KindleExportArgs, KindleFormat,
+    DocBookAssets, DocBookExportArgs, DocxExportArgs, EpubExportArgs, ExportArgs, ExportDiagnostic,
+    ExportSummary, ExportTarget, KindleExportArgs, KindleFormat,
 };
 pub use external::{is_web_address, SYSTEM_VIEWER_EXTENSIONS, WEB_SCHEMES};
 pub use files::{DirectoryEntry, DirectoryError, EntryKind, Listing};

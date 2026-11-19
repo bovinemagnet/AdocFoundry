@@ -183,6 +183,14 @@ impl Writer<'_> {
                 return wrote || !block.title.is_empty();
             }
             ViewKind::Table(table) => self.table(block, table, &role),
+            ViewKind::Image(image) => self.figure(block, image, &role),
+            ViewKind::Diagram(diagram) => self.diagram(block, diagram, &role),
+            ViewKind::Stem {
+                source, rendered, ..
+            } => self.equation(block, source, rendered, &role),
+            ViewKind::Media { kind, targets } => {
+                self.media(block, *kind == adoc_dom::MediaKind::Video, targets, &role);
+            }
             ViewKind::Passthrough(text) => {
                 self.warn(
                     "a passthrough block is written as text, never as markup",

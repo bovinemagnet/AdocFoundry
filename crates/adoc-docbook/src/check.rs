@@ -7,7 +7,9 @@
 //! the [`crate::VERSION`]; every element is in the DocBook namespace; every `xml:id` is a valid
 //! name and unique; every `linkend` and `linkends` names one, and a `footnoteref` names a
 //! `footnote` (a rule of the schema's Schematron); every `xlink:href` has a value; and every
-//! `fileref` is a relative path that stays below the document's folder.
+//! `fileref` is a relative path that stays below the document's folder, or a web address (a
+//! remote picture, never fetched). A document whose pictures are referred to where they are
+//! may have `fileref`s that climb out of its folder.
 
 use std::collections::{HashMap, HashSet};
 
@@ -18,6 +20,12 @@ const XML: &str = "http://www.w3.org/XML/1998/namespace";
 /// The problems found in `xml`, empty for a document that passes.
 #[must_use]
 pub fn check(xml: &str) -> Vec<String> {
+    check_document(xml, false)
+}
+
+/// [`check`], with `referenced` true for a document whose pictures are referred to where they
+/// are ([`crate::AssetPolicy::Reference`]), whose `fileref`s may climb out of its folder.
+pub(crate) fn check_document(xml: &str, referenced: bool) -> Vec<String> {
     let document = match roxmltree::Document::parse(xml) {
         Ok(document) => document,
         Err(error) => return vec![format!("not well-formed XML: {error}")],
@@ -99,7 +107,10 @@ pub fn check(xml: &str) -> Vec<String> {
             }
         }
         if let Some(fileref) = node.attribute("fileref") {
-            if !is_relative_below(fileref) {
+            let fine = is_relative_below(fileref)
+                || is_web_address(fileref)
+                || (referenced && is_relative(fileref));
+            if !fine {
                 problems.push(format!(
                     "<{name}> refers to \u{201c}{fileref}\u{201d}, not a relative path below the document"
                 ));
@@ -117,6 +128,21 @@ pub(crate) fn is_name(id: &str) -> bool {
         .next()
         .is_some_and(|first| first == '_' || first.is_alphabetic())
         && chars.all(|c| c.is_alphanumeric() || matches!(c, '.' | '-' | '_' | '\u{B7}'))
+}
+
+/// Whether `address` is a web address, which a remote picture keeps.
+fn is_web_address(address: &str) -> bool {
+    (address.starts_with("https://") || address.starts_with("http://"))
+        && !address.contains(char::is_whitespace)
+}
+
+/// Whether `path` is relative, uses `/` and names no scheme, wherever it leads.
+fn is_relative(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains('\\')
+        && !path.contains(':')
+        && path.split('/').all(|part| !part.is_empty() && part != ".")
 }
 
 /// Whether `path` is relative, uses `/`, names no scheme and never climbs above where it starts.
@@ -167,6 +193,10 @@ mod tests {
             ("<imagedata fileref=\"../x.png\"/>", "not a relative path"),
             ("<imagedata fileref=\"C:\\x.png\"/>", "not a relative path"),
             ("<imagedata fileref=\"file:x.png\"/>", "not a relative path"),
+            (
+                "<imagedata fileref=\"ftp://x/a.png\"/>",
+                "not a relative path",
+            ),
             ("<?evil x?>", "processing instruction"),
             ("<para>a<?asciidoc-br x?>b</para>", "processing instruction"),
             (
@@ -180,6 +210,23 @@ mod tests {
                 "{body}: {problems:?}"
             );
         }
+    }
+
+    #[test]
+    fn referenced_pictures_may_climb_out() {
+        let climbing = document(
+            "<mediaobject><imageobject><imagedata fileref=\"../docs/a.png\"/></imageobject></mediaobject>",
+        );
+        assert_eq!(check(&climbing).len(), 1);
+        assert_eq!(check_document(&climbing, true), Vec::<String>::new());
+        let remote = document(
+            "<mediaobject><imageobject><imagedata fileref=\"https://example.com/a.png\"/></imageobject></mediaobject>",
+        );
+        assert_eq!(check(&remote), Vec::<String>::new());
+        let absolute = document(
+            "<mediaobject><imageobject><imagedata fileref=\"/etc/a.png\"/></imageobject></mediaobject>",
+        );
+        assert_eq!(check_document(&absolute, true).len(), 1);
     }
 
     #[test]

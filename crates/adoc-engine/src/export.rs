@@ -248,6 +248,8 @@ pub struct DocBookExportArgs {
     /// Attributes every page is read with before its own header, after Antora's, and that a
     /// book's own attributes take.
     pub attributes: Vec<(String, String)>,
+    /// How the document refers to its pictures. `None` copies them.
+    pub assets: Option<DocBookAssets>,
 }
 
 impl DocBookExportArgs {
@@ -258,6 +260,40 @@ impl DocBookExportArgs {
             target,
             output,
             attributes: Vec::new(),
+            assets: None,
+        }
+    }
+}
+
+/// How a DocBook document refers to its pictures.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum DocBookAssets {
+    /// Each picture is copied once into the folder beside the document named after it
+    /// (`guide_assets`), and referred to there, so the two can be moved together.
+    #[default]
+    Copy,
+    /// Nothing is copied: each picture is referred to where it is, by a path from the
+    /// document's folder. Not portable.
+    Reference,
+}
+
+impl DocBookAssets {
+    /// The policy's name in settings and on the command line: `copy` or `reference`.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Copy => "copy",
+            Self::Reference => "reference",
+        }
+    }
+
+    /// The policy `name` names, in any letter case.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "copy" => Some(Self::Copy),
+            "reference" => Some(Self::Reference),
+            _ => None,
         }
     }
 }
@@ -3079,7 +3115,34 @@ impl Engine {
         } = written;
         let failed = failed_diagrams(&arranged);
         let document = to_docbook(arranged);
-        let options = adoc_docbook::DocBookOptions::default();
+        let assets = match args.assets.unwrap_or_default() {
+            DocBookAssets::Copy => adoc_docbook::AssetPolicy::Copy {
+                folder: docbook_assets_folder(&args.output)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            },
+            DocBookAssets::Reference => {
+                let folder = args
+                    .output
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .unwrap_or_else(|| Path::new("."));
+                match std::path::absolute(folder) {
+                    Ok(folder) => adoc_docbook::AssetPolicy::Reference {
+                        folder: crate::normalize_path(&folder),
+                    },
+                    Err(error) => {
+                        self.export_finished(job, Err(format!("{}: {error}", folder.display())));
+                        return;
+                    }
+                }
+            }
+        };
+        let options = adoc_docbook::DocBookOptions {
+            access: self.file_access.clone(),
+            assets,
+        };
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
         let crashed = move |error| WorkerMessage::ExportFinished {
@@ -3090,7 +3153,7 @@ impl Engine {
             let result = adoc_docbook::write_docbook(&document, &options)
                 .map_err(|error| format!("{}: {error}", args.output.display()))
                 .and_then(|output| {
-                    write_docbook_files(&output.xml, &[], &args.output, &commit)?;
+                    write_docbook_files(&output.xml, &output.assets, &args.output, &commit)?;
                     Ok(output.diagnostics)
                 })
                 .map(|written| {
@@ -3182,7 +3245,7 @@ fn docbook_diagnostics(diagnostics: Vec<adoc_docbook::Diagnostic>) -> Vec<Export
 #[cfg(feature = "docbook")]
 fn write_docbook_files(
     xml: &str,
-    assets: &[(String, Vec<u8>)],
+    assets: &[adoc_docbook::Asset],
     output: &Path,
     commit: &Commit,
 ) -> Result<(), String> {
@@ -3207,9 +3270,9 @@ fn write_docbook_files(
     let new_assets = staging.path().join("assets");
     if !assets.is_empty() {
         std::fs::create_dir(&new_assets).map_err(|error| failed(&new_assets, &error))?;
-        for (name, bytes) in assets {
-            let path = new_assets.join(name);
-            std::fs::write(&path, bytes).map_err(|error| failed(&path, &error))?;
+        for asset in assets {
+            let path = new_assets.join(&asset.name);
+            std::fs::write(&path, &asset.bytes).map_err(|error| failed(&path, &error))?;
         }
     }
     let new_xml = staging.path().join("document.xml");

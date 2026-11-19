@@ -7,7 +7,7 @@ Paul Snow
 It is at layer L2, beside `adoc-render` and `adoc-epub`.
 The specification is `docs/prd/PRD-AdocFoundry_DocBook_Export.md` in the repository, which is not part of this site.
 
-NOTE: The crate is the DocBook export of epic #615, built in packages: the crate and its XML writer (DocBook 1/9, #649), the engine's feature (DocBook 2/9, #650), a book's structure and metadata (DocBook 3/9, #651), and rich blocks, inlines and CALS tables (DocBook 4/9, #652).
+NOTE: The crate is the DocBook export of epic #615, built in packages: the crate and its XML writer (DocBook 1/9, #649), the engine's feature (DocBook 2/9, #650), a book's structure and metadata (DocBook 3/9, #651), rich blocks, inlines and CALS tables (DocBook 4/9, #652), and pictures, diagrams, formulas and the assets folder (DocBook 5/9, #653).
 The crate is headless.
 The engine reaches it through its `docbook` feature (the second package, DocBook 2/9, issue #650), which the app, the command line and the MCP server do not yet name.
 Later packages wire those in.
@@ -29,6 +29,9 @@ AsciiDoc is not parsed again, and nothing passes through HTML.
 `DocBookOutput` holds the XML, a `String` in UTF-8 that starts with its XML declaration, and the diagnostics.
 A `Diagnostic` has a `Severity`, which is `Error` or `Warning`, and an optional source span.
 
+`DocBookOptions` holds `access`, the engine's `FileAccess`, which says which files may be read, and `assets`, an `AssetPolicy`.
+`DocBookOutput` holds `assets` beside the XML and the diagnostics: each is an `Asset` with a `name` and its `bytes`.
+
 == The document
 
 The root is `article` or `book` in the DocBook namespace `http://docbook.org/ns/docbook`, with the XLink namespace declared.
@@ -44,10 +47,10 @@ The 5.2.1 schema accepts any text there and its Schematron only requires a versi
 * a page's title, sections and blocks, with their inlines (see <<content-mapping>>);
 * CALS tables;
 * a book's structure, from the engine's publication plan;
-* the metadata in the root's `info`.
+* the metadata in the root's `info`;
 
-Images, diagrams, formulas and audio or video still keep their text in a `para` or a `literallayout`, with a warning.
-DocBook 5/9 replaces those.
+* pictures, diagrams, formulas and media (see <<pictures>>).
+
 Every other construct has its own element.
 
 An article, chapter or section with nothing at all gets an empty `para`, since DocBook does not allow them empty.
@@ -173,6 +176,69 @@ A link inside a link keeps only its text.
 |`phrase` with `role="icon"`.
 |===
 
+[#pictures]
+== Pictures, diagrams and formulas
+
+=== Pictures and the assets folder
+
+`AssetPolicy` says where pictures go.
+
+`AssetPolicy::Copy { folder }` is the default.
+The engine names the folder after the document, so `guide.xml` gets `guide_assets`.
+A local picture is:
+
+* read through the options' `access`;
+* recognised by its bytes: PNG, JPEG, GIF, or SVG whose root element is `svg`;
+* limited to 16 MB a picture and 256 MB a document;
+* returned once, as an asset named in the order it is first used, `i<n>.<ext>`, where the extension is `png`, `jpg`, `gif` or `svg`.
+
+Identical content is stored once.
+Every `fileref` is `<folder>/i<n>.<ext>`, so the document and its folder move together, and nothing in the XML names the author's checkout.
+SVG is copied as it is, not drawn as PNG.
+
+`AssetPolicy::Reference { folder }` copies nothing.
+Each `fileref` is the path from the document's folder to the picture where it is, which may climb out of the folder.
+Such a document is not portable.
+The engine's `DocBookExportArgs::assets` chooses between the two (`DocBookAssets::Copy` or `DocBookAssets::Reference`).
+The crate's check then allows those paths, and `testing::assert_valid_referenced` checks such a document.
+
+A picture that is missing, cannot be read (or is outside what the engine may read), is not one of those kinds or is too large keeps its caption and its description, with a warning located at its block.
+A remote picture is never fetched: its web address is the `fileref`, with a warning.
+The check accepts `http` and `https` addresses there.
+
+A block picture is a `figure` with its title, else an `informalfigure`.
+It holds a `mediaobject` with:
+
+* an `imageobject` whose `imagedata` carries `contentwidth` and `contentdepth` from the picture's width and height when they are lengths;
+* a `textobject` with the description.
+
+An inline picture is an `inlinemediaobject`.
+
+=== Diagrams
+
+A diagram the view drew, in process or taken from the cache, is a figure of its SVG.
+Its description is the block's `alt`, else "A diagram".
+A diagram that was not drawn keeps its source as a `programlisting` with `role="diagram"`, and the export reports why, as it does for every format.
+
+=== Formulas
+
+The schema lets an equation hold pictures or `mathphrase` elements, never both.
+
+* With a picture drawn of the formula, the equation's `alt` is the source, followed by a `mediaobject` (an `inlinemediaobject` inline) of the picture.
+Its text alternative is the source in a `phrase` with `role="math"`.
+* Without a picture, the formula is a `mathphrase`.
+
+A display formula is an `equation` with its title, else an `informalequation`.
+An inline one is an `inlineequation`.
+No MathML is made.
+One warning per page says how many formulas were written without a picture.
+
+=== Audio and video
+
+Audio and video are never copied or fetched.
+A target at a web address is a `videodata` or `audiodata` element's `fileref`, in a figure's `mediaobject`, with the targets as its text.
+A local file keeps only its name, with a warning.
+
 == Tables
 
 A table is written as CALS:
@@ -244,7 +310,8 @@ It requires:
 * every `xml:id` a valid name, and unique;
 * every `linkend` and `linkends` naming an `xml:id`, and every `footnoteref` naming a `footnote`;
 * no empty `xlink:href`;
-* every `fileref` a relative path below the document's folder.
+* every `fileref` a relative path below the document's folder, or an `http` or `https` address.
+With the reference policy, the paths from the document's folder to the pictures are allowed too.
 
 It is not schema validation.
 
@@ -262,6 +329,7 @@ The `check` covers the ones that apply to what the crate writes.
 
 The engine's `docbook` feature adds `export.docbook_page` and `export.docbook_component`, and `Engine::export_docbook_blocking`.
 The crate writes no file, so the engine puts the document in place: `<name>.xml` with its pictures in `<name>_assets/` beside it.
+The engine writes the assets the crate returns into the staged assets folder.
 Both are written to a staging folder first.
 Then, inside the job's one commit, the old assets folder is moved aside, the new one is moved into place and the XML is renamed over the output last, with the old folder put back if that rename fails.
 Only an assets folder that is provably the export's own is replaced or removed.
@@ -282,6 +350,9 @@ The structure and metadata are tested in `crates/adoc-docbook/tests/structure.rs
 The blocks, inlines and tables are tested in `crates/adoc-docbook/tests/content.rs`, which holds `docbook_rich_content_uses_docbook_elements`, `docbook_tables_are_cals` and `docbook_unsupported_nodes_warn`.
 The placement of cells on the table's grid has unit tests in `crates/adoc-docbook/src/table.rs`.
 Every document in these tests is checked against the DocBook 5.2.1 RELAX NG schema.
+
+Pictures, diagrams and formulas are tested in `crates/adoc-docbook/tests/media.rs`, which holds `docbook_assets_are_copied_and_relative`, `docbook_missing_media_is_reported`, `docbook_formulas_have_a_fallback` and `diagrams_are_pictures_or_their_source`.
+In the engine, `docbook_pictures_go_beside_the_document` in `crates/adoc-engine/tests/docbook_export.rs` exports the reference book and checks that every `fileref` leads to a file in the assets folder, that a later export with fewer pictures leaves only those, and the reference policy.
 In the engine, `docbook_book_hierarchy_follows_the_plan` in `crates/adoc-engine/tests/docbook_export.rs` checks the hierarchy over the PDF book fixture and the reference fixture of several components and versions.
 
 == Where it sits

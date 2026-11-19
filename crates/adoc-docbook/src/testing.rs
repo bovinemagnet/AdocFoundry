@@ -37,6 +37,22 @@ pub fn assert_valid(xml: &str) {
     );
 }
 
+/// [`assert_valid`] for a document whose pictures are referred to where they are
+/// ([`crate::AssetPolicy::Reference`]), whose `fileref`s may climb out of its folder.
+///
+/// # Panics
+///
+/// When it is not valid, naming the problems and showing the document.
+pub fn assert_valid_referenced(xml: &str) {
+    let mut problems = crate::check::check_document(xml, true);
+    problems.extend(schema_problems(xml));
+    assert!(
+        problems.is_empty(),
+        "the document is not valid DocBook 5.2:\n{}\n\n{xml}",
+        problems.join("\n")
+    );
+}
+
 /// The document parsed, for tests that look inside it.
 ///
 /// # Panics

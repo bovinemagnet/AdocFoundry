@@ -23,6 +23,7 @@ mod check;
 mod document;
 mod info;
 mod inlines;
+mod media;
 mod table;
 #[cfg(feature = "test-support")]
 pub mod testing;
@@ -86,7 +87,41 @@ pub enum DocBookDocument {
 
 /// How a document is written.
 #[derive(Clone, Debug, Default)]
-pub struct DocBookOptions {}
+pub struct DocBookOptions {
+    /// Which files the export may read: its pictures.
+    pub access: adoc_core::FileAccess,
+    /// Where the pictures go, and how the document refers to them.
+    pub assets: AssetPolicy,
+}
+
+/// How a document refers to its pictures.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AssetPolicy {
+    /// Each picture is copied once into a folder beside the document, `folder` its name as the
+    /// document refers to it (`guide_assets`): every `fileref` is `folder/i<n>.<ext>`, so the
+    /// document and its folder can be moved together. The default.
+    Copy { folder: String },
+    /// Nothing is copied: each `fileref` is the path from `folder`, the document's own folder,
+    /// to the picture where it is. Not portable: the document works only where those files
+    /// stay.
+    Reference { folder: std::path::PathBuf },
+}
+
+impl Default for AssetPolicy {
+    fn default() -> Self {
+        Self::Copy {
+            folder: "assets".to_owned(),
+        }
+    }
+}
+
+/// A picture to write beside the document, in its assets folder.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Asset {
+    /// Its name in the assets folder: `i<n>.<ext>`, numbered in the order first used.
+    pub name: String,
+    pub bytes: Vec<u8>,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Severity {
@@ -116,6 +151,8 @@ impl fmt::Display for Diagnostic {
 pub struct DocBookOutput {
     /// The XML, UTF-8, starting with its declaration.
     pub xml: String,
+    /// The pictures to write in the assets folder ([`AssetPolicy::Copy`]), each once.
+    pub assets: Vec<Asset>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -145,10 +182,15 @@ pub fn write_docbook(
     document: &DocBookDocument,
     options: &DocBookOptions,
 ) -> Result<DocBookOutput, DocBookError> {
-    let (xml, diagnostics) = document::write(document, options);
-    let problems = check(&xml);
+    let (xml, assets, diagnostics) = document::write(document, options);
+    let referenced = matches!(options.assets, AssetPolicy::Reference { .. });
+    let problems = check::check_document(&xml, referenced);
     if problems.is_empty() {
-        Ok(DocBookOutput { xml, diagnostics })
+        Ok(DocBookOutput {
+            xml,
+            assets,
+            diagnostics,
+        })
     } else {
         Err(DocBookError::Invalid(problems.join("; ")))
     }

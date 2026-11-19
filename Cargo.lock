@@ -185,6 +185,7 @@ dependencies = [
  "adoc-render",
  "oxixml-relaxng",
  "roxmltree 0.21.2",
+ "tempfile",
 ]
 
 [[package]]
