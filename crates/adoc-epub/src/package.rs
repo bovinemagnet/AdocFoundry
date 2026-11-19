@@ -373,7 +373,7 @@ fn nav(book: &Book, user: bool) -> Vec<u8> {
     xml.into_bytes()
 }
 
-/// The landmarks a reading system offers to go to: the table of contents and where the
+/// The landmarks a reading system offers to go to: the cover, where there is one, and where the
 /// book's text begins, its first chapter. Hidden, since they are for the reading system.
 fn landmarks(xml: &mut Xml, book: &Book) {
     xml.open(
@@ -399,7 +399,8 @@ fn landmarks(xml: &mut Xml, book: &Book) {
     if book.cover.is_some() {
         landmarks.push(("cover", COVER, "Cover"));
     }
-    landmarks.push(("toc", "nav.xhtml#toc", "Contents"));
+    // No `toc` landmark: the navigation document is not in the spine, and a link may lead only
+    // to a document that is (EPUBCheck's RSC-011). Reading systems find it as the `nav` item.
     landmarks.push(("bodymatter", first.as_str(), "Start of content"));
     for (kind, href, title) in landmarks {
         xml.open("li", &[]);

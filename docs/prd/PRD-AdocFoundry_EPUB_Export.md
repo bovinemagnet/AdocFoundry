@@ -349,7 +349,7 @@ The epic starts with a package of its own, before E1: Kindle export's book model
 
 - **The navigation document** holds:
   - exactly one `toc` navigation, nested as the plan is: parts, then their pages and navigation headings, then each page's sections two levels deep;
-  - hidden landmarks, `toc` and `bodymatter`, with the cover added by E5.
+  - hidden landmarks, `bodymatter`, with the cover added by E5. E4 also wrote a `toc` landmark, to `nav.xhtml#toc`; EPUBCheck refused it (RSC-011, a link to a document not in the spine), so it was removed after the stack merged, and the validator now refuses such a link too.
 
   No NCX is written.
 - **Links:**

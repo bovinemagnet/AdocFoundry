@@ -337,6 +337,12 @@ pub fn validate(bytes: &[u8]) -> Vec<String> {
             None => problems.push(format!("the spine names {idref}, not in the manifest")),
         }
     }
+    // A hyperlink may lead only to a document of the spine (EPUBCheck's RSC-011).
+    let spine_documents: BTreeSet<&str> = spine
+        .iter()
+        .filter_map(|idref| manifest.get(*idref))
+        .map(|(path, _)| path.as_str())
+        .collect();
     // The documents: their ids, one toc navigation, and every reference.
     let documents: Vec<&String> = manifest
         .values()
@@ -405,6 +411,9 @@ pub fn validate(bytes: &[u8]) -> Vec<String> {
                     None => {
                         problems.push(format!("{path}: {href} leads to no document of the book"))
                     }
+                    Some(_) if !spine_documents.contains(target.as_str()) => problems.push(
+                        format!("{path}: {href} leads to a document that is not in the spine"),
+                    ),
                     Some(target_ids) => {
                         if let Some((_, fragment)) = href.split_once('#') {
                             if !target_ids.contains(fragment) {

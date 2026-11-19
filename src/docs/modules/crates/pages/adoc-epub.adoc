@@ -53,7 +53,8 @@ It is nested ordered lists that follow the book's plan.
 Parts come first, then their pages and navigation headings, then each page's sections two levels deep, all in reading order.
 
 The landmarks are a second `nav` with `epub:type="landmarks"`, hidden with `hidden="hidden"`.
-`toc` leads to `nav.xhtml#toc`, and `bodymatter` leads to the first chapter.
+`bodymatter` leads to the first chapter.
+There is no `toc` landmark, because the navigation document is not in the spine and EPUB allows a link only to a document that is (EPUBCheck's RSC-011); reading systems find the table of contents through the manifest's `nav` item.
 When the book has a cover, a `cover` landmark leads to `cover.xhtml`.
 
 == Links
@@ -176,7 +177,7 @@ It lists every problem it finds, not only the first.
 * The manifest: items missing, outside the book, listed with the wrong media type for their extension or listed twice, and a file of the book that is not listed; not exactly one navigation document.
 * The spine: an empty one, or one naming something that is not a content document.
 * The content: XML that is not well-formed; a navigation document without exactly one `toc`.
-* Links: a link out of the book by a scheme other than http, https, mailto, ftp, ftps or tel; a link to no document or no element.
+* Links: a link out of the book by a scheme other than http, https, mailto, ftp, ftps or tel; a link to no document or no element; a link to a document that is not in the spine.
 * Resources: a picture or stylesheet that is not a file of the book of its kind; a picture without `alt`.
 
 `write_epub` and `write_book` run it on every book before returning it, and fail with `EpubError::Invalid` and the problems.
