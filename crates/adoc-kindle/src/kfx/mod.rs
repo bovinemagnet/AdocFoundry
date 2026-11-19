@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use sha2::{Digest, Sha256};
 
-use crate::book::{Block, Cell, Inline, KindleBook, Link, Note, ParagraphClass, Target, TocEntry};
+use crate::{Block, Cell, Inline, KindleBook, Link, Note, ParagraphClass, Target, TocEntry};
 use crate::{KindleError, KindleFormat};
 use ion::Value;
 

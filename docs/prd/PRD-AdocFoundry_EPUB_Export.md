@@ -139,6 +139,7 @@ title = "Product User Guide"
 | --- | --- | --- |
 | `crates/adoc-engine/src/export.rs` | `ExportTarget`, the article and book plan (`PlanItem`), start-page handling, navigation order, deduplication, parsing from open buffers or disk, resolved views, diagram workers, progress, `ExportDiagnostic` and output safety | Most of it is gated by `feature = "typst"` today. EPUB uses the format-neutral plan #619 extracts and never forks a second planner |
 | `crates/adoc-engine/src/profiles.rs` | `ProfileContent` (`Page`, `Component`, `Navigation`), output confinement and conflict checks | The selection model and path rules; PDF settings and profiles are untouched |
+| `crates/adoc-ebook` | `Book::build`: an article or the plan's pages mapped to one `Book` (chapters in reading order, blocks and inlines, a nested table of contents, generated anchors, in-book links, footnotes, metadata with a stable identifier, embedded pictures with SVG drawn as PNG) | EPUB writes the same book Kindle export writes (§15). A choice that suits one format only is an option of the mapping, never a fork |
 | `crates/adoc-render/src/view.rs` | `ViewTree`, `ViewKind`, `ViewInline`, `ViewImage`, `DiagramView`, `TocEntry`, footnotes, attributes, resolved xrefs and source spans | The exporter's only input. AsciiDoc is not parsed a second time |
 | `crates/adoc-render/src/html.rs` | The semantic HTML mapping and escaping of `to_html` | A reference. EPUB writes its own well-formed XHTML with EPUB navigation and chapter-relative links; it does not zip the standalone HTML, and `to_html`'s output does not change |
 | The PDF entry points in the CLI, the app and the MCP server | Commands, dialogs, notifications and the write gate | EPUB entry points sit beside them |
@@ -158,6 +159,7 @@ L4   adocfoundry / adocfoundry-cli / adoc-mcp
 L3   adoc-engine  | shared publication planning (#619); parse + views +
                   | diagram workers; output safety; EPUB options and profiles
 L2   adoc-epub    | EPUB 3.3 XHTML / OPF / OCF / navigation / CSS / media writer
+L2   adoc-ebook   | the book model shared with Kindle export: pages mapped to one Book
 L2   adoc-render  | shared ViewTree, ViewKind, ViewInline and source spans
 L1   existing parser, DOM, Antora and index crates
 ```
@@ -165,11 +167,12 @@ L1   existing parser, DOM, Antora and index crates
 | Crate | Responsibility |
 | --- | --- |
 | `adoc-epub` (L2, new) | Turn a publication's view trees and typed options into an EPUB: content documents, the navigation document, the package document, the container, the stylesheet and media, with a structural validator and typed diagnostics carrying source locations. Headless; no engine, worker, UI or LSP types, no process and no network |
+| `adoc-ebook` (L2) | The reflowable book model, moved out of `adoc-kindle` (§15): `Book::build` maps the view trees to chapters, blocks, inlines, a table of contents, anchors, links, notes, metadata and pictures. Read by `adoc-kindle` and `adoc-epub` |
 | `adoc-render` (L2) | Unchanged in behaviour. A shared pure rendering helper may be factored out only if `to_html`'s output and tests are preserved |
 | `adoc-engine` (L3) | The shared publication plan; the optional `epub` feature; EPUB commands, arguments and events; `[epub]` settings and profiles; the worker lifecycle; safe output |
 | `adocfoundry`, `adocfoundry-cli`, `adoc-mcp` (L4) | The entry points of §5.8 |
 
-- `adoc-epub` sits at **L2**. It may depend on `adoc-render` through a new pair in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`, as `adoc-pdf` does, and on lower layers. It must not depend on `adoc-engine`, GPUI, Typst, `adoc-pdf`, `adoc-docx` or `adoc-kindle`.
+- `adoc-epub` sits at **L2**. It may depend on `adoc-ebook` and `adoc-render` through new pairs in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`, as `adoc-kindle` does, and on lower layers. It must not depend on `adoc-engine`, GPUI, Typst, `adoc-pdf`, `adoc-docx` or `adoc-kindle`.
 - The crate needs an entry in `LAYERS`, an entry in `[workspace.dependencies]`, and a mention in `AGENTS.md`, `README.md`, the design document and the developer documentation's crate table and diagram (`architecture.adoc`, `crate-layers.mmd`), which `every_crate_is_documented` in `xtask` checks.
 - The engine's `epub` feature is opt-in and independent of `typst`, `git` and every other format's feature. It is off in `[workspace.dependencies]`, so each front end names it: the released app and CLI do, and `adoc-ls` does not.
 
@@ -269,7 +272,19 @@ Each is settled before work starts on the package it affects, and the outcome is
 
 ## 15. Implementation notes
 
-None yet. Each work package records here where the implementation departs from this document and how the open decisions of §14 were settled.
+Each work package records here where the implementation departs from this document and how the open decisions of §14 were settled.
+
+### Before E1: the shared book model
+
+The epic starts with a package of its own, before E1: Kindle export's book model moved out of `adoc-kindle` into a new L2 crate, `adoc-ebook`, so that EPUB and Kindle map pages the same way instead of each through its own mapper.
+
+- `book.rs`, `map.rs`, `media.rs` and `metadata.rs` moved unchanged in behaviour, with neutral names: `Book`, `Document`, `Page`, `Plan`, `BookItem`, `Options`, `Diagnostic`, `Severity`.
+- `adoc-kindle` re-exports them under its old names, and Kindle's bytes are unchanged (Kindle PRD §16).
+- `adoc-ebook` is held to Kindle's forbidden paths: no process and no network.
+- This changes two statements above:
+  - §6 and §9 take the view trees as the exporter's only input. `adoc-epub` takes them through `adoc-ebook`'s `Book` instead.
+  - §5.4 asks for chapter and anchor identifiers scoped by component and version. The shared model names them by position in the book (`c<n>` for a chapter, `c<n>-a<m>` for an id a page defines, `c<n>-n<k>` and `c<n>-r<k>` for a footnote and its first mark). These names are deterministic, unique in the book and never taken from a path, which is what the requirement protects; they are not stable when chapters are added before them.
+- Where EPUB needs a distinction Kindle export does not make, such as admonition kinds, nested tables or a table's footer rows, the mapping gains an option whose default is Kindle's present behaviour. The packages that need one (E3, E5, E6) check Kindle's bytes again.
 
 ## 16. References
 

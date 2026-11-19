@@ -1,4 +1,4 @@
-//! The view trees of an export mapped to a [`KindleBook`]: chapters in the plan's order,
+//! The view trees of an export mapped to a [`Book`]: chapters in the plan's order,
 //! headings moved down by each page's depth, cross references made links inside the book
 //! where their target is in it, and every id the pages define given a generated anchor.
 //!
@@ -14,20 +14,15 @@ use adoc_dom::SourceSpan;
 use adoc_render::{DiagramView, ResolvedLink, ViewBlock, ViewInline, ViewKind, ViewListItem};
 
 use crate::book::{
-    Block, Cell, Chapter, Inline, KindleBook, Link, Note, ParagraphClass, Row, Target, TocEntry,
+    Block, Book, Cell, Chapter, Inline, Link, Note, ParagraphClass, Row, Target, TocEntry,
 };
-use crate::{
-    metadata, BookItem, KindleDiagnostic, KindleDocument, KindleOptions, KindlePage, KindleSeverity,
-};
+use crate::{metadata, BookItem, Diagnostic, Document, Options, Page, Severity};
 
 /// How many levels of a page's sections the table of contents lists below the page.
 const TOC_SECTION_LEVELS: u8 = 2;
 
 /// Maps `document` to a book, with what could not be kept as it was.
-pub(crate) fn build(
-    document: &KindleDocument,
-    options: &KindleOptions,
-) -> (KindleBook, Vec<KindleDiagnostic>) {
+pub(crate) fn build(document: &Document, options: &Options) -> (Book, Vec<Diagnostic>) {
     let units = units(document);
     let labels = Labels::collect(&units);
     let pages: HashMap<PathBuf, usize> = units
@@ -91,7 +86,7 @@ pub(crate) fn build(
     }
     let metadata = metadata::metadata(document, options);
     let cover = mapper.cover(document);
-    let book = KindleBook {
+    let book = Book {
         metadata,
         chapters,
         toc: toc.finish(),
@@ -107,7 +102,7 @@ fn chapter_id(index: usize) -> String {
 
 /// One unit of the reading order, before mapping.
 enum Unit<'a> {
-    Page(&'a KindlePage),
+    Page(&'a Page),
     /// A part's title (level 0 in the table of contents, a top heading in the text) or a
     /// heading of the navigation with no page of its own.
     Title {
@@ -125,10 +120,10 @@ impl Unit<'_> {
     }
 }
 
-fn units(document: &KindleDocument) -> Vec<Unit<'_>> {
+fn units(document: &Document) -> Vec<Unit<'_>> {
     match document {
-        KindleDocument::Article(page) => vec![Unit::Page(page)],
-        KindleDocument::Book(book) => book
+        Document::Article(page) => vec![Unit::Page(page)],
+        Document::Book(book) => book
             .items
             .iter()
             .map(|item| match item {
@@ -318,7 +313,7 @@ struct Mapper<'a> {
     labels: &'a Labels,
     /// The chapter each page of the book is.
     pages: &'a HashMap<PathBuf, usize>,
-    options: &'a KindleOptions,
+    options: &'a Options,
     chapter: usize,
     /// The page being mapped.
     source: PathBuf,
@@ -328,7 +323,7 @@ struct Mapper<'a> {
     footnotes: BTreeMap<u32, Vec<ViewInline>>,
     /// The footnotes the page's marks used, in order, with the first mark's anchor.
     notes_used: Vec<(u32, Option<String>)>,
-    diagnostics: Vec<KindleDiagnostic>,
+    diagnostics: Vec<Diagnostic>,
     /// Whether the blocks being mapped are in a table's cell.
     in_table: bool,
     media: crate::media::Media,
@@ -337,7 +332,7 @@ struct Mapper<'a> {
 impl Mapper<'_> {
     /// The cover: the export's own picture, else the document's `front-cover-image` (a book's
     /// from its first page, which is read with the book's attributes).
-    fn cover(&mut self, document: &KindleDocument) -> Option<usize> {
+    fn cover(&mut self, document: &Document) -> Option<usize> {
         self.span = None;
         if let Some(path) = self.options.cover.clone() {
             return match self.load(&path) {
@@ -349,8 +344,8 @@ impl Mapper<'_> {
             };
         }
         let first = match document {
-            KindleDocument::Article(page) => Some(page),
-            KindleDocument::Book(book) => book.items.iter().find_map(|item| match item {
+            Document::Article(page) => Some(page),
+            Document::Book(book) => book.items.iter().find_map(|item| match item {
                 BookItem::Page(page) => Some(page),
                 _ => None,
             }),
@@ -382,14 +377,14 @@ impl Mapper<'_> {
     }
 
     fn warn(&mut self, span: Option<&SourceSpan>, message: String) {
-        self.diagnostics.push(KindleDiagnostic {
-            severity: KindleSeverity::Warning,
+        self.diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
             message,
             source: span.or(self.span.as_ref()).cloned(),
         });
     }
 
-    fn page(&mut self, page: &KindlePage, index: usize, toc: &mut Toc) -> Chapter {
+    fn page(&mut self, page: &Page, index: usize, toc: &mut Toc) -> Chapter {
         self.source = page.view.source.clone();
         self.span = None;
         self.footnotes = page

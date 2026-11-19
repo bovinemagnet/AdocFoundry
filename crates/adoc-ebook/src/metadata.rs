@@ -8,12 +8,12 @@ use adoc_render::ViewInline;
 use sha2::{Digest, Sha256};
 
 use crate::book::Metadata;
-use crate::{KindleDocument, KindleOptions};
+use crate::{Document, Options};
 
-pub(crate) fn metadata(document: &KindleDocument, options: &KindleOptions) -> Metadata {
+pub(crate) fn metadata(document: &Document, options: &Options) -> Metadata {
     let (attributes, title, subtitle): (&BTreeMap<String, String>, String, Option<String>) =
         match document {
-            KindleDocument::Article(page) => (
+            Document::Article(page) => (
                 &page.view.attributes,
                 page.view
                     .title
@@ -29,9 +29,7 @@ pub(crate) fn metadata(document: &KindleDocument, options: &KindleOptions) -> Me
                     }),
                 None,
             ),
-            KindleDocument::Book(book) => {
-                (&book.attributes, book.title.clone(), book.subtitle.clone())
-            }
+            Document::Book(book) => (&book.attributes, book.title.clone(), book.subtitle.clone()),
         };
     let attribute = |name: &str| {
         attributes

@@ -31,6 +31,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("adoc-git", 2),
     ("adoc-pdf", 2),
     ("adoc-docx", 2),
+    ("adoc-ebook", 2),
     ("adoc-kindle", 2),
     ("adoc-audit", 2),
     ("adoc-impact", 2),
@@ -50,6 +51,8 @@ pub const SAME_LAYER_ALLOWED: &[(&str, &str)] = &[
     ("adoc-pdf", "adoc-render"),
     ("adoc-docx", "adoc-render"),
     ("adoc-kindle", "adoc-render"),
+    ("adoc-ebook", "adoc-render"),
+    ("adoc-kindle", "adoc-ebook"),
 ];
 
 /// Crates whose logic the engine orchestrates: front ends reach them only through
@@ -129,8 +132,9 @@ const ADOC_AUDIT_FORBIDDEN_PATHS: &[&str] = &[
     "std::thread",
 ];
 
-/// What `adoc-kindle` must never name: every stage of a Kindle export runs in process, with no
-/// converter, reader or other program and no network (Kindle PRD §7).
+/// What `adoc-kindle`, and `adoc-ebook`, whose book model it writes, must never name: every
+/// stage of a Kindle export runs in process, with no converter, reader or other program and no
+/// network (Kindle PRD §7).
 const ADOC_KINDLE_FORBIDDEN_PATHS: &[&str] = &[
     "std::process",
     "Command::new",
@@ -274,8 +278,9 @@ pub fn check_sources(name: &str, files: &BTreeMap<PathBuf, String>) -> Vec<Strin
         "adoc-lang" => ADOC_LANG_FORBIDDEN_PATHS,
         // The impact rules are pure as the audit is: no files, processes, network or threads.
         "adoc-audit" | "adoc-impact" => ADOC_AUDIT_FORBIDDEN_PATHS,
-        // Kindle export runs in process: no process and no network (Kindle PRD §7).
-        "adoc-kindle" => ADOC_KINDLE_FORBIDDEN_PATHS,
+        // Kindle export runs in process: no process and no network (Kindle PRD §7), its shared
+        // book model included.
+        "adoc-kindle" | "adoc-ebook" => ADOC_KINDLE_FORBIDDEN_PATHS,
         _ => return Vec::new(),
     };
     let mut violations = Vec::new();
@@ -429,6 +434,7 @@ const LEAN_EXCLUDED: &[&str] = &[
     "adoc-pdf",
     "adoc-math",
     "adoc-git",
+    "adoc-ebook",
     "adoc-kindle",
     "typst",
     "gix",
@@ -962,15 +968,18 @@ libc = "=0.2.0"
         assert_eq!(check_sources("adoc-kindle", &sources).len(), 2);
     }
 
-    /// Kindle PRD §12 test 19: `adoc-kindle` names no process and no network path, and nothing
-    /// it builds is under a copyleft licence (`cargo deny` checks the rest of the tree).
+    /// Kindle PRD §12 test 19: `adoc-kindle`, and `adoc-ebook`, whose book model it writes,
+    /// name no process and no network path, and nothing Kindle export builds is under a
+    /// copyleft licence (`cargo deny` checks the rest of the tree).
     #[test]
     fn kindle_is_in_process() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let mut sources = BTreeMap::new();
-        collect_sources(&root.join("crates/adoc-kindle/src"), &mut sources);
-        assert!(sources.len() > 5, "{}", sources.len());
-        assert_eq!(check_sources("adoc-kindle", &sources), Vec::<String>::new());
+        for (name, least) in [("adoc-kindle", 5), ("adoc-ebook", 4)] {
+            let mut sources = BTreeMap::new();
+            collect_sources(&root.join("crates").join(name).join("src"), &mut sources);
+            assert!(sources.len() > least, "{name}: {}", sources.len());
+            assert_eq!(check_sources(name, &sources), Vec::<String>::new());
+        }
 
         let licences = kindle_licences(&root).unwrap();
         assert!(

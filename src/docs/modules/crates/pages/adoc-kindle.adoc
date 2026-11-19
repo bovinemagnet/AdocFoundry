@@ -1,10 +1,11 @@
 = adoc-kindle
 Paul Snow
 :revnumber: 0.0.0
-:description: Kindle export: an export mapped to one book model, for AZW3 (KF8) and KFX (KF10) writers, in-house, with no PDF or Typst in between.
+:description: Kindle export: the AZW3 (KF8) and KFX (KF10) writers, in-house, over the book model of adoc-ebook, with no PDF or Typst in between.
 
 `adoc-kindle` turns a rendered view tree into a Kindle book.
-It is at layer L2, beside `adoc-render`, which it reads.
+It is at layer L2, beside `adoc-render` and `adoc-ebook`, which it reads.
+The book model, its mapping, pictures and metadata live in xref:crates:adoc-ebook.adoc[adoc-ebook]; this crate re-exports them under their Kindle names and keeps the two writers.
 The specification is `docs/prd/PRD-AdocFoundry_Kindle_Export.md` in the repository, and the spike's record is `docs/qa/spike-kindle.md`; neither is part of this site.
 The engine calls the crate behind its `kindle` feature (`export.kindle_page`, `export.kindle_component` and `Engine::export_kindle_blocking`).
 `adocfoundry-cli kindle`, the app's Export Page to Kindle…, Export Component to Kindle… and Export Kindle Profile… and the MCP `export_kindle` tool call it through the engine; see xref:ROOT:kindle-export.adoc[Exporting to Kindle].
@@ -12,6 +13,7 @@ The engine calls the crate behind its `kindle` feature (`export.kindle_page`, `e
 == What it does
 
 The crate is given a `KindleDocument`, which is an article (a `KindlePage`) or a book (a `KindlePlan` of parts, headings and pages), and builds one `KindleBook` from it with `KindleBook::build`.
+These are the `Document`, `Page`, `Plan` and `Book` of `adoc-ebook`, re-exported under the Kindle names, so the mapping is described in xref:crates:adoc-ebook.adoc[adoc-ebook].
 Each writer then writes that one book, so the two formats never differ in content.
 It knows nothing of the engine, the workspace or a UI framework.
 
@@ -25,12 +27,14 @@ The book holds:
 == Where it sits
 
 `adoc-kindle` is headless.
-It depends on `adoc-render`, an allowed same-layer pair listed in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`, and on `adoc-core`, `adoc-dom` and `sha2`.
+It depends on `adoc-ebook`, an allowed same-layer pair listed in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`, and on `adoc-render` (a pair kept for its tests), `adoc-core`, `adoc-dom` and `sha2`.
 It must never build `adoc-pdf`, `adoc-docx`, Typst or the engine.
 It starts no process and uses no network: `cargo xtask layers` refuses `std::process`, `Command::new`, `std::net`, `TcpStream` and `UdpSocket` in its sources.
 It also checks that `adoc-kindle`, and the engine built with `--no-default-features --features kindle`, compile none of `adoc-pdf`, `adoc-docx`, `adoc-math` or Typst, which the test `kindle_builds_alone` holds.
 
 == Anchors and links
+
+The `map` module of `adoc-ebook` makes these.
 
 * Anchors are generated, never taken from a path: `c<n>-a<m>` for an id a page defines, `c<n>-n<number>` for a footnote and `c<n>-r<number>` for its first mark.
 They are stable, and cannot collide across pages.
@@ -62,7 +66,7 @@ Anything a Kindle cannot show has a readable fallback and a warning located at i
 == Pictures and the cover
 
 Images, diagrams and formulas are embedded in both formats.
-The `media` module reads each picture through the export's `FileAccess`, and tells PNG, JPEG, GIF and SVG apart by their bytes, never by their names.
+The `media` module of `adoc-ebook` reads each picture through the export's `FileAccess`, and tells PNG, JPEG, GIF and SVG apart by their bytes, never by their names.
 
 * Raster pictures are checked whole and kept as they are.
 * SVG is drawn as a PNG in process with `resvg`, at twice its size on a white ground, and nothing is loaded from outside the file.
@@ -72,7 +76,7 @@ The `media` module reads each picture through the export's `FileAccess`, and tel
 * Formulas drawn by the engine's STEM provider (the engine's `typst` feature) are embedded as pictures, and their alternative text is their source.
 * Pictures size for reflow, with no fixed sizes, and no fonts are embedded.
 
-The cover is `KindleOptions::cover`, else the document's `front-cover-image`, which for a book is the first page's.
+The cover is `KindleOptions::cover` (`Options::cover` in `adoc-ebook`), else the document's `front-cover-image`, which for a book is the first page's.
 AZW3 names it in the EXTH 201 record, and KFX in its `cover_image` metadata.
 No cover page is added to the reading order.
 
@@ -145,6 +149,7 @@ NOTE: The KFX output has not yet been checked on a Kindle device, and KFX is the
 
 == Related
 
+* xref:adoc-ebook.adoc[adoc-ebook], the book model this crate writes
 * xref:adoc-render.adoc[adoc-render], which builds the view tree
 * xref:adoc-dom.adoc[adoc-dom], for source spans
 * xref:adoc-docx.adoc[adoc-docx], the Word export, which this crate never builds

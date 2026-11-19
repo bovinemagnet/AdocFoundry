@@ -1,4 +1,4 @@
-//! The `KindleBook`: the one semantic representation both writers read, so the two formats
+//! The `Book`: the one semantic representation both writers read, so the two formats
 //! agree (PRD §9). Chapters in reading order, each a run of blocks with inline content, a
 //! nested table of contents, metadata and embedded assets. Every anchor is generated
 //! ([`crate::map`]), so nothing here depends on a file path.
@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 /// A book ready to write in either format.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct KindleBook {
+pub struct Book {
     pub metadata: Metadata,
     /// The reading order. Never empty: an export with no content has one empty chapter.
     pub chapters: Vec<Chapter>,
@@ -60,7 +60,7 @@ pub struct TocEntry {
 /// A place in the book: a chapter, and an anchor in it or its start.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Target {
-    /// An index into [`KindleBook::chapters`].
+    /// An index into [`Book::chapters`].
     pub chapter: usize,
     pub anchor: Option<String>,
 }
@@ -159,7 +159,7 @@ pub enum Block {
     },
     Figure {
         anchor: Option<String>,
-        /// An index into [`KindleBook::assets`].
+        /// An index into [`Book::assets`].
         asset: usize,
         alt: String,
     },
@@ -236,7 +236,7 @@ pub enum Inline {
         anchor: Option<String>,
     },
     Image {
-        /// An index into [`KindleBook::assets`].
+        /// An index into [`Book::assets`].
         asset: usize,
         alt: String,
     },
@@ -322,7 +322,7 @@ fn push_text(inlines: &[Inline], out: &mut String) {
     }
 }
 
-impl KindleBook {
+impl Book {
     /// Every anchor the book defines, as `(chapter, anchor)`, in reading order.
     #[must_use]
     pub fn anchors(&self) -> Vec<(usize, String)> {

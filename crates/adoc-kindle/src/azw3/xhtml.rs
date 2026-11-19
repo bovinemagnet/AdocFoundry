@@ -3,7 +3,7 @@
 //! Anchors are recorded where their element starts; internal links are written as fixed-width
 //! placeholders and filled in once every fragment's place is known.
 
-use crate::book::{Block, Cell, Chapter, Inline, KindleBook, Link, Note, ParagraphClass, Target};
+use crate::{Block, Cell, Chapter, Inline, KindleBook, Link, Note, ParagraphClass, Target};
 
 /// A link not yet placed: `kindle:pos:fid:ZZZZ:off:ZZZZZZZZZZ`, the same length as the link it
 /// becomes.

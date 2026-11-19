@@ -203,6 +203,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "adoc-ebook"
+version = "0.12.0"
+dependencies = [
+ "adoc-core",
+ "adoc-dom",
+ "adoc-render",
+ "resvg 0.46.0",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "adoc-engine"
 version = "0.12.0"
 dependencies = [
@@ -283,10 +294,10 @@ version = "0.12.0"
 dependencies = [
  "adoc-core",
  "adoc-dom",
+ "adoc-ebook",
  "adoc-kindle",
  "adoc-render",
  "mobi",
- "resvg 0.46.0",
  "sha1_smol",
  "sha2 0.10.9",
  "tempfile",

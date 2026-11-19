@@ -464,6 +464,7 @@ L2  adoc-render     the view tree and HTML
     adoc-git        Git, over gix
     adoc-pdf        PDF export
     adoc-docx       DOCX export
+    adoc-ebook      the book model Kindle export writes
     adoc-kindle     Kindle export (AZW3 and KFX)
     adoc-audit      the documentation quality audit
     adoc-impact     documentation impact analysis

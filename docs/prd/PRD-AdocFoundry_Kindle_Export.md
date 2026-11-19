@@ -374,6 +374,16 @@ What a writer would need before it could be approved:
 
 Until then the user documentation says, wherever it describes Kindle export, that KFX and AZW3 are for reading and sideloading, and that a KDP manuscript is EPUB, DOCX or KPF from Kindle Create.
 
+### After the epic: the book model is shared (EPUB #614)
+
+The first package of the EPUB epic moved the book model out of this crate into `adoc-ebook` (L2, on `adoc-render`), so that EPUB maps pages as Kindle does rather than through a second mapper. This supersedes §8's "it is not a general EPUB intermediate".
+
+- `book.rs`, `map.rs`, `media.rs` and `metadata.rs` moved unchanged in behaviour, with neutral names: `Book`, `Document`, `Page`, `Plan`, `BookItem`, `Options`, `Diagnostic`, `Severity`.
+- `adoc-kindle` depends on `adoc-ebook` and re-exports it under the Kindle names, so `KindleBook` is `adoc_ebook::Book`, and the engine, the fuzz target and the tests are unchanged.
+- The writers, `write_kindle`, `KindleFormat`, `KindleOutput`, `KindleError` and `testing` stay here.
+- Kindle's bytes did not change: the reference fixture's book and each of its pages, as AZW3 and KFX, are byte for byte what `main` wrote before the move.
+- `adoc-ebook` is held to this crate's forbidden paths (§7), and `kindle_is_in_process` reads its sources too.
+
 ## 17. References
 
 - Amazon KDP, [supported eBook formats](https://kdp.amazon.com/en_US/help/topic/G200634390)

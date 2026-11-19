@@ -92,8 +92,12 @@ The tool runs in a process group of its own and is stopped with everything it st
 |DOCX export, headless. `write_docx` writes a `DocxDocument` (an article, or a book of parts, headings and pages) as a Word package to any `Write` sink, with no Word runtime and no PDF or Typst in between. It depends on `adoc-render` (an allowed same-layer pair), `adoc-dom`, `flate2` and `crc32fast`, and never builds `adoc-pdf` or Typst, which `DOCX_EXCLUDED` in `xtask/src/layers.rs` checks. The engine does not call it yet. See xref:crates:adoc-docx.adoc[adoc-docx].
 
 |L2
+|`adoc-ebook`
+|The book model shared by the e-book exporters, headless. `Book::build` maps a `Document` (an article, or a `Plan` of parts, headings and pages) and its `Options` to one `Book`: metadata with a stable `urn:uuid:` identifier, chapters, blocks and inlines, a nested table of contents, generated anchors, links and embedded pictures. It depends on `adoc-render` (an allowed same-layer pair), `adoc-core`, `adoc-dom`, `resvg` and `sha2`, starts no process and uses no network, which `cargo xtask layers` checks. `adoc-kindle` is its first user, and the EPUB exporter (`adoc-epub`) is planned as its second. See xref:crates:adoc-ebook.adoc[adoc-ebook].
+
+|L2
 |`adoc-kindle`
-|Kindle export, headless. `KindleBook::build` maps a `KindleDocument` (an article, or a book of parts, headings and pages) to one `KindleBook`, which `write_kindle` writes as AZW3 (KF8) or KFX (KF10), each by an in-house writer. It depends on `adoc-render` (an allowed same-layer pair), `adoc-core`, `adoc-dom` and `sha2`, starts no process and uses no network, and never builds `adoc-pdf`, `adoc-docx`, Typst or the engine, which `cargo xtask layers` checks. The engine calls it behind its `kindle` feature. See xref:crates:adoc-kindle.adoc[adoc-kindle].
+|Kindle export, headless. The book model (`KindleBook::build`, `KindleDocument` and the rest) now comes from `adoc-ebook` and is re-exported under the Kindle names; the writers stay here. `write_kindle` writes a `KindleDocument` (an article, or a book of parts, headings and pages) as AZW3 (KF8) or KFX (KF10), each by an in-house writer. It depends on `adoc-ebook` and `adoc-render` (allowed same-layer pairs, the second kept for its tests), `adoc-core`, `adoc-dom` and `sha2`, starts no process and uses no network, and never builds `adoc-pdf`, `adoc-docx`, Typst or the engine, which `cargo xtask layers` checks. The engine calls it behind its `kindle` feature. See xref:crates:adoc-kindle.adoc[adoc-kindle].
 
 |L2
 |`adoc-audit`
@@ -131,7 +135,7 @@ The application sees `adoc-model` types only through the engine's re-exports.
 `cargo xtask layers` reads the `Cargo.toml` of every crate under `crates/` and fails the build if:
 
 * a crate is not listed in the layer table in `xtask/src/layers.rs`;
-* a crate depends on a crate in a higher or equal layer, except for the explicit same-layer pairs `adoc-index` to `adoc-parser`, `adoc-lang` to `adoc-parser`, `adoc-index` and `adoc-antora`, `adoc-pdf` to `adoc-render`, `adoc-docx` to `adoc-render`, and `adoc-kindle` to `adoc-render`;
+* a crate depends on a crate in a higher or equal layer, except for the explicit same-layer pairs `adoc-index` to `adoc-parser`, `adoc-lang` to `adoc-parser`, `adoc-index` and `adoc-antora`, `adoc-pdf` to `adoc-render`, `adoc-docx` to `adoc-render`, `adoc-ebook` to `adoc-render`, `adoc-kindle` to `adoc-render`, and `adoc-kindle` to `adoc-ebook`;
 * `adoc-core` has any dependency;
 * a UI framework crate (`gpui`, `gpui-pre`, `gpui-pre-platform`, `gpui-component`, `gpui-base`, `gpui-kit-assets`, `egui`, `eframe`) appears outside `adocfoundry`;
 * an LSP crate (`lsp-types`, `lsp-server`) appears outside `adoc-ls`;

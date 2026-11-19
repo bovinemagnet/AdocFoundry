@@ -15,6 +15,7 @@ flowchart TD
         git["adoc-git"]
         pdf["adoc-pdf"]
         docx["adoc-docx<br/>(DOCX export, no Typst)"]
+        ebook["adoc-ebook<br/>(ebook model, in process)"]
         kindle["adoc-kindle<br/>(Kindle export, in process)"]
         audit["adoc-audit<br/>(quality audit model)"]
         impact["adoc-impact<br/>(impact analysis model)"]
@@ -64,9 +65,10 @@ flowchart TD
     pdf --> render
     docx --> render
     docx --> dom
-    kindle --> render
-    kindle --> dom
-    kindle --> core
+    kindle --> ebook
+    ebook --> render
+    ebook --> dom
+    ebook --> core
     pdf --> math
     pdf --> theme
     theme --> core
