@@ -1,0 +1,64 @@
+= adoc-epub
+Paul Snow
+:revnumber: 0.0.0
+:description: EPUB export: a reflowable EPUB 3.3 publication written in process over the book model of adoc-ebook, with no PDF or Typst in between.
+
+`adoc-epub` turns a rendered view tree into an EPUB publication.
+It is at layer L2, beside `adoc-render` and `adoc-ebook`, which it reads.
+The book model, its mapping, pictures and metadata live in xref:crates:adoc-ebook.adoc[adoc-ebook], which Kindle export writes too.
+The specification is `docs/prd/PRD-AdocFoundry_EPUB_Export.md` in the repository, which is not part of this site.
+
+IMPORTANT: The crate is the first package of EPUB export (issue #638) and is not yet reachable from the app, the CLI or the MCP server.
+It is not wired into the engine either, so there is no way to export an EPUB yet.
+Later packages add the engine feature, the front ends, full semantic XHTML, links, media, CSS and metadata.
+
+== What it does
+
+`write_epub(&Document, &EpubOptions)` maps the document through `Book::build` of `adoc-ebook` and writes the book with `write_book(&Book, Modified)`.
+The result is an `EpubOutput`, or an `EpubError`.
+Everything is written in memory.
+
+The publication is an OCF container holding:
+
+* `mimetype`, first and stored, with no extra field and exactly `application/epub+zip`;
+* `META-INF/container.xml`;
+* the package document `EPUB/package.opf`: EPUB 3 (`version="3.0"`), with `dc:identifier` as the unique identifier, `dc:title`, `dc:language`, a `dc:creator` for each author, the publisher and description where known, one `dcterms:modified`, a manifest with exactly one `nav` item, and a spine of the chapters;
+* the navigation document `EPUB/nav.xhtml`, with one `epub:type="toc"` navigation of nested ordered lists;
+* one XHTML content document for each chapter, `EPUB/text/c<n>.xhtml`.
+
+In this first package the chapters are minimal: headings, and every other block as a paragraph of its text.
+
+== Checks
+
+Every XML file is checked to be well-formed, with `roxmltree`, before the bytes are returned.
+An archive name is refused as `EpubError::Invalid` when it is absolute, holds `..`, a backslash or an empty segment, or uses anything but ASCII letters, digits, `.`, `-`, `_` and `/`.
+A name used twice is refused the same way.
+`EpubError::TooLarge` reports more than a ZIP archive holds.
+
+== Same input, same bytes
+
+The crate reads no clock and no environment.
+`EpubOptions` has no default and needs a `Modified`: a UTC time to the second, from 1980 to 2107, made with `Modified::from_unix_seconds`.
+It gives `dcterms:modified` and the date of every archive entry, so the same input gives the same bytes.
+
+The ZIP writer (`zip.rs`, deflate through `flate2` and CRC-32 through `crc32fast`) and the XML writer (`xml.rs`) are the crate's own, as Word export's are.
+
+== Tests
+
+The `test-support` feature gives the `testing` module: a ZIP reader of its own (`entries`, `files`, `text` and `parse`) and `assert_valid_ocf`, which checks the container and the package as a reading system does.
+
+The acceptance tests are `epub_package_is_valid_ocf`, `epub_text_is_escaped` and `epub_output_is_deterministic`, in `crates/adoc-epub/tests/package.rs`.
+
+== Where it sits
+
+`adoc-epub` is headless.
+It depends on `adoc-core`, `adoc-ebook`, `crc32fast`, `flate2` and `roxmltree`.
+The pairs `adoc-epub` on `adoc-ebook`, and on `adoc-render` for its tests, are same-layer pairs listed in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`.
+It starts no process and uses no network: `cargo xtask layers` holds its sources to the same forbidden paths as `adoc-kindle`.
+
+== Related
+
+* xref:adoc-ebook.adoc[adoc-ebook], the book model this crate writes
+* xref:adoc-kindle.adoc[adoc-kindle], the Kindle writers over the same model
+* xref:adoc-render.adoc[adoc-render], which builds the view tree
+* xref:index.adoc[Crates]

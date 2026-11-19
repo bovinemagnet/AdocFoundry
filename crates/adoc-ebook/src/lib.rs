@@ -15,8 +15,8 @@ use adoc_dom::SourceSpan;
 use adoc_render::ViewTree;
 
 pub use book::{
-    plain_text, Asset, AssetKind, Block, Book, Cell, Chapter, Inline, Link, Metadata, Note,
-    ParagraphClass, Row, Target, TocEntry,
+    inline_content, plain_text, Asset, AssetKind, Block, Book, Cell, Chapter, Inline, Link,
+    Metadata, Note, ParagraphClass, Row, Target, TocEntry,
 };
 
 mod book;

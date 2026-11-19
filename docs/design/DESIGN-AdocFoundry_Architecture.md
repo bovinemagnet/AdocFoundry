@@ -207,7 +207,7 @@ Front ends        adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)   ado
 Engine            adoc-engine: sessions, documents, command registry, undo, watcher, settings, events
                           |
                           v
-Document services adoc-render   adoc-diagrams   adoc-model   adoc-git   adoc-pdf   adoc-docx   adoc-ebook   adoc-kindle   adoc-audit   adoc-impact
+Document services adoc-render   adoc-diagrams   adoc-model   adoc-git   adoc-pdf   adoc-docx   adoc-ebook   adoc-epub   adoc-kindle   adoc-audit   adoc-impact
                           |
                           v
 Language layer    adoc-parser   adoc-dom   adoc-antora   adoc-index   adoc-lang   adoc-math   adoc-spell   adoc-graph   adoc-theme
@@ -218,7 +218,7 @@ Core              adoc-core: Document, LineIndex, SourceRange, Section, Anchor, 
 
 *Crate ladder: 5 layers, 4 front ends. Arrows are the only permitted dependency direction.*
 
-Arrows show the only permitted dependency direction; a crate never imports a crate above it, and only `adocfoundry` imports GPUI. `cargo xtask layers` checks the ladder in CI from `LAYERS` in `xtask/src/layers.rs`, with a few same-layer pairs allowed (`adoc-index` and `adoc-lang` on `adoc-parser`; `adoc-lang` on `adoc-index` and `adoc-antora`; `adoc-pdf`, `adoc-docx`, `adoc-ebook` and `adoc-kindle` on `adoc-render`; `adoc-kindle` on `adoc-ebook`). Front ends reach `adoc-audit` and `adoc-impact` only through the engine.
+Arrows show the only permitted dependency direction; a crate never imports a crate above it, and only `adocfoundry` imports GPUI. `cargo xtask layers` checks the ladder in CI from `LAYERS` in `xtask/src/layers.rs`, with a few same-layer pairs allowed (`adoc-index` and `adoc-lang` on `adoc-parser`; `adoc-lang` on `adoc-index` and `adoc-antora`; `adoc-pdf`, `adoc-docx`, `adoc-ebook` and `adoc-kindle` on `adoc-render`; `adoc-kindle` and `adoc-epub` on `adoc-ebook`; `adoc-epub` on `adoc-render`). Front ends reach `adoc-audit` and `adoc-impact` only through the engine.
 
 **Workspace layout** (Typst/Zed pattern: `crates/*`, shared `[workspace.package]`, `default-members` on the app binary):
 
@@ -242,7 +242,8 @@ AdocFoundry/
     adoc-git                 L2  Git over gix: status, diffs, revisions, history
     adoc-pdf                 L2  Phase 4: themes, Typst emitter and World; themes/ and fonts/ bundled here
     adoc-docx                L2  DOCX export: WordprocessingML and its OPC package, no Typst (PRD-AdocFoundry_DOCX_Export.md)
-    adoc-ebook               L2  the reflowable ebook model: pages mapped to one Book, its pictures embedded; read by Kindle (and EPUB) export
+    adoc-ebook               L2  the reflowable ebook model: pages mapped to one Book, its pictures embedded; read by Kindle and EPUB export
+    adoc-epub                L2  EPUB export: one book written as an EPUB 3.3 container, in process (PRD-AdocFoundry_EPUB_Export.md)
     adoc-kindle              L2  Kindle export: AZW3 and KFX from one book, in process (PRD-AdocFoundry_Kindle_Export.md)
     adoc-audit               L2  documentation quality audit: rules, reports, policy
     adoc-impact              L2  documentation impact analysis: rules over two revisions, report

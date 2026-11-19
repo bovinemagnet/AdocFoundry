@@ -39,6 +39,7 @@ See xref:developer:architecture.adoc[Architecture] for the layering rules and ho
 * xref:adoc-pdf.adoc[adoc-pdf]: PDF export through Typst with asciidoctor-pdf themes.
 * xref:adoc-docx.adoc[adoc-docx]: DOCX export as an editable Word package.
 * xref:adoc-ebook.adoc[adoc-ebook]: the book model shared by the e-book exporters.
+* xref:adoc-epub.adoc[adoc-epub]: EPUB export, a reflowable EPUB 3.3 package written in process (not yet reachable from the app, CLI or MCP server).
 * xref:adoc-kindle.adoc[adoc-kindle]: Kindle export, the book model for AZW3 and KFX.
 * xref:adoc-audit.adoc[adoc-audit]: the documentation quality audit's model.
 * xref:adoc-impact.adoc[adoc-impact]: the documentation impact analysis's model.

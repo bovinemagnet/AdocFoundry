@@ -286,6 +286,20 @@ The epic starts with a package of its own, before E1: Kindle export's book model
   - §5.4 asks for chapter and anchor identifiers scoped by component and version. The shared model names them by position in the book (`c<n>` for a chapter, `c<n>-a<m>` for an id a page defines, `c<n>-n<k>` and `c<n>-r<k>` for a footnote and its first mark). These names are deterministic, unique in the book and never taken from a path, which is what the requirement protects; they are not stable when chapters are added before them.
 - Where EPUB needs a distinction Kindle export does not make, such as admonition kinds, nested tables or a table's footer rows, the mapping gains an option whose default is Kindle's present behaviour. The packages that need one (E3, E5, E6) check Kindle's bytes again.
 
+
+### E1 (#638): the container and the package
+
+- **ZIP and XML writers (§14):** both in-house, in `adoc-epub`, as Word export's are:
+  - `zip.rs` writes the archive in order into memory: `mimetype` first and stored with no extra field, every other file deflated through `flate2`, CRC-32 through `crc32fast`. There are no data descriptors and no 64-bit extensions.
+  - An entry name must be a relative path of ASCII letters, digits, `.`, `-` and `_`. An unsafe or repeated name is refused.
+  - `xml.rs` escapes every document string and replaces the characters XML 1.0 forbids.
+  - Every XML file is parsed with `roxmltree`, already in the tree, before the bytes are returned. A file that is not well-formed fails the export (`EpubError::Invalid`) rather than being packed.
+- **The modification time is input.** `EpubOptions` has no default: it needs a `Modified`, a UTC time to the second between 1980 and 2107, the years a ZIP archive can date. It gives `dcterms:modified` and every entry's date, so the crate reads no clock, and the same input and time give the same bytes. Choosing the time (a profile's, else `SOURCE_DATE_EPOCH`, else now with a diagnostic) is the engine's job, in E2.
+- **The names in the package are fixed:** `META-INF/container.xml`, `EPUB/package.opf`, `EPUB/nav.xhtml` and `EPUB/text/c<n>.xhtml`, from the book's own chapter ids.
+- **Chapters are minimal for now.** E1 writes headings as headings and each other block as a paragraph of its text; E3 writes semantic XHTML.
+- `dc:date` is not written, since `revdate` is free text and EPUB needs a date. E6 decides.
+- The acceptance tests are `epub_package_is_valid_ocf`, `epub_text_is_escaped` and `epub_output_is_deterministic` (`crates/adoc-epub/tests/package.rs`). They read the archive back with the crate's own reader (`testing`, feature `test-support`), so they never trust a ZIP library to forgive the bytes.
+
 ## 16. References
 
 - W3C, [EPUB 3.3](https://www.w3.org/TR/epub-33/) (Recommendation)

@@ -93,7 +93,11 @@ The tool runs in a process group of its own and is stopped with everything it st
 
 |L2
 |`adoc-ebook`
-|The book model shared by the e-book exporters, headless. `Book::build` maps a `Document` (an article, or a `Plan` of parts, headings and pages) and its `Options` to one `Book`: metadata with a stable `urn:uuid:` identifier, chapters, blocks and inlines, a nested table of contents, generated anchors, links and embedded pictures. It depends on `adoc-render` (an allowed same-layer pair), `adoc-core`, `adoc-dom`, `resvg` and `sha2`, starts no process and uses no network, which `cargo xtask layers` checks. `adoc-kindle` is its first user, and the EPUB exporter (`adoc-epub`) is planned as its second. See xref:crates:adoc-ebook.adoc[adoc-ebook].
+|The book model shared by the e-book exporters, headless. `Book::build` maps a `Document` (an article, or a `Plan` of parts, headings and pages) and its `Options` to one `Book`: metadata with a stable `urn:uuid:` identifier, chapters, blocks and inlines, a nested table of contents, generated anchors, links and embedded pictures. It depends on `adoc-render` (an allowed same-layer pair), `adoc-core`, `adoc-dom`, `resvg` and `sha2`, starts no process and uses no network, which `cargo xtask layers` checks. It is read by Kindle export (`adoc-kindle`) and EPUB export (`adoc-epub`). See xref:crates:adoc-ebook.adoc[adoc-ebook].
+
+|L2
+|`adoc-epub`
+|EPUB export, headless and not yet reachable from the engine, the app, the CLI or the MCP server. `write_epub` maps a `Document` through `Book::build` of `adoc-ebook` and `write_book` writes a reflowable EPUB 3.3 publication in memory: the OCF container (`mimetype` first and stored), `package.opf`, the navigation document and one XHTML content document per chapter, each XML file checked to be well-formed and every archive name checked, with the ZIP and XML writers in-house. In this first package the chapters hold only headings and paragraphs of text. It reads no clock: `EpubOptions` needs a `Modified` time, so the same input gives the same bytes. It depends on `adoc-core`, `adoc-ebook` (an allowed same-layer pair), `crc32fast`, `flate2` and `roxmltree`, with `adoc-render` for its tests, starts no process and uses no network, which `cargo xtask layers` checks. See xref:crates:adoc-epub.adoc[adoc-epub].
 
 |L2
 |`adoc-kindle`
@@ -135,7 +139,7 @@ The application sees `adoc-model` types only through the engine's re-exports.
 `cargo xtask layers` reads the `Cargo.toml` of every crate under `crates/` and fails the build if:
 
 * a crate is not listed in the layer table in `xtask/src/layers.rs`;
-* a crate depends on a crate in a higher or equal layer, except for the explicit same-layer pairs `adoc-index` to `adoc-parser`, `adoc-lang` to `adoc-parser`, `adoc-index` and `adoc-antora`, `adoc-pdf` to `adoc-render`, `adoc-docx` to `adoc-render`, `adoc-ebook` to `adoc-render`, `adoc-kindle` to `adoc-render`, and `adoc-kindle` to `adoc-ebook`;
+* a crate depends on a crate in a higher or equal layer, except for the explicit same-layer pairs `adoc-index` to `adoc-parser`, `adoc-lang` to `adoc-parser`, `adoc-index` and `adoc-antora`, `adoc-pdf` to `adoc-render`, `adoc-docx` to `adoc-render`, `adoc-ebook` to `adoc-render`, `adoc-kindle` to `adoc-render`, `adoc-kindle` to `adoc-ebook`, `adoc-epub` to `adoc-ebook`, and `adoc-epub` to `adoc-render`;
 * `adoc-core` has any dependency;
 * a UI framework crate (`gpui`, `gpui-pre`, `gpui-pre-platform`, `gpui-component`, `gpui-base`, `gpui-kit-assets`, `egui`, `eframe`) appears outside `adocfoundry`;
 * an LSP crate (`lsp-types`, `lsp-server`) appears outside `adoc-ls`;

@@ -16,6 +16,7 @@ flowchart TD
         pdf["adoc-pdf"]
         docx["adoc-docx<br/>(DOCX export, no Typst)"]
         ebook["adoc-ebook<br/>(ebook model, in process)"]
+        epub["adoc-epub<br/>(EPUB export, in process)"]
         kindle["adoc-kindle<br/>(Kindle export, in process)"]
         audit["adoc-audit<br/>(quality audit model)"]
         impact["adoc-impact<br/>(impact analysis model)"]
@@ -66,6 +67,7 @@ flowchart TD
     docx --> render
     docx --> dom
     kindle --> ebook
+    epub --> ebook
     ebook --> render
     ebook --> dom
     ebook --> core

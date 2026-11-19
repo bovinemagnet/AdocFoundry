@@ -253,6 +253,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "adoc-epub"
+version = "0.12.0"
+dependencies = [
+ "adoc-core",
+ "adoc-dom",
+ "adoc-ebook",
+ "adoc-epub",
+ "adoc-render",
+ "crc32fast",
+ "flate2",
+ "roxmltree 0.21.2",
+]
+
+[[package]]
 name = "adoc-git"
 version = "0.12.0"
 dependencies = [

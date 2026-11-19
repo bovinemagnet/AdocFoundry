@@ -7,7 +7,7 @@ Paul Snow
 It is at layer L2, beside `adoc-render`, which it reads.
 It began as the model inside xref:crates:adoc-kindle.adoc[adoc-kindle] and was moved out unchanged in behaviour, with neutral names, so a second exporter can share it.
 `adoc-kindle` is its first user.
-The EPUB exporter (`adoc-epub`, planned in `docs/prd/PRD-AdocFoundry_EPUB_Export.md`, which is not part of this site) will be the second.
+The EPUB exporter, xref:crates:adoc-epub.adoc[adoc-epub], now reads the book too.
 
 == What it does
 
@@ -58,7 +58,7 @@ The Kindle exporter re-exports the model under its old names, so nothing that us
 
 `adoc-ebook` is headless.
 It depends on `adoc-render`, an allowed same-layer pair listed in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`, and on `adoc-core`, `adoc-dom`, `resvg` and `sha2`.
-`adoc-kindle` depends on it in turn, a pair listed there too.
+`adoc-kindle` and `adoc-epub` depend on it in turn, pairs listed there too.
 It must never build `adoc-pdf`, `adoc-docx`, Typst or the engine.
 It starts no process and uses no network: `cargo xtask layers` refuses `std::process`, `Command::new`, `std::net`, `TcpStream` and `UdpSocket` in its sources, with the same forbidden paths as `adoc-kindle`.
 
@@ -84,6 +84,7 @@ The `media` module reads each picture through the caller's `FileAccess`, and tel
 == Related
 
 * xref:adoc-kindle.adoc[adoc-kindle], the Kindle writers over this model
+* xref:adoc-epub.adoc[adoc-epub], the EPUB writer over this model
 * xref:adoc-render.adoc[adoc-render], which builds the view tree
 * xref:adoc-dom.adoc[adoc-dom], for source spans
 * xref:index.adoc[Crates]

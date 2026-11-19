@@ -39,6 +39,7 @@ adoc-core = { path = "crates/adoc-core" }
 adoc-diagrams = { path = "crates/adoc-diagrams" }
 adoc-dom = { path = "crates/adoc-dom" }
 adoc-ebook = { path = "crates/adoc-ebook" }
+adoc-epub = { path = "crates/adoc-epub" }
 adoc-docx = { path = "crates/adoc-docx" }
 # Front ends choose its features: `typst` (PDF export, typeset STEM) and `git`.
 adoc-engine = { path = "crates/adoc-engine", default-features = false }
