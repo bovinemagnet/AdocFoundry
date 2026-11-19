@@ -125,9 +125,11 @@ pub use epub_settings::{EpubProfile, EpubSettings};
 pub use error::{ConflictKind, EngineError};
 pub use event::EngineEvent;
 pub use expansion::{Branch, SidebarPanel, EXPANSION_SAVE_SETTLE, EXPANSION_STATE_FILE};
+#[cfg(feature = "docbook")]
+pub use export::docbook_assets_folder;
 pub use export::{
-    DocxExportArgs, EpubExportArgs, ExportArgs, ExportDiagnostic, ExportSummary, ExportTarget,
-    KindleExportArgs, KindleFormat,
+    DocBookExportArgs, DocxExportArgs, EpubExportArgs, ExportArgs, ExportDiagnostic, ExportSummary,
+    ExportTarget, KindleExportArgs, KindleFormat,
 };
 pub use external::{is_web_address, SYSTEM_VIEWER_EXTENSIONS, WEB_SCHEMES};
 pub use files::{DirectoryEntry, DirectoryError, EntryKind, Listing};

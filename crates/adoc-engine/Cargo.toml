@@ -26,6 +26,7 @@ adoc-kindle = { workspace = true, optional = true }
 # The book model Kindle and EPUB export share.
 adoc-ebook = { workspace = true, optional = true }
 adoc-epub = { workspace = true, optional = true }
+adoc-docbook = { workspace = true, optional = true }
 # Themes for PDF export and for a Word export's PDF-theme look; no Typst.
 adoc-theme = { workspace = true, optional = true }
 adoc-render.workspace = true
@@ -43,7 +44,7 @@ toml.workspace = true
 toml_edit.workspace = true
 
 [features]
-default = ["typst", "git", "docx", "kindle", "epub"]
+default = ["typst", "git", "docx", "kindle", "epub", "docbook"]
 # PDF export and typeset STEM, through Typst.
 typst = ["export", "dep:adoc-pdf", "dep:adoc-math"]
 # DOCX export, with no Typst (docs/prd/PRD-AdocFoundry_DOCX_Export.md).
@@ -54,8 +55,11 @@ kindle = ["export", "dep:adoc-kindle", "dep:adoc-ebook"]
 # EPUB export, EPUB 3.3, with no Typst and no other exporter
 # (docs/prd/PRD-AdocFoundry_EPUB_Export.md).
 epub = ["export", "dep:adoc-epub", "dep:adoc-ebook"]
-# The export pipeline the formats share; `typst`, `docx`, `kindle` and `epub` turn it on, and
-# front ends name those, never this.
+# DocBook export, DocBook 5.2 XML with its pictures beside it, with no Typst, no other exporter
+# and no diagram program started (docs/prd/PRD-AdocFoundry_DocBook_Export.md).
+docbook = ["export", "dep:adoc-docbook"]
+# The export pipeline the formats share; `typst`, `docx`, `kindle`, `epub` and `docbook` turn
+# it on, and front ends name those, never this.
 export = ["dep:adoc-theme"]
 # Git state, changes and commits, through gix.
 git = ["dep:adoc-git"]
@@ -69,6 +73,8 @@ adoc-docx = { workspace = true, features = ["test-support"] }
 adoc-kindle = { workspace = true, features = ["test-support"] }
 # Reading written EPUB books back in `tests/epub_export.rs`.
 adoc-epub = { workspace = true, features = ["test-support"] }
+# Checking written DocBook against its schema in `tests/docbook_export.rs`.
+adoc-docbook = { workspace = true, features = ["test-support"] }
 flate2.workspace = true
 insta.workspace = true
 roxmltree.workspace = true

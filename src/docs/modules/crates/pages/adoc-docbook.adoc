@@ -8,8 +8,9 @@ It is at layer L2, beside `adoc-render` and `adoc-epub`.
 The specification is `docs/prd/PRD-AdocFoundry_DocBook_Export.md` in the repository, which is not part of this site.
 
 NOTE: This is the first package of the DocBook export (DocBook 1/9, issue #649, of epic #615).
-The crate is headless and not yet reachable from the engine, the app, the command line or the MCP server.
-Later packages wire it in.
+The crate is headless.
+The engine reaches it through its `docbook` feature (the second package, DocBook 2/9, issue #650), which the app, the command line and the MCP server do not yet name.
+Later packages wire those in.
 
 == What it does
 
@@ -83,6 +84,16 @@ It is checked through the `oxixml-relaxng` crate (Apache-2.0, pure Rust), which 
 The feature gives the `testing` module: `assert_valid`, `schema_problems` and `parse`.
 The schema's embedded Schematron rules are not run.
 The `check` covers the ones that apply to what the crate writes.
+
+== In the engine
+
+The engine's `docbook` feature adds `export.docbook_page` and `export.docbook_component`, and `Engine::export_docbook_blocking`.
+The crate writes no file, so the engine puts the document in place: `<name>.xml` with its pictures in `<name>_assets/` beside it.
+Both are written to a staging folder first.
+Then, inside the job's one commit, the old assets folder is moved aside, the new one is moved into place and the XML is renamed over the output last, with the old folder put back if that rename fails.
+Only an assets folder that is provably the export's own is replaced or removed.
+The engine starts no diagram program for DocBook: a Graphviz, PlantUML or D2 diagram is taken from the diagram cache or keeps its source, with a warning.
+See xref:developer:engine.adoc#the-export-service[the export service] for the details.
 
 == Same input, same bytes
 

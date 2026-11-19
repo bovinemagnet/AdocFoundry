@@ -237,7 +237,7 @@ impl Engine {
         let mut sources = parse.sources.clone();
         let model = Model::build(&path, &parse.text, &dom);
         self.trim_diagram_failures();
-        let (view, waiting, inputs) = self.view_and_inputs(&path, &dom, true);
+        let (view, waiting, inputs) = self.view_and_inputs(&path, &dom, true, true);
         sources.extend(inputs);
         let current = Arc::new(VisualDocument {
             document: id,
@@ -390,7 +390,7 @@ impl Engine {
                 continue;
             };
             let (path, dom) = (session.current.model.path.clone(), session.dom.clone());
-            let (view, waiting) = self.view_of(&path, &dom, true);
+            let (view, waiting) = self.view_of(&path, &dom, true, true);
             if let Some(session) = self.visual.sessions.get_mut(&id) {
                 let mut current = (*session.current).clone();
                 current.view = view;

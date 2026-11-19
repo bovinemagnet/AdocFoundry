@@ -560,11 +560,11 @@ Only the active page has a shared parse, so the spell check of a background page
 [[the-export-service]]
 == The export service
 
-The engine exports a page, or a component version in navigation order, to PDF, to DOCX, to a Kindle book or to an EPUB, through one pipeline in `export.rs`.
+The engine exports a page, or a component version in navigation order, to PDF, to DOCX, to a Kindle book, to an EPUB or to DocBook, through one pipeline in `export.rs`.
 `export.pdf_page` and `export.pdf_component` take `CommandArgs::Export(ExportArgs)`, with an `ExportTarget`, the output path, an optional theme, the standards, a fonts directory and an optional path for the generated Typst.
 `export.docx_page` ("Export Page to Word…") and `export.docx_component` ("Export Component to Word…") take `CommandArgs::ExportDocx(DocxExportArgs)`, which has a `target`, an `output` and `attributes`, and nothing of PDF's: no theme, standards, fonts directory or Typst path.
 
-A job holds a `Request`, PDF, DOCX, Kindle or EPUB, over the same plan.
+A job holds a `Request`, PDF, DOCX, Kindle, EPUB or DocBook, over the same plan.
 The plan is an article, or a book made from the component version's navigation (or the given navigation files, in their order), with the start page as a preface when the navigation does not list it, and each page once.
 The pages are parsed on a worker from their open buffers or files, their views are built on the engine thread, and their diagrams are rendered.
 Once no diagram is pending, `arrange` puts the views in the plan's order, and only then is the document made for its format.
@@ -610,6 +610,26 @@ One whose output, cover or stylesheet is outside the workspace is refused when i
 Nothing in `[epub]` changes another format's output and no other format's settings change an EPUB, which `epub_settings_leave_other_formats_unchanged` holds; `epub_profiles_resolve_and_validate` holds the profiles.
 No front end reaches the EPUB commands yet: the app, the CLI and the MCP server do not name the `epub` feature.
 
+`export.docbook_page` ("Export Page as DocBook…") and `export.docbook_component` ("Export Component as DocBook…") take `CommandArgs::ExportDocBook(DocBookExportArgs)`, which has a `target`, an `output` and `attributes`.
+They are registered only with the `docbook` feature, which no front end names yet.
+DocBook goes through the same publication plan as PDF, Word, Kindle and EPUB: the same pages in the same order, unsaved buffers included (`docbook_and_pdf_select_the_same_pages`).
+It finishes as the other formats do, with `EngineEvent::ExportFinished`, and `Engine::export_docbook_blocking(args, timeout)` serves front ends without an event loop.
+A page that asks for `:export-read-only:` is refused, since `ExportFormat::DocBook` carries no editing restriction.
+
+The output is `<name>.xml` with its pictures in `<name>_assets/` beside it (`docbook_assets_folder`).
+Both are written to a staging folder beside the output first.
+Then, inside the job's one commit, so that an export that timed out replaces neither, the old assets folder is moved aside, the new one is moved into place and the XML is renamed over the output last.
+If that last rename fails, the old folder is put back, so the old document still finds its pictures.
+An assets folder from an earlier export is replaced, or removed when the new document has no pictures, but only a folder that is provably the export's own: not a link, and holding only regular files named `i<n>.png`, `.jpg`, `.gif` or `.svg`.
+Anything else there, such as another file, a sub-folder, a file where the folder would be or a link, is refused before anything is read, and checked again inside the commit.
+The output must be an `.xml` file, and a folder or a link is refused (`docbook_failed_export_keeps_existing_output`).
+
+A DocBook export starts no program.
+The engine builds its views so that a diagram another program draws (Graphviz, PlantUML or D2) is taken only from the diagram cache the preview fills, and is never started; one that is not there keeps its source, with a warning saying the export starts no program (`docbook_starts_no_diagram_program`).
+Mermaid, which is drawn in process, is drawn as for the other formats.
+`Diagrams::runs_a_program(kind)` tells the two apart.
+The other formats still start the tools as before.
+
 A blocking export that times out abandons its job through a per-job commit lock (`Commit`), which each writer takes to rename its file over the output.
 A timed-out export therefore never replaces the output afterwards, and one whose file was already in place reports success.
 
@@ -635,6 +655,7 @@ It exports the open buffer, and needs no Typst.
 
 `Engine::export_blocking(args, timeout)` runs the same job and waits, for the command-line `pdf`, and `Engine::is_exporting()` is true while a job is in flight.
 `Engine::export_epub_blocking(args, timeout)` is the same for EPUB; without the `epub` feature it fails as an unknown command.
+`Engine::export_docbook_blocking(args, timeout)` is the same for DocBook; without the `docbook` feature it fails as an unknown command.
 `Engine::export_docx_blocking(args, timeout)` is to DOCX what `export_blocking` is to PDF; without the `docx` feature it fails as an unknown command, as `export_blocking` does without `typst`.
 The settings' `[pdf]` table supplies the default theme, the themes and fonts directories, the site address and the standards.
 `Engine::profile_export_args(name)` turns a publication profile into export arguments.
@@ -1658,11 +1679,12 @@ See xref:building-and-releasing.adoc#notices[cargo xtask notices] for how the no
 
 == Engine features
 
-The engine has Cargo features `typst`, `docx`, `kindle`, `epub`, `git` and the `export` pipeline the formats share.
+The engine has Cargo features `typst`, `docx`, `kindle`, `epub`, `docbook`, `git` and the `export` pipeline the formats share.
 They are on by default for the crate and off in `[workspace.dependencies]`, so each front end names the ones it wants.
 Without `git`, the engine behaves as with `[git] enabled = false`.
-Without `typst`, the PDF export commands are not registered and `export_blocking` fails; likewise the DOCX, Kindle and EPUB commands without `docx`, `kindle` and `epub`.
+Without `typst`, the PDF export commands are not registered and `export_blocking` fails; likewise the DOCX, Kindle, EPUB and DocBook commands without `docx`, `kindle`, `epub` and `docbook`.
 The engine built with `epub` alone compiles `adoc-epub` and `adoc-ebook` and no Typst and no other exporter, which `cargo xtask layers` checks (`epub_builds_alone`) and CI's lint job compiles.
+The engine built with `docbook` alone compiles `adoc-docbook` and no other exporter, no `adoc-math` and no Typst, which `cargo xtask layers` checks (`docbook_builds_alone`) and CI compiles (`cargo check -p adoc-engine --no-default-features --features docbook`).
 
 == Navigation history
 

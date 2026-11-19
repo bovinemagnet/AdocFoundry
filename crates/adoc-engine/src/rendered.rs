@@ -770,18 +770,22 @@ impl Engine {
         path: &Path,
         dom: &Dom,
         formulas: bool,
+        programs: bool,
     ) -> (ViewTree, BTreeSet<String>) {
-        let (view, waiting, _) = self.view_and_inputs(path, dom, formulas);
+        let (view, waiting, _) = self.view_and_inputs(path, dom, formulas, programs);
         (view, waiting)
     }
 
     /// [`Engine::view_of`], with the files the view's diagrams read, whose changes are to
-    /// show it again ([`adoc_diagrams::Diagrams::inputs`]).
+    /// show it again ([`adoc_diagrams::Diagrams::inputs`]). `programs` is whether a diagram
+    /// drawn by another program (Graphviz, PlantUML, D2) may be started: an export that runs
+    /// in process takes such a diagram only from the cache.
     pub(crate) fn view_and_inputs(
         &mut self,
         path: &Path,
         dom: &Dom,
         formulas: bool,
+        programs: bool,
     ) -> (ViewTree, BTreeSet<String>, BTreeSet<PathBuf>) {
         let diagrams = self.diagrams();
         let resolver = EngineResolver {
@@ -789,6 +793,7 @@ impl Engine {
             diagrams: &diagrams,
             failed: &self.rendered.failed,
             formulas,
+            programs,
             measures: &self.rendered.formulas,
             wanted: RefCell::default(),
             inputs: RefCell::default(),
@@ -810,7 +815,7 @@ impl Engine {
             return;
         };
         let (path, dom) = (parsed.path.clone(), parsed.dom.clone());
-        let (view, waiting, inputs) = self.view_and_inputs(&path, &dom, true);
+        let (view, waiting, inputs) = self.view_and_inputs(&path, &dom, true, true);
         let Some(parsed) = self.rendered.parsed.get(&id) else {
             return;
         };
@@ -1029,6 +1034,8 @@ struct EngineResolver<'e> {
     failed: &'e FailedDiagrams,
     /// Whether formulas are rendered as images for this view.
     formulas: bool,
+    /// Whether a diagram another program draws may be started, or only taken from the cache.
+    programs: bool,
     /// The measures of the inline formulas' images read so far.
     measures: &'e RefCell<HashMap<PathBuf, FormulaImage>>,
     /// Diagrams to render, gathered while building because the view is built immutably.
@@ -1139,6 +1146,12 @@ impl ViewResolver for EngineResolver<'_> {
         };
         if let Some(message) = self.failed.get(&checksum) {
             return failed(message.clone());
+        }
+        if !self.programs && self.diagrams.runs_a_program(kind) {
+            return failed(format!(
+                "this export starts no program, so a {kind} diagram is used only once the \
+                 preview has drawn it"
+            ));
         }
         if !self.diagrams.supports(kind) {
             return failed(format!("no renderer for {kind} diagrams"));

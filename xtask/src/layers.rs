@@ -538,6 +538,38 @@ fn epub_engine_packages(root: &Path) -> Result<BTreeSet<String>, String> {
     )
 }
 
+/// The packages the engine compiles with DocBook export alone: `--no-default-features
+/// --features docbook`.
+fn docbook_engine_packages(root: &Path) -> Result<BTreeSet<String>, String> {
+    build_packages(
+        root,
+        "adoc-engine",
+        &["--no-default-features", "--features", "docbook"],
+    )
+}
+
+/// What DocBook export must never compile, in `adoc-docbook` or in the engine built with
+/// `docbook` alone: the document is written from the view trees, never through another
+/// format's exporter or Typst (DocBook PRD §8).
+const DOCBOOK_EXCLUDED: &[&str] = &[
+    "adoc-pdf",
+    "adoc-docx",
+    "adoc-ebook",
+    "adoc-epub",
+    "adoc-kindle",
+    "adoc-math",
+    "typst",
+];
+
+/// A violation for each crate of [`DOCBOOK_EXCLUDED`] in a DocBook build.
+fn docbook_violations(packages: &BTreeSet<String>) -> Vec<String> {
+    DOCBOOK_EXCLUDED
+        .iter()
+        .filter(|name| packages.contains(**name))
+        .map(|name| format!("DocBook export builds {name}; it needs no other exporter or Typst"))
+        .collect()
+}
+
 /// What EPUB export must never compile, in `adoc-epub` or in the engine built with `epub`
 /// alone: books are written through the shared book model, never through another format's
 /// exporter or Typst (EPUB PRD §8).
@@ -688,6 +720,11 @@ pub fn run(root: &Path) -> Result<Vec<String>, String> {
     violations.extend(kindle_violations(&kindle_engine_packages(root)?));
     violations.extend(epub_violations(&default_build_packages(root, "adoc-epub")?));
     violations.extend(epub_violations(&epub_engine_packages(root)?));
+    violations.extend(docbook_violations(&default_build_packages(
+        root,
+        "adoc-docbook",
+    )?));
+    violations.extend(docbook_violations(&docbook_engine_packages(root)?));
     violations.extend(kindle_licence_violations(&kindle_licences(root)?));
     violations.extend(epub_licence_violations(&licences(root, "adoc-epub")?));
     Ok(violations)
@@ -1106,6 +1143,35 @@ libc = "=0.2.0"
         assert_eq!(epub_licence_violations(&licences), Vec::<String>::new());
         let copyleft = [("boko".to_owned(), "GPL-3.0-or-later".to_owned())];
         assert_eq!(epub_licence_violations(&copyleft).len(), 1);
+    }
+
+    /// DocBook PRD §11 test 5: DocBook export alone, in `adoc-docbook` and in the engine built
+    /// with `docbook` and no other format, compiles neither Typst nor another exporter.
+    #[test]
+    fn docbook_builds_alone() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let packages = default_build_packages(&root, "adoc-docbook").unwrap();
+        assert!(packages.contains("adoc-render"), "{packages:?}");
+        assert!(
+            !packages.contains("oxixml-relaxng"),
+            "the schema validator is for tests only: {packages:?}"
+        );
+        assert_eq!(docbook_violations(&packages), Vec::<String>::new());
+
+        let engine = docbook_engine_packages(&root).unwrap();
+        assert!(engine.contains("adoc-docbook"), "{engine:?}");
+        assert_eq!(docbook_violations(&engine), Vec::<String>::new());
+
+        let with_others: BTreeSet<String> = ["adoc-docbook", "adoc-epub", "typst"]
+            .map(str::to_owned)
+            .into();
+        assert_eq!(
+            docbook_violations(&with_others),
+            [
+                "DocBook export builds adoc-epub; it needs no other exporter or Typst",
+                "DocBook export builds typst; it needs no other exporter or Typst",
+            ]
+        );
     }
 
     /// The Word looks PRD, §9 test 1: themes load without Typst, so Word export can read them

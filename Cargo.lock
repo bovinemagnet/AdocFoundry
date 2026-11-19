@@ -233,6 +233,7 @@ dependencies = [
  "adoc-audit",
  "adoc-core",
  "adoc-diagrams",
+ "adoc-docbook",
  "adoc-docx",
  "adoc-dom",
  "adoc-ebook",

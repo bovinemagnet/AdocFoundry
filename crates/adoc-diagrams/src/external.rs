@@ -188,6 +188,10 @@ impl DiagramProvider for ExternalProvider {
 
     /// The program, the page's folder, and the size and modification time of each file the
     /// diagram names for the tool to read there, so editing an included file draws it again.
+    fn runs_a_program(&self) -> bool {
+        true
+    }
+
     fn identity(&self, request: &DiagramRequest) -> String {
         let folder = request
             .directory
