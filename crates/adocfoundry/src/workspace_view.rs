@@ -14,7 +14,7 @@ use std::{
 use adoc_core::{LineIndex, SourceRange};
 use adoc_engine::{
     commands::ids, count_words, CommandArgs, CommandOutcome, DocumentId, DocxExportArgs,
-    EditPreview, EditorMode, EngineEvent, ExportArgs, ExportSummary, ExportTarget,
+    EditPreview, EditorMode, EngineEvent, EpubExportArgs, ExportArgs, ExportSummary, ExportTarget,
     KindleExportArgs, KindleFormat, NavigationPosition, OpenDisposition, ResourceFamily,
     SidebarPanel, TabItem, ThemePreference,
 };
@@ -489,6 +489,11 @@ fn kindle_export(target: ExportTarget, format: KindleFormat, output: PathBuf) ->
     CommandArgs::ExportKindle(KindleExportArgs::new(target, format, output))
 }
 
+/// An EPUB export of `target` to `output`.
+fn epub_export(target: ExportTarget, output: PathBuf) -> CommandArgs {
+    CommandArgs::ExportEpub(EpubExportArgs::new(target, output))
+}
+
 /// The Kindle formats as the format picker offers them, `default` first.
 fn kindle_formats(default: KindleFormat) -> Vec<(KindleFormat, String)> {
     let label = |format: KindleFormat| match format {
@@ -542,6 +547,14 @@ fn pdf_export(target: ExportTarget, theme: Option<String>, output: PathBuf) -> C
     })
 }
 
+/// Whether a finished export's notification offers to open `output` in the system's
+/// application for it: never an EPUB book, since no reading application is launched for one.
+pub(crate) fn opens_after_export(output: &Path) -> bool {
+    !output
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("epub"))
+}
+
 pub(crate) fn export_message(output: &Path, result: &Result<ExportSummary, String>) -> String {
     let is = |wanted: &str| {
         output
@@ -550,6 +563,7 @@ pub(crate) fn export_message(output: &Path, result: &Result<ExportSummary, Strin
     };
     let (html, docx) = (is("html"), is("docx"));
     let kindle = is("azw3") || is("kfx");
+    let epub = is("epub");
     match result {
         Ok(summary) => {
             let warnings = summary.diagnostics.len();
@@ -558,8 +572,9 @@ pub(crate) fn export_message(output: &Path, result: &Result<ExportSummary, Strin
                 .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
             let mut message = if html {
                 format!("Exported {name}")
-            } else if kindle {
-                // A Kindle lays out its own pages; these are the AsciiDoc pages it holds.
+            } else if kindle || epub {
+                // A Kindle or an EPUB reader lays out its own pages; these are the AsciiDoc
+                // pages the book holds.
                 let plural = if summary.pages == 1 { "" } else { "s" };
                 format!("Exported {name} ({} AsciiDoc page{plural})", summary.pages)
             } else if docx {
@@ -589,6 +604,7 @@ pub(crate) fn export_message(output: &Path, result: &Result<ExportSummary, Strin
         Err(error) if html => format!("HTML export failed: {error}"),
         Err(error) if docx => format!("Word export failed: {error}"),
         Err(error) if kindle => format!("Kindle export failed: {error}"),
+        Err(error) if epub => format!("EPUB export failed: {error}"),
         Err(error) => format!("PDF export failed: {error}"),
     }
 }
@@ -4300,6 +4316,45 @@ impl WorkspaceView {
         );
     }
 
+    /// Asks where to write the active page as an EPUB book, then exports it. No preview is
+    /// opened and no reader launched: an EPUB book is read in a reading application.
+    fn on_export_page_epub(
+        &mut self,
+        _: &ExportPageEpub,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.export_page(ids::EXPORT_EPUB_PAGE, "epub", epub_export, window, cx);
+    }
+
+    /// Asks where to write the active page's component as an EPUB book, then exports it.
+    fn on_export_component_epub(
+        &mut self,
+        _: &ExportComponentEpub,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.export_component(ids::EXPORT_EPUB_COMPONENT, "epub", epub_export, window, cx);
+    }
+
+    /// Offers the workspace's EPUB publication profiles, then exports the one chosen.
+    fn on_export_epub_profile(
+        &mut self,
+        _: &ExportEpubProfile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let profiles = self.app.read(cx).engine.epub_profiles();
+        self.export_profile(
+            ids::EXPORT_EPUB_PROFILE,
+            profiles,
+            "No EPUB profiles: add an [epub.profiles.<name>] table to the workspace's .adocfoundry.toml.",
+            "Export an EPUB profile…",
+            window,
+            cx,
+        );
+    }
+
     /// Offers the workspace's Word publication profiles, then exports the one chosen.
     fn on_export_docx_profile(
         &mut self,
@@ -4579,6 +4634,7 @@ impl WorkspaceView {
             "docx" => adoc_engine::ExportFormat::Docx,
             "html" => adoc_engine::ExportFormat::Html,
             "azw3" | "kfx" => adoc_engine::ExportFormat::Kindle,
+            "epub" => adoc_engine::ExportFormat::Epub,
             _ => return false,
         };
         match self.app.read(cx).engine.export_protection(target, format) {
@@ -4622,7 +4678,7 @@ impl WorkspaceView {
     ) {
         let message = export_message(output, result);
         match result {
-            Ok(_) => {
+            Ok(_) if opens_after_export(output) => {
                 let path = output.to_path_buf();
                 window.push_notification(
                     Notification::new().message(message).action(move |_, _, _| {
@@ -4634,7 +4690,7 @@ impl WorkspaceView {
                     cx,
                 );
             }
-            Err(_) => window.push_notification(message, cx),
+            _ => window.push_notification(message, cx),
         }
     }
 
@@ -6248,6 +6304,9 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_export_page_kindle))
             .on_action(cx.listener(Self::on_export_component_kindle))
             .on_action(cx.listener(Self::on_export_kindle_profile))
+            .on_action(cx.listener(Self::on_export_page_epub))
+            .on_action(cx.listener(Self::on_export_component_epub))
+            .on_action(cx.listener(Self::on_export_epub_profile))
             .on_action(cx.listener(Self::on_export_page_docx_themed))
             .on_action(cx.listener(Self::on_export_component_docx_themed))
             .on_action(cx.listener(Self::on_export_page_pdf_with_theme))

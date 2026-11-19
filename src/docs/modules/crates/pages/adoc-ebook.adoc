@@ -1,0 +1,127 @@
+= adoc-ebook
+Paul Snow
+:revnumber: 0.0.0
+:description: The book model shared by the e-book exporters: a rendered view tree mapped to one book of chapters, links, a table of contents, metadata and embedded pictures.
+
+`adoc-ebook` turns a rendered view tree into one book model that e-book writers write.
+It is at layer L2, beside `adoc-render`, which it reads.
+It began as the model inside xref:crates:adoc-kindle.adoc[adoc-kindle] and was moved out unchanged in behaviour, with neutral names, so a second exporter can share it.
+`adoc-kindle` is its first user.
+The EPUB exporter, xref:crates:adoc-epub.adoc[adoc-epub], now reads the book too.
+
+== What it does
+
+The crate is given a `Document`, which is an article (a `Page`) or a book (a `Plan` of `BookItem` values: parts, headings and pages), and `Options`, and builds one `Book` from it with `Book::build(&Document, &Options)`.
+Each writer then writes that one book, so the formats it serves never differ in content.
+It knows nothing of the engine, the workspace, a UI framework or any file format.
+
+The book holds:
+
+* chapters in reading order, with the ids `c1`, `c2` and so on, and their blocks and inlines;
+* a nested table of contents;
+* metadata: the title, authors, language, a stable `urn:uuid:` identifier derived from the title, authors and version (and no clock), the publisher, the description, the date (from `revdate`), the subjects (`subjects`, from `keywords`) and the version (from `revnumber`);
+* assets, the embedded pictures.
+
+Problems are reported as `Diagnostic` values, each with a `Severity` and a location at its source.
+
+== Names
+
+The Kindle exporter re-exports the model under its old names, so nothing that uses Kindle export changed.
+
+[cols="1,1"]
+|===
+|`adoc-ebook` |`adoc-kindle`
+
+|`Book`
+|`KindleBook`
+
+|`Document`
+|`KindleDocument`
+
+|`Page`
+|`KindlePage`
+
+|`Plan`
+|`KindlePlan`
+
+|`Options`
+|`KindleOptions`
+
+|`Diagnostic`
+|`KindleDiagnostic`
+
+|`Severity`
+|`KindleSeverity`
+|===
+
+== Where it sits
+
+`adoc-ebook` is headless.
+It depends on `adoc-render`, an allowed same-layer pair listed in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`, and on `adoc-core`, `adoc-dom`, `resvg` and `sha2`.
+`adoc-kindle` and `adoc-epub` depend on it in turn, pairs listed there too.
+It must never build `adoc-pdf`, `adoc-docx`, Typst or the engine.
+It starts no process and uses no network: `cargo xtask layers` refuses `std::process`, `Command::new`, `std::net`, `TcpStream` and `UdpSocket` in its sources, with the same forbidden paths as `adoc-kindle`.
+
+== Formats
+
+`Options::format` is a `Format`, either `Kindle`, the default, or `Epub`.
+It names the format a book is made for, where the formats differ in what they can show.
+`Format::book` names it in diagnostics, as "a Kindle book" or "an EPUB", for example in the audio and video warning.
+
+[cols="1,2,2"]
+|===
+|Choice |Kindle |EPUB
+
+|A table inside a table's cell
+|Lines of text, with a warning.
+|Kept as a table.
+
+|Keys, buttons and menus
+|Code and strong text.
+|`Inline::Styled` with an `InlineStyle` (`Keyboard`, `Button` or `Menu`).
+|===
+
+For Kindle the mapping is exactly as before: the AZW3 and KFX bytes are unchanged, checked against `main`.
+Kindle's writers never receive `Inline::Styled`, and would write its content if they did.
+
+For an EPUB only, and never for a Kindle book, whose diagnostics are unchanged, the mapping also warns:
+
+* at the line where it applies, about a picture with no description of its own, whose file name stands for it (told by `adoc_render::ViewImage::has_default_alt`);
+* at the line where it applies, about a section that skips a heading level;
+* at the line where it applies, about a table with no header row;
+* for the whole book, about a missing title, and about a missing or invalid language, for which `en` is used.
+
+Two additions are made in every format:
+
+* `Block::Aside` has a `kind`, an `AsideKind`: `Admonition` with the kind's name, such as `note` or `warning`, `Sidebar` or `Example`.
+* `Row` has `footer`, true for a table's footer rows.
+
+Kindle's writers ignore both.
+`crates/adoc-ebook/tests/format.rs` holds both formats' choices.
+
+== Anchors and links
+
+* Anchors are generated, never taken from a path: `c<n>-a<m>` for an id a page defines, `c<n>-n<number>` for a footnote and `c<n>-r<number>` for its first mark.
+They are stable, and cannot collide across pages.
+* A cross reference becomes a link inside the book when its target page is in the book.
+Otherwise it is the page's published URL when a site URL is configured (`page_urls`), and failing that it stays text with a warning at its source.
+
+== Pictures
+
+Images, diagrams and formulas are embedded.
+The `media` module reads each picture through the caller's `FileAccess`, and tells PNG, JPEG, GIF and SVG apart by their bytes, never by their names.
+
+* Raster pictures are checked whole and kept as they are.
+* SVG is drawn as a PNG in process with `resvg`, at twice its size on a white ground, and nothing is loaded from outside the file.
+* Each file is kept once however often it is shown, and identical bytes are kept once.
+* The limits are 16 MiB a file, 40 megapixels, and 256 MiB of pictures a book.
+* A remote image is never fetched: it becomes a link to its address, with a warning.
+* A picture that is missing, unreadable, malformed, oversized or out of bounds is its description, with a warning at its line.
+
+== Related
+
+* xref:adoc-kindle.adoc[adoc-kindle], the Kindle writers over this model
+* xref:adoc-epub.adoc[adoc-epub], the EPUB writer over this model
+* xref:adoc-render.adoc[adoc-render], which builds the view tree
+* xref:adoc-dom.adoc[adoc-dom], for source spans
+* xref:index.adoc[Crates]

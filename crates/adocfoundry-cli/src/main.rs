@@ -22,6 +22,10 @@
 //!     [--format azw3|kfx] [--output <file.azw3|file.kfx>] [--fail-on none|warning|error]
 //! adocfoundry-cli kindle --profile <name> [<root>] [--format azw3|kfx]
 //!     [--output <file.azw3|file.kfx>] [--fail-on none|warning|error]
+//! adocfoundry-cli epub <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
+//!     [--output <file.epub>] [--fail-on none|warning|error]
+//! adocfoundry-cli epub --profile <name> [<root>] [--output <file.epub>]
+//!     [--fail-on none|warning|error]
 //! adocfoundry-cli git-status <root> [--format text|json]
 //! adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--ages]
 //!     [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
@@ -42,9 +46,9 @@ use adoc_engine::{
     commands::ids,
     pdf_standard,
     report::{display_path, severity_name, ChangedFile},
-    CommandArgs, CommandOutcome, DocxExportArgs, Engine, EngineError, ExportArgs, ExportSummary,
-    ExportTarget, GraphFilter, GraphScope, KindleExportArgs, KindleFormat, LookChoice, Settings,
-    SvgStyle,
+    CommandArgs, CommandOutcome, DocxExportArgs, Engine, EngineError, EpubExportArgs, ExportArgs,
+    ExportSummary, ExportTarget, GraphFilter, GraphScope, KindleExportArgs, KindleFormat,
+    LookChoice, Settings, SvgStyle,
 };
 
 const USAGE: &str = "usage:
@@ -69,6 +73,10 @@ const USAGE: &str = "usage:
       [--format azw3|kfx] [--output <file.azw3|file.kfx>] [--fail-on none|warning|error]
   adocfoundry-cli kindle --profile <name> [<root>] [--format azw3|kfx]
       [--output <file.azw3|file.kfx>] [--fail-on none|warning|error]
+  adocfoundry-cli epub <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
+      [--output <file.epub>] [--fail-on none|warning|error]
+  adocfoundry-cli epub --profile <name> [<root>] [--output <file.epub>]
+      [--fail-on none|warning|error]
   adocfoundry-cli git-status <root> [--format text|json]
   adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--ages]
       [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
@@ -177,6 +185,7 @@ fn run(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         "pdf" => pdf(rest, out),
         "docx" => docx(rest, out),
         "kindle" => kindle(rest, out),
+        "epub" => epub(rest, out),
         "git-status" => git_status(rest, out),
         "graph" => graph(rest, out),
         "doctor" => doctor(rest, out),
@@ -1302,6 +1311,46 @@ fn kindle(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     report(result, &output, &root, fail_on, out, true)
 }
 
+/// Exports a page, or a component version as a book, to an EPUB 3 book. An output that is not
+/// an `.epub` file is refused before anything is read.
+fn epub(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+    let (positional, options) = parse_options(
+        arguments,
+        &["root", "component", "output", "profile", "fail-on"],
+    )?;
+    let fail_on = fail_on(&options)?;
+    if let Some(output) = option(&options, "output") {
+        let epub = Path::new(output)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("epub"));
+        if !epub {
+            return Err(format!("{output} is not an .epub file"));
+        }
+    }
+    if let Some(profile) = option(&options, "profile") {
+        let root = profile_root(&positional, &options)?;
+        let mut engine = open_engine(&root, false)?;
+        let mut args = engine
+            .epub_profile_export_args(profile)
+            .map_err(|error| error.to_string())?;
+        if let Some(output) = option(&options, "output") {
+            args.output = PathBuf::from(output);
+        }
+        let output = args.output.clone();
+        let result = engine.export_epub_blocking(args, INDEX_TIMEOUT);
+        return report(result, &output, &root, fail_on, out, true);
+    }
+    let [target] = positional.as_slice() else {
+        return Err(USAGE.to_owned());
+    };
+    let (mut engine, root, target, default_output) = open_target(target, &options, "epub")?;
+    let output = option(&options, "output").map_or(default_output, PathBuf::from);
+    let args = EpubExportArgs::new(target, output.clone());
+    let result = engine.export_epub_blocking(args, INDEX_TIMEOUT);
+    report(result, &output, &root, fail_on, out, true)
+}
+
 /// The file a component named `name` is exported to by default, in the current directory: the
 /// name's last part, with anything but letters, digits, `-`, `_` and `.` made `-`, so the
 /// workspace's content never decides where the file goes (#511). `extension` is the format's.
@@ -1341,7 +1390,7 @@ fn report_export(
 }
 
 /// Prints each diagnostic and then the output and its page count: a PDF's pages, a Word
-/// document's AsciiDoc pages, since Word lays out its own. Fails when a diagnostic is at least
+/// document's or an e-book's AsciiDoc pages, since its reader lays out its own. Fails when a diagnostic is at least
 /// as severe as `fail_on`, though the document is written.
 fn report(
     result: Result<ExportSummary, EngineError>,
@@ -1395,10 +1444,13 @@ fn report(
             if summary.protected {
                 outln!(out, "protected: read-only");
             }
+            // A note, such as an EPUB's that it is dated with the time of the export, never
+            // fails an export.
             let failed = fail_on.is_some_and(|threshold| {
                 summary.diagnostics.iter().any(|diagnostic| {
-                    threshold == DiagnosticSeverity::Warning
-                        || diagnostic.severity == DiagnosticSeverity::Error
+                    diagnostic.severity == DiagnosticSeverity::Error
+                        || (threshold == DiagnosticSeverity::Warning
+                            && diagnostic.severity == DiagnosticSeverity::Warning)
                 })
             });
             Ok(if failed {

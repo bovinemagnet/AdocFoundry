@@ -349,8 +349,14 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `Peek`, `E
 |`export.kindle_page`, `export.kindle_component`
 |Export the active page, or a component version, as a Kindle book (AZW3 or KFX); see <<the-export-service>>. They are registered only with the `kindle` feature.
 
+|`export.epub_page`, `export.epub_component`
+|Export the active page, or a component version, as an EPUB; see <<the-export-service>>. They are registered only with the `epub` feature.
+
 |`export.kindle_profile`
 |Export a `[kindle.profiles.<name>]` Kindle profile, with `CommandArgs::Profile`; see <<the-export-service>>.
+
+|`export.epub_profile`
+|Export a `[epub.profiles.<name>]` EPUB profile, with `CommandArgs::Profile`; see <<the-export-service>>.
 
 |`export.docx_profile`
 |Export a `[docx.profiles.<name>]` Word profile, with `CommandArgs::Profile`; see <<the-export-service>>.
@@ -554,11 +560,11 @@ Only the active page has a shared parse, so the spell check of a background page
 [[the-export-service]]
 == The export service
 
-The engine exports a page, or a component version in navigation order, to PDF, to DOCX or to a Kindle book, through one pipeline in `export.rs`.
+The engine exports a page, or a component version in navigation order, to PDF, to DOCX, to a Kindle book or to an EPUB, through one pipeline in `export.rs`.
 `export.pdf_page` and `export.pdf_component` take `CommandArgs::Export(ExportArgs)`, with an `ExportTarget`, the output path, an optional theme, the standards, a fonts directory and an optional path for the generated Typst.
 `export.docx_page` ("Export Page to Word…") and `export.docx_component` ("Export Component to Word…") take `CommandArgs::ExportDocx(DocxExportArgs)`, which has a `target`, an `output` and `attributes`, and nothing of PDF's: no theme, standards, fonts directory or Typst path.
 
-A job holds a `Request`, PDF, DOCX or Kindle, over the same plan.
+A job holds a `Request`, PDF, DOCX, Kindle or EPUB, over the same plan.
 The plan is an article, or a book made from the component version's navigation (or the given navigation files, in their order), with the start page as a preface when the navigation does not list it, and each page once.
 The pages are parsed on a worker from their open buffers or files, their views are built on the engine thread, and their diagrams are rendered.
 Once no diagram is pending, `arrange` puts the views in the plan's order, and only then is the document made for its format.
@@ -577,6 +583,32 @@ A page that asks for `:export-read-only:` is refused for Kindle, since `ExportFo
 Both writers exist, AZW3 and KFX.
 The entry points are the app's Export Page to Kindle…, Export Component to Kindle… and Export Kindle Profile… commands, `adocfoundry-cli kindle` through `export_kindle_blocking`, and the MCP `export_kindle` tool.
 `[kindle]` is read by `kindle_settings.rs` (its module documentation is the schema) and `[kindle.profiles.<name>]` is a Kindle publication; nothing of `[pdf]` or `[docx]` is read for Kindle.
+
+Kindle and EPUB share the step that hands the arranged pages to `adoc-ebook` (`to_book`) and the step that writes a checked book to a temporary file renamed over the output through the job's commit (`write_book_file`).
+`export.epub_page` ("Export Page to EPUB…") and `export.epub_component` ("Export Component to EPUB…") take `CommandArgs::ExportEpub(EpubExportArgs)`, which has a `target`, an `output`, `attributes`, an optional `title`, `creator`, `language`, `identifier` and `cover`, and an optional `modified`, in seconds since the Unix epoch.
+`Engine::export_epub_blocking` serves front ends without an event loop.
+An EPUB output must be a `.epub` file, in any letter case, and a folder or a link there is refused.
+It is written to a temporary file beside the output and renamed over it through the job's commit, so a failed export leaves what was there.
+A page that asks for `:export-read-only:` is refused before anything is read, since `ExportFormat::Epub` carries no restriction, as for Kindle and HTML.
+The time the book is dated with, its `dcterms:modified` and the date of every archive entry, is the export's own `modified`, else the `SOURCE_DATE_EPOCH` environment variable, else the time of the export.
+The last is reported as an information note, not a warning, since exporting again then gives other bytes.
+A time outside 1980 to 2107 fails the export.
+Formulas are drawn as pictures for EPUB, as for Word and Kindle.
+`EpubExportArgs` also has a `publisher` and a `css`.
+An export takes each of `title`, `creator`, `language`, `identifier`, `publisher`, `cover` and `css` from its own arguments (a profile's), else from `[epub]`, else, for the first five, from the document.
+The date is its own `modified`, else `[epub] modified`, else `SOURCE_DATE_EPOCH`, else the time of the export, so a book built again is the same bytes when one is set.
+The user stylesheet is read through the export's file access on the engine thread and checked with `adoc_epub::check_stylesheet`.
+A stylesheet outside the folders the export may read, one that cannot be read, one that is not UTF-8 and one that imports or names anything fails the export with nothing written.
+`[epub]` is read by `epub_settings.rs` (`EpubSettings`, built without the `epub` feature too; its module documentation is the schema).
+Its keys are `style` (only `"default"`, so that a file may name it), `title`, `creator`, `language`, `identifier`, `publisher`, `cover` and `css` (paths relative to the first workspace root) and `modified` (a date such as `"2026-11-19"`, at midnight UTC, or a UTC time such as `"2026-11-19T10:30:00Z"`, from 1980 to 2107).
+An unknown key or a bad value is a warning when the settings are read, as for the other formats.
+`[epub.profiles.<name>]` (`EpubProfile`) is an EPUB publication.
+It has exactly one of `page`, `component` or `nav`, which repeats the content and never names another format's profile, as the Word and Kindle profiles do, an `output` (an `.epub` file inside the workspace, `<name>.epub` at the root when unset), `attributes`, and the metadata keys above with `modified`.
+A profile with an unknown key, such as another format's `format`, or an output that is not `.epub` is refused when the settings are read.
+One whose output, cover or stylesheet is outside the workspace is refused when it is used.
+`Engine::epub_profile_export_args(name)` gives the `EpubExportArgs`, `epub_profile_problems(name)` lists what is wrong (an unknown profile, paths outside the workspace, a missing cover or stylesheet, content not in the workspace) and `epub_profiles()` lists the names.
+Nothing in `[epub]` changes another format's output and no other format's settings change an EPUB, which `epub_settings_leave_other_formats_unchanged` holds; `epub_profiles_resolve_and_validate` holds the profiles.
+No front end reaches the EPUB commands yet: the app, the CLI and the MCP server do not name the `epub` feature.
 
 A blocking export that times out abandons its job through a per-job commit lock (`Commit`), which each writer takes to rename its file over the output.
 A timed-out export therefore never replaces the output afterwards, and one whose file was already in place reports success.
@@ -602,6 +634,7 @@ Remote images, unreadable files and files that are not images keep their address
 It exports the open buffer, and needs no Typst.
 
 `Engine::export_blocking(args, timeout)` runs the same job and waits, for the command-line `pdf`, and `Engine::is_exporting()` is true while a job is in flight.
+`Engine::export_epub_blocking(args, timeout)` is the same for EPUB; without the `epub` feature it fails as an unknown command.
 `Engine::export_docx_blocking(args, timeout)` is to DOCX what `export_blocking` is to PDF; without the `docx` feature it fails as an unknown command, as `export_blocking` does without `typst`.
 The settings' `[pdf]` table supplies the default theme, the themes and fonts directories, the site address and the standards.
 `Engine::profile_export_args(name)` turns a publication profile into export arguments.
@@ -1625,10 +1658,11 @@ See xref:building-and-releasing.adoc#notices[cargo xtask notices] for how the no
 
 == Engine features
 
-The engine has two Cargo features, `typst` and `git`.
-Both are on by default for the crate and off in `[workspace.dependencies]`, so each front end names the ones it wants.
+The engine has Cargo features `typst`, `docx`, `kindle`, `epub`, `git` and the `export` pipeline the formats share.
+They are on by default for the crate and off in `[workspace.dependencies]`, so each front end names the ones it wants.
 Without `git`, the engine behaves as with `[git] enabled = false`.
-Without `typst`, the export commands are not registered and `export_blocking` fails.
+Without `typst`, the PDF export commands are not registered and `export_blocking` fails; likewise the DOCX, Kindle and EPUB commands without `docx`, `kindle` and `epub`.
+The engine built with `epub` alone compiles `adoc-epub` and `adoc-ebook` and no Typst and no other exporter, which `cargo xtask layers` checks (`epub_builds_alone`) and CI's lint job compiles.
 
 == Navigation history
 

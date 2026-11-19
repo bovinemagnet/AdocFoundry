@@ -31,6 +31,8 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("adoc-git", 2),
     ("adoc-pdf", 2),
     ("adoc-docx", 2),
+    ("adoc-ebook", 2),
+    ("adoc-epub", 2),
     ("adoc-kindle", 2),
     ("adoc-audit", 2),
     ("adoc-impact", 2),
@@ -50,6 +52,10 @@ pub const SAME_LAYER_ALLOWED: &[(&str, &str)] = &[
     ("adoc-pdf", "adoc-render"),
     ("adoc-docx", "adoc-render"),
     ("adoc-kindle", "adoc-render"),
+    ("adoc-ebook", "adoc-render"),
+    ("adoc-kindle", "adoc-ebook"),
+    ("adoc-epub", "adoc-ebook"),
+    ("adoc-epub", "adoc-render"),
 ];
 
 /// Crates whose logic the engine orchestrates: front ends reach them only through
@@ -129,8 +135,9 @@ const ADOC_AUDIT_FORBIDDEN_PATHS: &[&str] = &[
     "std::thread",
 ];
 
-/// What `adoc-kindle` must never name: every stage of a Kindle export runs in process, with no
-/// converter, reader or other program and no network (Kindle PRD §7).
+/// What `adoc-kindle`, and `adoc-ebook`, whose book model it writes, must never name: every
+/// stage of a Kindle export runs in process, with no converter, reader or other program and no
+/// network (Kindle PRD §7).
 const ADOC_KINDLE_FORBIDDEN_PATHS: &[&str] = &[
     "std::process",
     "Command::new",
@@ -274,8 +281,11 @@ pub fn check_sources(name: &str, files: &BTreeMap<PathBuf, String>) -> Vec<Strin
         "adoc-lang" => ADOC_LANG_FORBIDDEN_PATHS,
         // The impact rules are pure as the audit is: no files, processes, network or threads.
         "adoc-audit" | "adoc-impact" => ADOC_AUDIT_FORBIDDEN_PATHS,
-        // Kindle export runs in process: no process and no network (Kindle PRD §7).
-        "adoc-kindle" => ADOC_KINDLE_FORBIDDEN_PATHS,
+        // Kindle export runs in process: no process and no network (Kindle PRD §7), its shared
+        // book model included.
+        "adoc-kindle" | "adoc-ebook" => ADOC_KINDLE_FORBIDDEN_PATHS,
+        // So does EPUB export (EPUB PRD §7).
+        "adoc-epub" => ADOC_KINDLE_FORBIDDEN_PATHS,
         _ => return Vec::new(),
     };
     let mut violations = Vec::new();
@@ -429,6 +439,8 @@ const LEAN_EXCLUDED: &[&str] = &[
     "adoc-pdf",
     "adoc-math",
     "adoc-git",
+    "adoc-ebook",
+    "adoc-epub",
     "adoc-kindle",
     "typst",
     "gix",
@@ -510,6 +522,30 @@ fn kindle_engine_packages(root: &Path) -> Result<BTreeSet<String>, String> {
     )
 }
 
+/// The packages the engine compiles with EPUB export alone: `--no-default-features --features
+/// epub`.
+fn epub_engine_packages(root: &Path) -> Result<BTreeSet<String>, String> {
+    build_packages(
+        root,
+        "adoc-engine",
+        &["--no-default-features", "--features", "epub"],
+    )
+}
+
+/// What EPUB export must never compile, in `adoc-epub` or in the engine built with `epub`
+/// alone: books are written through the shared book model, never through another format's
+/// exporter or Typst (EPUB PRD §8).
+const EPUB_EXCLUDED: &[&str] = &["adoc-pdf", "adoc-docx", "adoc-kindle", "adoc-math", "typst"];
+
+/// A violation for each crate of [`EPUB_EXCLUDED`] in an EPUB build.
+fn epub_violations(packages: &BTreeSet<String>) -> Vec<String> {
+    EPUB_EXCLUDED
+        .iter()
+        .filter(|name| packages.contains(**name))
+        .map(|name| format!("EPUB export builds {name}; it needs no other exporter or Typst"))
+        .collect()
+}
+
 /// What Kindle export must never compile, in `adoc-kindle` or in the engine built with `kindle`
 /// alone: books are written from the view tree, never through another format's exporter or
 /// Typst (Kindle PRD §9).
@@ -526,11 +562,16 @@ fn kindle_violations(packages: &BTreeSet<String>) -> Vec<String> {
 
 /// Each package Kindle export builds, with its licence expression, from `cargo tree`.
 fn kindle_licences(root: &Path) -> Result<Vec<(String, String)>, String> {
+    licences(root, "adoc-kindle")
+}
+
+/// Each package `package` builds, with its licence expression, from `cargo tree`.
+fn licences(root: &Path, package: &str) -> Result<Vec<(String, String)>, String> {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let output = Command::new(cargo)
         .current_dir(root)
         // Every platform's dependencies, whichever the check runs on.
-        .args(["tree", "--locked", "--target", "all", "-p", "adoc-kindle"])
+        .args(["tree", "--locked", "--target", "all", "-p", package])
         .args([
             "-e",
             "normal,build",
@@ -591,6 +632,18 @@ fn kindle_licence_violations(licences: &[(String, String)]) -> Vec<String> {
         .collect()
 }
 
+/// A violation for each package of EPUB export that may be used only under a copyleft licence,
+/// or declares none (EPUB PRD §7, as Kindle's).
+fn epub_licence_violations(licences: &[(String, String)]) -> Vec<String> {
+    licences
+        .iter()
+        .filter(|(_, licence)| !permissive(licence))
+        .map(|(name, licence)| {
+            format!("EPUB export builds {name}, licensed `{licence}`; no copyleft is allowed")
+        })
+        .collect()
+}
+
 /// Runs every check over the workspace rooted at `root`.
 pub fn run(root: &Path) -> Result<Vec<String>, String> {
     let crates = root.join("crates");
@@ -627,7 +680,10 @@ pub fn run(root: &Path) -> Result<Vec<String>, String> {
         "adoc-kindle",
     )?));
     violations.extend(kindle_violations(&kindle_engine_packages(root)?));
+    violations.extend(epub_violations(&default_build_packages(root, "adoc-epub")?));
+    violations.extend(epub_violations(&epub_engine_packages(root)?));
     violations.extend(kindle_licence_violations(&kindle_licences(root)?));
+    violations.extend(epub_licence_violations(&licences(root, "adoc-epub")?));
     Ok(violations)
 }
 
@@ -962,15 +1018,43 @@ libc = "=0.2.0"
         assert_eq!(check_sources("adoc-kindle", &sources).len(), 2);
     }
 
-    /// Kindle PRD §12 test 19: `adoc-kindle` names no process and no network path, and nothing
-    /// it builds is under a copyleft licence (`cargo deny` checks the rest of the tree).
+    /// EPUB PRD §11 test 5: EPUB export alone, in `adoc-epub` and in the engine built with
+    /// `epub` and no other format, compiles neither Typst nor another exporter.
+    #[test]
+    fn epub_builds_alone() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let packages = default_build_packages(&root, "adoc-epub").unwrap();
+        assert!(packages.contains("adoc-ebook"), "{packages:?}");
+        assert_eq!(epub_violations(&packages), Vec::<String>::new());
+
+        let engine = epub_engine_packages(&root).unwrap();
+        assert!(engine.contains("adoc-epub"), "{engine:?}");
+        assert_eq!(epub_violations(&engine), Vec::<String>::new());
+
+        let with_others: BTreeSet<String> = ["adoc-epub", "adoc-kindle", "typst"]
+            .map(str::to_owned)
+            .into();
+        assert_eq!(
+            epub_violations(&with_others),
+            [
+                "EPUB export builds adoc-kindle; it needs no other exporter or Typst",
+                "EPUB export builds typst; it needs no other exporter or Typst",
+            ]
+        );
+    }
+
+    /// Kindle PRD §12 test 19: `adoc-kindle`, and `adoc-ebook`, whose book model it writes,
+    /// name no process and no network path, and nothing Kindle export builds is under a
+    /// copyleft licence (`cargo deny` checks the rest of the tree).
     #[test]
     fn kindle_is_in_process() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let mut sources = BTreeMap::new();
-        collect_sources(&root.join("crates/adoc-kindle/src"), &mut sources);
-        assert!(sources.len() > 5, "{}", sources.len());
-        assert_eq!(check_sources("adoc-kindle", &sources), Vec::<String>::new());
+        for (name, least) in [("adoc-kindle", 5), ("adoc-ebook", 4)] {
+            let mut sources = BTreeMap::new();
+            collect_sources(&root.join("crates").join(name).join("src"), &mut sources);
+            assert!(sources.len() > least, "{name}: {}", sources.len());
+            assert_eq!(check_sources(name, &sources), Vec::<String>::new());
+        }
 
         let licences = kindle_licences(&root).unwrap();
         assert!(
@@ -986,6 +1070,36 @@ libc = "=0.2.0"
             ("either".to_owned(), "Apache-2.0 OR GPL-2.0-only".to_owned()),
         ];
         assert_eq!(kindle_licence_violations(&copyleft).len(), 3);
+    }
+
+    /// EPUB PRD §11 test 22: `adoc-epub`, and `adoc-ebook`, whose book model it writes, name
+    /// no process and no network path, and nothing EPUB export builds is under a copyleft
+    /// licence (`cargo deny` checks the rest of the tree).
+    #[test]
+    fn epub_is_in_process() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        for (name, least) in [("adoc-epub", 5), ("adoc-ebook", 4)] {
+            let mut sources = BTreeMap::new();
+            collect_sources(&root.join("crates").join(name).join("src"), &mut sources);
+            assert!(sources.len() > least, "{name}: {}", sources.len());
+            assert_eq!(check_sources(name, &sources), Vec::<String>::new());
+        }
+        // A source naming a process is caught.
+        let mut sources = BTreeMap::new();
+        sources.insert(
+            PathBuf::from("x.rs"),
+            "std::process::Command::new(\"epubcheck\")".to_owned(),
+        );
+        assert_eq!(check_sources("adoc-epub", &sources).len(), 2);
+
+        let licences = licences(&root, "adoc-epub").unwrap();
+        assert!(
+            licences.iter().any(|(name, _)| name == "roxmltree"),
+            "{licences:?}"
+        );
+        assert_eq!(epub_licence_violations(&licences), Vec::<String>::new());
+        let copyleft = [("boko".to_owned(), "GPL-3.0-or-later".to_owned())];
+        assert_eq!(epub_licence_violations(&copyleft).len(), 1);
     }
 
     /// The Word looks PRD, §9 test 1: themes load without Typst, so Word export can read them

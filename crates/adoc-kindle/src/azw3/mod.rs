@@ -8,7 +8,7 @@
 //! into flows, the pictures, `RESC`, `FLIS`, `FCIS` and the end-of-file record. Every count and
 //! offset is checked, and the finished file is read back ([`check`]) before it is returned.
 
-use crate::book::{KindleBook, Target, TocEntry};
+use crate::{KindleBook, Target, TocEntry};
 use crate::{KindleError, KindleFormat};
 
 mod index;

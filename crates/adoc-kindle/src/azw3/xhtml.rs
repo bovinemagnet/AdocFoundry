@@ -3,7 +3,7 @@
 //! Anchors are recorded where their element starts; internal links are written as fixed-width
 //! placeholders and filled in once every fragment's place is known.
 
-use crate::book::{Block, Cell, Chapter, Inline, KindleBook, Link, Note, ParagraphClass, Target};
+use crate::{Block, Cell, Chapter, Inline, KindleBook, Link, Note, ParagraphClass, Target};
 
 /// A link not yet placed: `kindle:pos:fid:ZZZZ:off:ZZZZZZZZZZ`, the same length as the link it
 /// becomes.
@@ -211,7 +211,7 @@ impl Writer<'_> {
                 self.blocks(blocks);
                 self.close("blockquote");
             }
-            Block::Aside { anchor, blocks } => {
+            Block::Aside { anchor, blocks, .. } => {
                 self.open("div", Some("aside"), anchor.as_deref());
                 self.blocks(blocks);
                 self.close("div");
@@ -373,6 +373,8 @@ impl Writer<'_> {
             }
             Inline::Image { asset, alt } => self.image(*asset, alt),
             Inline::LineBreak => self.out.push_str("<br/>"),
+            // Never made for a Kindle book: written as its content.
+            Inline::Styled { content, .. } => self.inlines(content),
         }
     }
 }

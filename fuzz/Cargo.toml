@@ -17,6 +17,7 @@ adoc-core = { path = "../crates/adoc-core" }
 adoc-dom = { path = "../crates/adoc-dom" }
 # Only for `resource_id_string`, the writer of resource ids the MCP server uses.
 adoc-engine = { path = "../crates/adoc-engine", default-features = false }
+adoc-epub = { path = "../crates/adoc-epub", features = ["test-support"] }
 adoc-kindle = { path = "../crates/adoc-kindle", features = ["test-support"] }
 adoc-math = { path = "../crates/adoc-math" }
 adoc-model = { path = "../crates/adoc-model" }
@@ -79,6 +80,13 @@ bench = false
 [[bin]]
 name = "kindle_write"
 path = "fuzz_targets/kindle_write.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "epub_write"
+path = "fuzz_targets/epub_write.rs"
 test = false
 doc = false
 bench = false

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft, 2026-11-16; not yet approved for implementation. The open decisions in §14 are settled in the work package they affect |
+| Status | Implemented, 2026-11-19, as packages 0 and E1–E9 (stack #732); the open decisions of §14 are settled in §15. Manual checks in reading applications remain (`docs/qa/epub.md`) |
 | Date | 2026-11-16 |
 | Scope | A native publication backend that writes reflowable EPUB 3.3 books for a page, an Antora component version or selected navigation files, entirely in Rust, through the engine, CLI, desktop app and MCP server |
 | Repository | [bovinemagnet/AdocFoundry](https://github.com/bovinemagnet/AdocFoundry) |
@@ -139,6 +139,7 @@ title = "Product User Guide"
 | --- | --- | --- |
 | `crates/adoc-engine/src/export.rs` | `ExportTarget`, the article and book plan (`PlanItem`), start-page handling, navigation order, deduplication, parsing from open buffers or disk, resolved views, diagram workers, progress, `ExportDiagnostic` and output safety | Most of it is gated by `feature = "typst"` today. EPUB uses the format-neutral plan #619 extracts and never forks a second planner |
 | `crates/adoc-engine/src/profiles.rs` | `ProfileContent` (`Page`, `Component`, `Navigation`), output confinement and conflict checks | The selection model and path rules; PDF settings and profiles are untouched |
+| `crates/adoc-ebook` | `Book::build`: an article or the plan's pages mapped to one `Book` (chapters in reading order, blocks and inlines, a nested table of contents, generated anchors, in-book links, footnotes, metadata with a stable identifier, embedded pictures with SVG drawn as PNG) | EPUB writes the same book Kindle export writes (§15). A choice that suits one format only is an option of the mapping, never a fork |
 | `crates/adoc-render/src/view.rs` | `ViewTree`, `ViewKind`, `ViewInline`, `ViewImage`, `DiagramView`, `TocEntry`, footnotes, attributes, resolved xrefs and source spans | The exporter's only input. AsciiDoc is not parsed a second time |
 | `crates/adoc-render/src/html.rs` | The semantic HTML mapping and escaping of `to_html` | A reference. EPUB writes its own well-formed XHTML with EPUB navigation and chapter-relative links; it does not zip the standalone HTML, and `to_html`'s output does not change |
 | The PDF entry points in the CLI, the app and the MCP server | Commands, dialogs, notifications and the write gate | EPUB entry points sit beside them |
@@ -158,6 +159,7 @@ L4   adocfoundry / adocfoundry-cli / adoc-mcp
 L3   adoc-engine  | shared publication planning (#619); parse + views +
                   | diagram workers; output safety; EPUB options and profiles
 L2   adoc-epub    | EPUB 3.3 XHTML / OPF / OCF / navigation / CSS / media writer
+L2   adoc-ebook   | the book model shared with Kindle export: pages mapped to one Book
 L2   adoc-render  | shared ViewTree, ViewKind, ViewInline and source spans
 L1   existing parser, DOM, Antora and index crates
 ```
@@ -165,11 +167,12 @@ L1   existing parser, DOM, Antora and index crates
 | Crate | Responsibility |
 | --- | --- |
 | `adoc-epub` (L2, new) | Turn a publication's view trees and typed options into an EPUB: content documents, the navigation document, the package document, the container, the stylesheet and media, with a structural validator and typed diagnostics carrying source locations. Headless; no engine, worker, UI or LSP types, no process and no network |
+| `adoc-ebook` (L2) | The reflowable book model, moved out of `adoc-kindle` (§15): `Book::build` maps the view trees to chapters, blocks, inlines, a table of contents, anchors, links, notes, metadata and pictures. Read by `adoc-kindle` and `adoc-epub` |
 | `adoc-render` (L2) | Unchanged in behaviour. A shared pure rendering helper may be factored out only if `to_html`'s output and tests are preserved |
 | `adoc-engine` (L3) | The shared publication plan; the optional `epub` feature; EPUB commands, arguments and events; `[epub]` settings and profiles; the worker lifecycle; safe output |
 | `adocfoundry`, `adocfoundry-cli`, `adoc-mcp` (L4) | The entry points of §5.8 |
 
-- `adoc-epub` sits at **L2**. It may depend on `adoc-render` through a new pair in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`, as `adoc-pdf` does, and on lower layers. It must not depend on `adoc-engine`, GPUI, Typst, `adoc-pdf`, `adoc-docx` or `adoc-kindle`.
+- `adoc-epub` sits at **L2**. It may depend on `adoc-ebook` and `adoc-render` through new pairs in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`, as `adoc-kindle` does, and on lower layers. It must not depend on `adoc-engine`, GPUI, Typst, `adoc-pdf`, `adoc-docx` or `adoc-kindle`.
 - The crate needs an entry in `LAYERS`, an entry in `[workspace.dependencies]`, and a mention in `AGENTS.md`, `README.md`, the design document and the developer documentation's crate table and diagram (`architecture.adoc`, `crate-layers.mmd`), which `every_crate_is_documented` in `xtask` checks.
 - The engine's `epub` feature is opt-in and independent of `typst`, `git` and every other format's feature. It is off in `[workspace.dependencies]`, so each front end names it: the released app and CLI do, and `adoc-ls` does not.
 
@@ -269,7 +272,224 @@ Each is settled before work starts on the package it affects, and the outcome is
 
 ## 15. Implementation notes
 
-None yet. Each work package records here where the implementation departs from this document and how the open decisions of §14 were settled.
+Each work package records here where the implementation departs from this document and how the open decisions of §14 were settled.
+
+### Before E1: the shared book model
+
+The epic starts with a package of its own, before E1: Kindle export's book model moved out of `adoc-kindle` into a new L2 crate, `adoc-ebook`, so that EPUB and Kindle map pages the same way instead of each through its own mapper.
+
+- `book.rs`, `map.rs`, `media.rs` and `metadata.rs` moved unchanged in behaviour, with neutral names: `Book`, `Document`, `Page`, `Plan`, `BookItem`, `Options`, `Diagnostic`, `Severity`.
+- `adoc-kindle` re-exports them under its old names, and Kindle's bytes are unchanged (Kindle PRD §16).
+- `adoc-ebook` is held to Kindle's forbidden paths: no process and no network.
+- This changes two statements above:
+  - §6 and §9 take the view trees as the exporter's only input. `adoc-epub` takes them through `adoc-ebook`'s `Book` instead.
+  - §5.4 asks for chapter and anchor identifiers scoped by component and version. The shared model names them by position in the book (`c<n>` for a chapter, `c<n>-a<m>` for an id a page defines, `c<n>-n<k>` and `c<n>-r<k>` for a footnote and its first mark). These names are deterministic, unique in the book and never taken from a path, which is what the requirement protects; they are not stable when chapters are added before them.
+- Where EPUB needs a distinction Kindle export does not make, such as admonition kinds, nested tables or a table's footer rows, the mapping gains an option whose default is Kindle's present behaviour. The packages that need one (E3, E5, E6) check Kindle's bytes again.
+
+
+### E1 (#638): the container and the package
+
+- **ZIP and XML writers (§14):** both in-house, in `adoc-epub`, as Word export's are:
+  - `zip.rs` writes the archive in order into memory: `mimetype` first and stored with no extra field, every other file deflated through `flate2`, CRC-32 through `crc32fast`. There are no data descriptors and no 64-bit extensions.
+  - An entry name must be a relative path of ASCII letters, digits, `.`, `-` and `_`. An unsafe or repeated name is refused.
+  - `xml.rs` escapes every document string and replaces the characters XML 1.0 forbids.
+  - Every XML file is parsed with `roxmltree`, already in the tree, before the bytes are returned. A file that is not well-formed fails the export (`EpubError::Invalid`) rather than being packed.
+- **The modification time is input.** `EpubOptions` has no default: it needs a `Modified`, a UTC time to the second between 1980 and 2107, the years a ZIP archive can date. It gives `dcterms:modified` and every entry's date, so the crate reads no clock, and the same input and time give the same bytes. Choosing the time (a profile's, else `SOURCE_DATE_EPOCH`, else now with a diagnostic) is the engine's job, in E2.
+- **The names in the package are fixed:** `META-INF/container.xml`, `EPUB/package.opf`, `EPUB/nav.xhtml` and `EPUB/text/c<n>.xhtml`, from the book's own chapter ids.
+- **Chapters are minimal for now.** E1 writes headings as headings and each other block as a paragraph of its text; E3 writes semantic XHTML.
+- `dc:date` is not written, since `revdate` is free text and EPUB needs a date. E6 decides.
+- The acceptance tests are `epub_package_is_valid_ocf`, `epub_text_is_escaped` and `epub_output_is_deterministic` (`crates/adoc-epub/tests/package.rs`). They read the archive back with the crate's own reader (`testing`, feature `test-support`), so they never trust a ZIP library to forgive the bytes.
+
+
+### E2 (#639): the engine's `epub` feature
+
+- **The feature:** `adoc-engine`'s `epub` feature turns on the shared export pipeline, `adoc-epub` and `adoc-ebook`.
+  - It is a default of the engine crate, and off in `[workspace.dependencies]`. No front end names it until E8, so the app's palette test lists the two new commands as exceptions, as Kindle's were.
+  - `epub_builds_alone` (in `xtask`) and CI's lint job hold the engine built with `epub` alone to no Typst and no other exporter.
+- **No new planner:** the shared plan (#619) was already extracted by the DOCX epic, so this package is shaped like Kindle's K2. Kindle and EPUB share the hand-over of the arranged pages to `adoc-ebook` (`to_book`) and the write to a temporary file renamed over the output through the job's commit (`write_book_file`).
+- **The commands:** `export.epub_page` and `export.epub_component`, with `EpubExportArgs`, and `Engine::export_epub_blocking`. The output must be an `.epub` file (any letter case), not a folder or a link.
+- **Read-only pages are refused:** an EPUB carries no editing restriction, so `ExportFormat::Epub` refuses a page asking for one before anything is read, as Kindle and HTML do.
+- **The modification time:**
+  - It is chosen in this order: the arguments' `modified` (a profile's, from E7), then `SOURCE_DATE_EPOCH`, then the time of the export.
+  - The time of the export is reported as an information note, not a warning, since an interactive export is not wrong for being unrepeatable. So `--fail-on warning` does not fail on it.
+  - A time outside 1980 to 2107 fails the export.
+- **No settings yet:** E7 adds `[epub]` and its profiles, so this package takes metadata from the arguments only.
+- **Tests:**
+  - In `crates/adoc-engine/tests/epub_export.rs`: `epub_and_pdf_select_the_same_pages` and `epub_failed_export_keeps_existing_output`, with `epub_outputs_must_be_epub_files` and `epub_refuses_a_read_only_page` beside them.
+  - `epub_builds_alone` in `xtask`.
+  - A unit test of the time's order.
+
+
+### E3 (#640): semantic XHTML
+
+- **Sharing with `to_html` (§14):** a separate writer, `adoc-epub`'s `xhtml.rs`, from the shared `Book`. `to_html` is untouched.
+- **Per-format choices in the shared mapping:** `adoc_ebook::Options::format` (`Format::Kindle`, the default, or `Epub`). For EPUB:
+  - a table inside a table's cell stays a table, which Kindle turns into lines of text with a warning;
+  - keys, buttons and menus are `Inline::Styled`, written as `kbd` and `span class="button"`/`"menu"`, which Kindle writes as code and strong text;
+  - a diagnostic names the format it is about (`Format::book`).
+
+  `write_epub` always makes the book for EPUB.
+- **Distinctions every format keeps:** the model gained `AsideKind` on `Block::Aside` (each admonition kind, a sidebar or an example) and `footer` on table rows. Kindle's writers ignore both, and Kindle's AZW3 and KFX bytes were compared again and are unchanged.
+- **The markup:**
+  - Admonitions, sidebars and examples are a `div` with a class (`admonition note`, `sidebar`, `example`), not an `aside`, since some reading systems hide an `aside` from the text as a note.
+  - Footnotes are `aside epub:type="footnote"` in a `section epub:type="footnotes"` at the chapter's end, with `noteref` marks.
+  - A page break is `hr class="page-break"`.
+  - No link is ever written inside a link.
+- **Passthrough (§14):** shown as text, with a located warning, never as markup. This is the same choice as Kindle (K5) and Word (D3). An unsupported block is its source, with a located warning.
+- **Not yet carried:**
+  - roles, a block's `lang` and a table's column alignment, which the shared model does not hold;
+  - a table caption, which is a `caption` paragraph before the table, not a `caption` element.
+
+  A later package can add them to the model, an option at a time.
+- **Links within and between chapters:** written here (`#anchor` in the chapter, `c<n>.xhtml#anchor` across chapters). E4 tests them over a book.
+- **Pictures:** written as their description until E5 embeds them.
+
+
+### E4 (#641): navigation and links
+
+- **The navigation document** holds:
+  - exactly one `toc` navigation, nested as the plan is: parts, then their pages and navigation headings, then each page's sections two levels deep;
+  - hidden landmarks, `toc` and `bodymatter`, with the cover added by E5.
+
+  No NCX is written.
+- **Links:**
+  - In a chapter, a reference is a fragment. Across chapters it is `c<n>.xhtml#…`, since the chapters share a folder. The navigation document's links are `text/c<n>.xhtml#…`.
+  - A reference to a page outside the book uses the page's published address (`page_urls`, which the engine fills from the site's URL) when there is one. Otherwise it is text with a located warning, as is a reference to an id the book does not define.
+  - Ids are the shared model's (§15, "Before E1"), so two pages defining one id keep their own. A page reached through an alias or from another module is linked like any other.
+- **Splitting large pages (§14):** never, in this release. One page is one content document, so no link or spine entry depends on a rule for where a page breaks.
+- **`testing::assert_links_resolve`** checks every link as a reading system follows it, and becomes part of E9's validator:
+  - a link inside the book must lead to a document of the manifest and, with a fragment, to an element of that document with that id;
+  - any other link must be an address of `testing::SCHEMES`;
+  - nothing names `file:` or `antora:`.
+- **Tests:**
+  - `epub_nav_matches_the_plan` (in `adoc-epub`): parts, headings and pages at three depths, with a page's sections.
+  - `epub_internal_links_resolve` (in the engine, over the Word and Kindle reference fixtures with a page alias and a missing id added): links across modules, through an alias, to an id two pages define, out of the book, and to a missing id.
+
+
+### E5 (#642): pictures, diagrams, formulas and the cover
+
+- **Pictures** come from the shared model's `media.rs`:
+  - read through the export's `FileAccess`, recognised by their bytes, checked whole and within limits;
+  - kept once however often shown;
+  - a remote picture is never fetched.
+
+  Each is written once as `EPUB/images/i<n>.<extension>`, with its media type in the manifest. In a chapter it is an `img` with its description as `alt`, in a `figure` for a block picture. No `width` or `height` is written, so the reading system sizes it to the screen.
+- **SVG (§14):** rasterised by `resvg`, at twice its size on white, as Word and Kindle do. Nothing is loaded from outside the file, and no SVG is packed, so no script, external reference or entity can reach the book. Sanitised SVG is not offered: a rasterised drawing loses nothing a reader needs, and the PNG is safe by construction.
+- **Diagrams drawn by external tools (§14):** §7 covers the EPUB writing alone, as Kindle's K6 settled. Diagrams are embedded as the export's diagram workers drew them, Graphviz, PlantUML and D2 from tools on `PATH` among them, as for PDF, Word and Kindle. One not drawn is its source, with a warning.
+- **MathML (§14):** not in the first release. A formula is the drawing the STEM provider made, with its source as the description. With no drawing (a build without Typst) it is its source as code, with a warning.
+- **The cover:**
+  - It is the export's own, else the first page's `front-cover-image`.
+  - It is listed with `properties="cover-image"`, shown alone in `EPUB/cover.xhtml`, first in the spine, with a `cover` landmark.
+  - `title-logo-image` is not used, since EPUB has no title page.
+- **Message wording:** the shared mapping's message for a file that is not a picture names the format's reader (`Format::reader`). Kindle's wording, "a Kindle", is unchanged, and Kindle's bytes were compared again.
+- **`testing::assert_links_resolve`** also checks that every `img` is an image of the manifest and has an `alt`.
+- **Tests:**
+  - `epub_media_is_embedded`: a cover, a PNG shown twice and held once, a JPEG, a diagram, and display and inline formulas.
+  - `epub_bad_assets_are_reported`: an oversized, a truncated, a missing, a remote and an outside picture, text named as a PNG, and an SVG with a script and a `file:` link.
+
+
+### E6 (#643): the stylesheet, metadata and accessibility
+
+- **The default stylesheet** is `EPUB/css/book.css`, in the crate as `src/book.css`, and every document links it. It sets readable, reflowable type, headings, lists, wrapped code, tables, figures and footnotes, and leaves font, size and margins to the reader. It names nothing outside the book.
+- **Validating user CSS (§14):** a conservative check, not a CSS parser, and the CSS is refused, not filtered.
+  - `EpubOptions::stylesheet` is written as `EPUB/css/user.css`, linked after the default so it overrides it.
+  - `check_stylesheet` refuses, as `EpubError::Invalid`:
+    - `@import` and `url(`, since no file of the book is the user's to name;
+    - `@font-face`, `@namespace`, `expression(`, `javascript:`, `-moz-binding`, `behavior` and markup;
+    - a backslash escape, which could hide any of these;
+    - more than 256 KB.
+  - E7 passes a stylesheet from `[epub]`.
+- **Default identifier (§14):** derived, never refused. When the export gives none, it is the shared model's stable `urn:uuid:` from the title, authors and version. The same book keeps its identifier from one export to the next, and the documentation says so.
+- **Metadata:**
+  - Added: `dc:subject` from `keywords`, and `dc:date` from `revdate` only when it is `CCYY`, `CCYY-MM` or `CCYY-MM-DD`; free text is left out.
+  - Rights and a subject given in a profile come with E7's profile options, if needed.
+  - A missing title or language, or a language that is no BCP 47 tag, gives a warning saying what was used. This is for an EPUB only: a Kindle book's diagnostics are unchanged.
+- **Accessibility:**
+  - **Metadata:** only what the content shows:
+    - `schema:accessMode` textual, and visual where there are pictures;
+    - `schema:accessibilityFeature` `tableOfContents`, and `structuralNavigation` where there are headings;
+    - `schema:accessibilityHazard` `unknown`;
+    - a summary saying it has not been checked against a standard.
+
+    No conformance is claimed.
+  - **Warnings, for an EPUB at the line concerned:**
+    - a picture with no description of its own, whose file name then stands for it. `adoc-render` gained `ViewImage::has_default_alt` for this, an additive query that leaves `to_html` as it was.
+    - a section that skips a heading level;
+    - a table with no header row.
+- **Kindle's bytes** were compared again and are unchanged.
+
+
+### E7 (#644): settings and profiles
+
+- **`[epub]`** (`crates/adoc-engine/src/epub_settings.rs`, built without the `epub` feature too):
+  - `title`, `creator`, `language`, `identifier` and `publisher`;
+  - `cover` and `css`, relative to the first root;
+  - `modified`, a date or a UTC time from 1980 to 2107, so books built again are the same bytes;
+  - `style`, where only `"default"` is accepted, so §5.7's example reads.
+
+  An export takes each value from its own arguments (a profile's), else `[epub]`'s, else the document's. Its date comes from its own `modified`, else `[epub] modified`, else `SOURCE_DATE_EPOCH`, else now.
+- **Profile sharing (§14):** each profile repeats its content, as Word's and Kindle's do (Kindle's K7). `[epub.profiles.<name>]` has:
+  - exactly one of `page`, `component` or `nav`;
+  - an `output`, an `.epub` file inside the workspace, `<name>.epub` by default;
+  - `attributes`, the metadata keys, `cover`, `css` and `modified`.
+
+  It reuses the PDF profiles' helpers (`profile_content`, `profile_attributes`, `profile_target`, `target_problems`).
+- **When a profile is refused:**
+  - an unknown key, another format's `format` among them, or an output that is not `.epub`: when the settings are read;
+  - an output, cover or stylesheet outside the workspace: when the profile is used (`EngineError::Refused`).
+- **The engine's API:** `Engine::epub_profile_export_args`, `epub_profile_problems`, `epub_profiles`, and the command `export.epub_profile`. Through E8, the app's palette test lists the command as an exception.
+- **The user stylesheet** is read on the engine thread through the export's `FileAccess` and checked with `check_stylesheet`. One outside the readable folders, unreadable, not UTF-8 or reaching outside the book fails the export, and nothing is written.
+- **Tests:**
+  - `epub_profiles_resolve_and_validate`: page, component and navigation profiles with `[epub]` defaults; refusals when read and when used; the command; problems found without exporting.
+  - `epub_settings_leave_other_formats_unchanged`: an EPUB profile selects what the equivalent PDF profile does. `[pdf]`, `[docx]` and `[kindle]` leave an EPUB's bytes as they were, and `[epub]` leaves a Kindle book's.
+- **User documentation** of `[epub]` comes with the front ends in E8.
+
+
+### E8 (#645): the CLI, the app and the MCP server
+
+- **CLI:**
+  - `adocfoundry-cli epub <file|component-dir> [--root] [--component] [--output <file.epub>] [--fail-on]`, and `epub --profile <name>`. These share target selection and reporting with `pdf`, `docx` and `kindle`.
+  - An output that is not `.epub` is refused before anything is read (exit 2).
+  - **`--fail-on` (all formats):** an error always fails, and a warning fails only under `--fail-on warning`. An information note never fails. Before, `--fail-on warning` failed on any diagnostic, and EPUB's "dated with the time of the export" note would have failed every undated export. The doc comment already said "at least as severe".
+- **The app:**
+  - Export Page to EPUB…, Export Component to EPUB… and Export EPUB Profile…, in the File menu and the palette, with the save dialog, the protection question before it, and the result notification.
+  - After an EPUB export the notification offers no Open button, as the other formats' do (`opens_after_export`), since §5.8 says no reading application is launched. This is a choice the maintainer may reverse: Open launches nothing unless clicked.
+  - The palette test's exceptions from E2 and E7 are gone.
+- **MCP:**
+  - `export_epub`, a write tool, listed and callable only with `--allow-write`. It takes exactly one of `path`, `component` or `profile`, and an `output` confined to the roots: not a link, not an indexed file, `.epub` only.
+  - Its answer holds `output`, `pages`, `sources`, `warnings` and `protected`, as PDF's and Word's do.
+  - A read-only page is refused with `export_protection_unsupported`.
+  - It has no metadata arguments: a profile gives them, as for Kindle.
+- **Documentation:**
+  - user pages `epub-export.adoc`, with the `[epub]` settings in `settings.adoc` and the `epub` command and `export_epub` tool in `command-line.adoc` and `mcp-server.adoc`, and EPUB beside Kindle in `read-only-exports.adoc` and `pdf-export.adoc`;
+  - the README;
+  - `docs/qa/epub.md`, the manual checks in reading applications.
+- **Tests:**
+  - `epub_cli_exports_and_gates` (`crates/adocfoundry-cli/tests/cli.rs`);
+  - `epub_mcp_export_is_write_gated` (`crates/adoc-mcp/tests/epub.rs`);
+  - `epub_app_exports_through_engine` (`crates/adocfoundry/src/ui_tests.rs`).
+
+
+### E9 (#646): conformance, interoperability and release QA
+
+- **The in-process validator** is `adoc_epub::validate(bytes)` in `src/validate.rs`. It checks:
+  - the container and the package;
+  - the manifest, against the archive and media types;
+  - the spine and the navigation;
+  - well-formed XML;
+  - every link, picture and stylesheet reference.
+
+  It reads with bounds checks, so a damaged archive gives problems, never a panic. `write_epub` and `write_book` run it on every book before returning it, as Kindle's writers check theirs. `testing` keeps its own reader, so the tests check the validator too: `the_validator_finds_what_breaks_a_book` damages a good book eighteen ways. The validator certifies no conformance, and the documentation says so.
+- **EPUBCheck (§14):** an optional job of its own in CI, `epubcheck`, like veraPDF's `pdf-standards`.
+  - It runs a pinned release (5.4.0, checked against its SHA-256), with `--failonwarnings`, on the reference book, the book fixture and the reference article, each dated by a fixed `SOURCE_DATE_EPOCH`.
+  - It is the only job that runs Java. No test and no build needs EPUBCheck, which keeps §7.
+  - `packaging/test_workflows.py`'s `EpubCheck` holds both rules.
+- **The acceptance tests:**
+  - `epub_is_in_process` (`xtask`): `adoc-epub` and `adoc-ebook` name no process or network, and nothing EPUB export builds is copyleft.
+  - `epub_reference_book_is_complete`: the Word reference book with the Kindle fixture laid over it, with `[epub]` settings. It passes the validator and the link check, holds every page's text and pictures, the cover, footnotes, tables and code, reports the missing picture, and is the same bytes from another engine in another folder and from its profile.
+  - `epub_large_book_is_bounded`: 600 pages and 50 pictures, within Kindle's large-book budgets. Locally the export took about 5 s and no pump over 0.2 s.
+- **Fuzzing:** `fuzz/fuzz_targets/epub_write.rs` writes any page's book, validates it and resolves every link. It is seeded by `fuzz/seed.py` and scheduled in `fuzz.yml`.
+- **Interoperability:** the checks in reading applications are in `docs/qa/epub.md`, still to be done by hand: Apple Books, Thorium, Calibre and an e-reader, with read-aloud. Until they pass, the epic stays open.
 
 ## 16. References
 

@@ -58,6 +58,7 @@ It adds xref:pdf-export.adoc[PDF export]:
 * `adocfoundry-cli pdf`, and Export Page to PDF and Export Component to PDF in the command palette.
 * Word export too: `adocfoundry-cli docx`, Export Page to Word, Export Component to Word and Export DOCX Profile in the command palette, and the MCP `export_docx` tool (see xref:command-line.adoc#docx[the docx command]).
 * Kindle export too, as AZW3 or KFX: `adocfoundry-cli kindle`, Export Page to Kindle, Export Component to Kindle and Export Kindle Profile in the command palette, and the MCP `export_kindle` tool (see xref:kindle-export.adoc[Exporting to Kindle]).
+* EPUB export too, as an EPUB 3.3 book: `adocfoundry-cli epub`, Export Page to EPUB, Export Component to EPUB and Export EPUB Profile in the command palette, and the MCP `export_epub` tool (see xref:epub-export.adoc[Exporting to EPUB]).
 
 == Phase 3 status
 

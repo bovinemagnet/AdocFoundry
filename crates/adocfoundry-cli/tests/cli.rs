@@ -1509,6 +1509,207 @@ fn kindle_cli_exports_and_gates() {
     succeeded(&run(&root, &[&page[..], &["--fail-on", "none"]].concat()));
 }
 
+/// The EPUB export PRD, §11 test 19: an article, a book and a profile, each a valid EPUB, with
+/// exit codes that follow `--fail-on`, and a note that never fails an export.
+#[test]
+fn epub_cli_exports_and_gates() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("book");
+    copy_tree(&repository_root().join("tests/fixtures/pdf/book"), &root);
+    std::fs::write(
+        root.join(".adocfoundry.toml"),
+        "[epub.profiles.handbook]\ncomponent = \"1.0@guide\"\noutput = \"build/handbook.epub\"\n\
+         modified = \"2026-11-19\"\n",
+    )
+    .unwrap();
+    // Dated, so a book does not carry the time it was exported, unless a test says otherwise.
+    let command = |folder: &Path, arguments: &[&str]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"));
+        command
+            .current_dir(folder)
+            .args(arguments)
+            .env("SOURCE_DATE_EPOCH", "1795046400");
+        command
+    };
+    let run = |folder: &Path, arguments: &[&str]| command(folder, arguments).output().unwrap();
+    let succeeded = |output: &Output| {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    let is_epub = |path: &Path| {
+        let (_, package) = adoc_epub::testing::assert_valid_ocf(&std::fs::read(path).unwrap());
+        package
+    };
+
+    // A page: beside it.
+    let output = run(&root, &["epub", "guide/modules/ROOT/pages/install.adoc"]);
+    succeeded(&output);
+    let package = is_epub(&root.join("guide/modules/ROOT/pages/install.epub"));
+    assert_eq!(package.modified, "2026-11-19T00:00:00Z");
+    assert!(
+        stdout(&output).contains("install.epub (1 AsciiDoc page)"),
+        "{}",
+        stdout(&output)
+    );
+    succeeded(&run(
+        &root,
+        &[
+            "epub",
+            "guide/modules/ROOT/pages/install.adoc",
+            "--output",
+            "named.epub",
+        ],
+    ));
+    is_epub(&root.join("named.epub"));
+    // An output that is not an `.epub` file is refused, and nothing is written.
+    for wrong in ["x.kfx", "x.docx", "x"] {
+        let output = run(
+            &root,
+            &[
+                "epub",
+                "guide/modules/ROOT/pages/install.adoc",
+                "--output",
+                wrong,
+            ],
+        );
+        assert_eq!(output.status.code(), Some(2), "{wrong}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("is not an .epub file"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!root.join(wrong).exists());
+    }
+
+    // A component folder: its book, in the current folder; and by `--component`.
+    let output = run(directory.path(), &["epub", "book/guide"]);
+    succeeded(&output);
+    is_epub(&directory.path().join("guide.epub"));
+    assert!(
+        stdout(&output).contains("guide.epub (8 AsciiDoc pages)"),
+        "{}",
+        stdout(&output)
+    );
+    succeeded(&run(
+        directory.path(),
+        &[
+            "epub",
+            "book",
+            "--component",
+            "1.0@guide",
+            "--output",
+            "by-name.epub",
+        ],
+    ));
+    is_epub(&directory.path().join("by-name.epub"));
+
+    // A profile writes what the app's command writes, dated by the profile.
+    let output = run(directory.path(), &["epub", "--profile", "handbook", "book"]);
+    succeeded(&output);
+    let written = root.join("build/handbook.epub");
+    let from_cli = std::fs::read(&written).unwrap();
+    is_epub(&written);
+    std::fs::remove_file(&written).unwrap();
+    let mut settings = adoc_engine::Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = adoc_engine::Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    let wait = std::time::Duration::from_secs(120);
+    assert!(engine.wait_for_workers(wait));
+    engine
+        .invoke(
+            adoc_engine::commands::ids::EXPORT_EPUB_PROFILE,
+            adoc_engine::CommandArgs::Profile("handbook".to_owned()),
+        )
+        .unwrap();
+    while engine.is_exporting() {
+        assert!(engine.wait_for_workers(wait));
+    }
+    assert!(
+        std::fs::read(&written).unwrap() == from_cli,
+        "the app's book differs from the command line's"
+    );
+    // The profile written elsewhere by `--output`.
+    succeeded(&run(
+        directory.path(),
+        &[
+            "epub",
+            "--profile",
+            "handbook",
+            "book",
+            "--output",
+            "book/build/elsewhere.epub",
+        ],
+    ));
+    is_epub(&root.join("build/elsewhere.epub"));
+    let output = run(directory.path(), &["epub", "--profile", "missing", "book"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no EPUB profile `missing`"));
+
+    // `--fail-on`: a reference that leads nowhere is a warning; the book is written all the
+    // same.
+    std::fs::write(
+        root.join("guide/modules/ROOT/pages/broken.adoc"),
+        "= Broken\n:lang: en-GB\n\nSee xref:missing.adoc[nowhere].\n",
+    )
+    .unwrap();
+    let page = [
+        "epub",
+        "guide/modules/ROOT/pages/broken.adoc",
+        "--output",
+        "broken.epub",
+    ];
+    let output = run(&root, &page);
+    succeeded(&output);
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("broken.adoc:4: warning: the cross reference missing.adoc leads to nothing"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::remove_file(root.join("broken.epub")).unwrap();
+    let output = run(&root, &[&page[..], &["--fail-on", "warning"]].concat());
+    assert_eq!(output.status.code(), Some(1));
+    is_epub(&root.join("broken.epub"));
+    succeeded(&run(&root, &[&page[..], &["--fail-on", "error"]].concat()));
+    succeeded(&run(&root, &[&page[..], &["--fail-on", "none"]].concat()));
+    assert!(
+        !run(&root, &[&page[..], &["--fail-on", "sometimes"]].concat())
+            .status
+            .success()
+    );
+
+    // An undated book is noted, and the note never fails it, even under `--fail-on warning`.
+    std::fs::write(
+        root.join("guide/modules/ROOT/pages/clean.adoc"),
+        "= Clean\n:lang: en-GB\n\nNothing here leads anywhere.\n",
+    )
+    .unwrap();
+    let output = command(
+        &root,
+        &[
+            "epub",
+            "guide/modules/ROOT/pages/clean.adoc",
+            "--fail-on",
+            "warning",
+        ],
+    )
+    .env_remove("SOURCE_DATE_EPOCH")
+    .output()
+    .unwrap();
+    succeeded(&output);
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("info: the book is dated with the time of the export"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    is_epub(&root.join("guide/modules/ROOT/pages/clean.epub"));
+}
+
 /// The DOCX export PRD, §10 test 15: an article, a book and a profile, with exit codes that
 /// follow `--fail-on`, and nothing of PDF's.
 #[test]

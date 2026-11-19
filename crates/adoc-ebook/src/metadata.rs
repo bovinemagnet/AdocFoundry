@@ -8,12 +8,22 @@ use adoc_render::ViewInline;
 use sha2::{Digest, Sha256};
 
 use crate::book::Metadata;
-use crate::{KindleDocument, KindleOptions};
+use crate::{Document, Options};
 
-pub(crate) fn metadata(document: &KindleDocument, options: &KindleOptions) -> Metadata {
+/// What the metadata took a default for, because neither the options nor the document gave it.
+#[derive(Debug, Default)]
+pub(crate) struct Defaults {
+    /// No title: the page's file name, or "Untitled".
+    pub(crate) title: bool,
+    /// No language, or not a language tag (the value given): `en`.
+    pub(crate) language: Option<Option<String>>,
+}
+
+pub(crate) fn metadata(document: &Document, options: &Options) -> (Metadata, Defaults) {
+    let mut defaults = Defaults::default();
     let (attributes, title, subtitle): (&BTreeMap<String, String>, String, Option<String>) =
         match document {
-            KindleDocument::Article(page) => (
+            Document::Article(page) => (
                 &page.view.attributes,
                 page.view
                     .title
@@ -29,9 +39,7 @@ pub(crate) fn metadata(document: &KindleDocument, options: &KindleOptions) -> Me
                     }),
                 None,
             ),
-            KindleDocument::Book(book) => {
-                (&book.attributes, book.title.clone(), book.subtitle.clone())
-            }
+            Document::Book(book) => (&book.attributes, book.title.clone(), book.subtitle.clone()),
         };
     let attribute = |name: &str| {
         attributes
@@ -39,11 +47,20 @@ pub(crate) fn metadata(document: &KindleDocument, options: &KindleOptions) -> Me
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty())
     };
+    let given_title = match document {
+        Document::Article(page) => page
+            .view
+            .title
+            .as_deref()
+            .is_some_and(|title| !ViewInline::plain_text(title).trim().is_empty()),
+        Document::Book(book) => !book.title.trim().is_empty(),
+    };
     let title = options
         .title
         .clone()
         .filter(|title| !title.trim().is_empty())
         .unwrap_or(title);
+    defaults.title = !given_title && options.title.as_deref().is_none_or(|t| t.trim().is_empty());
     let title = if title.trim().is_empty() {
         "Untitled".to_owned()
     } else {
@@ -56,19 +73,31 @@ pub(crate) fn metadata(document: &KindleDocument, options: &KindleOptions) -> Me
             .or_else(|| attribute("author").map(|author| vec![author]))
             .unwrap_or_default(),
     };
-    let language = options
-        .language
+    let given_language = options.language.clone().or_else(|| attribute("lang"));
+    let language = given_language
         .clone()
-        .or_else(|| attribute("lang"))
         .filter(|language| valid_language(language))
-        .unwrap_or_else(|| "en".to_owned());
+        .unwrap_or_else(|| {
+            defaults.language = Some(given_language.clone());
+            "en".to_owned()
+        });
     let version = attribute("revnumber");
     let identifier = options
         .identifier
         .clone()
         .filter(|identifier| !identifier.trim().is_empty())
         .unwrap_or_else(|| derived_identifier(&title, &authors, version.as_deref()));
-    Metadata {
+    let subjects = attribute("keywords")
+        .map(|keywords| {
+            keywords
+                .split(',')
+                .map(str::trim)
+                .filter(|keyword| !keyword.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let metadata = Metadata {
         title,
         subtitle,
         authors,
@@ -78,7 +107,9 @@ pub(crate) fn metadata(document: &KindleDocument, options: &KindleOptions) -> Me
         description: attribute("description"),
         date: attribute("revdate"),
         version,
-    }
+        subjects,
+    };
+    (metadata, defaults)
 }
 
 /// `authors` as Asciidoctor reads it: names separated by semicolons.

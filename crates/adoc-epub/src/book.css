@@ -1,0 +1,113 @@
+/* The default style of an AdocFoundry EPUB: readable, reflowable and light, leaving the font, its
+   size and the margins to the reader. It names nothing outside the book. */
+
+body {
+  line-height: 1.5;
+  widows: 2;
+  orphans: 2;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  line-height: 1.25;
+  page-break-after: avoid;
+  break-after: avoid;
+  hyphens: none;
+}
+
+h1 { font-size: 1.6em; margin: 1em 0 0.5em; }
+h2 { font-size: 1.35em; margin: 1.2em 0 0.4em; }
+h3 { font-size: 1.15em; margin: 1em 0 0.3em; }
+h4, h5, h6 { font-size: 1em; margin: 1em 0 0.3em; }
+
+p { margin: 0 0 0.75em; }
+
+p.caption {
+  font-style: italic;
+  margin-bottom: 0.3em;
+  page-break-after: avoid;
+  break-after: avoid;
+}
+
+p.attribution { text-align: right; font-style: italic; }
+p.label { font-weight: bold; margin-bottom: 0.25em; }
+
+ul, ol { margin: 0 0 0.75em; padding-left: 1.5em; }
+li > p { margin-bottom: 0.25em; }
+dt { font-weight: bold; margin-top: 0.5em; }
+dd { margin: 0 0 0.5em 1.5em; }
+
+blockquote {
+  margin: 0.75em 1.5em;
+  padding-left: 0.75em;
+  border-left: 0.2em solid #888;
+}
+
+code, kbd, pre { font-family: monospace; font-size: 0.9em; }
+
+pre {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  margin: 0 0 0.75em;
+  padding: 0.5em;
+  background-color: #f2f2f2;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+pre.verse { font-family: inherit; background-color: transparent; padding: 0; }
+
+kbd {
+  padding: 0 0.2em;
+  border: 1px solid #888;
+  border-radius: 0.2em;
+}
+
+span.button { font-weight: bold; }
+span.menu { font-weight: bold; }
+
+div.admonition, div.sidebar, div.example {
+  margin: 0 0 0.75em;
+  padding: 0.5em 0.75em;
+  border: 1px solid #888;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+div.admonition { border-left-width: 0.3em; }
+div.sidebar { background-color: #f2f2f2; }
+
+table {
+  border-collapse: collapse;
+  margin: 0 0 0.75em;
+  max-width: 100%;
+}
+
+th, td {
+  border: 1px solid #888;
+  padding: 0.2em 0.4em;
+  vertical-align: top;
+  text-align: left;
+}
+
+th { font-weight: bold; }
+td > p:last-child, th > p:last-child { margin-bottom: 0; }
+
+figure { margin: 0 0 0.75em; text-align: center; page-break-inside: avoid; break-inside: avoid; }
+
+img { max-width: 100%; height: auto; }
+img.inline { vertical-align: middle; max-height: 1.5em; }
+
+section.cover { text-align: center; }
+section.cover img { max-height: 95vh; }
+
+hr { margin: 1em 0; border: 0; border-top: 1px solid #888; }
+hr.page-break { border: 0; page-break-after: always; break-after: page; }
+
+section.footnotes {
+  margin-top: 1.5em;
+  border-top: 1px solid #888;
+  font-size: 0.9em;
+}
+
+nav ol { list-style: none; padding-left: 1em; }

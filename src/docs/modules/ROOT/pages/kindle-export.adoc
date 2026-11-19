@@ -9,7 +9,7 @@ It needs no Calibre, KindleGen, Kindle Previewer, other program or network acces
 For the other formats, see xref:pdf-export.adoc[Exporting to PDF] and xref:word-export.adoc[Exporting to Word].
 
 IMPORTANT: These are files to read and sideload on a Kindle or in a Kindle app.
-They are not Kindle Direct Publishing manuscripts, which KDP takes as EPUB, DOCX or KPF, and KPF is a different format from KFX.
+They are not Kindle Direct Publishing manuscripts, which KDP takes as xref:epub-export.adoc[EPUB], DOCX or KPF, and KPF is a different format from KFX.
 Neither format has yet been checked on a Kindle device.
 AZW3 books have been read correctly in Calibre.
 KFX is untested: no reader outside AdocFoundry's own tests has opened a KFX book yet, so choose AZW3 unless you are prepared to check the book yourself.

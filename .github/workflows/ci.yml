@@ -55,6 +55,8 @@ jobs:
       - run: cargo check -p adoc-engine --no-default-features --features docx
       # And with Kindle export alone, which needs no Typst and no other exporter (#628).
       - run: cargo check -p adoc-engine --no-default-features --features kindle
+      # And with EPUB export alone, which needs no Typst and no other exporter (#639).
+      - run: cargo check -p adoc-engine --no-default-features --features epub
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
       - run: cargo xtask layers
       # The desktop entry and AppStream metadata the Linux packages and the Flatpak install, as
@@ -252,6 +254,45 @@ jobs:
           echo "$result"
           if echo "$result" | grep -q '^FAIL'; then exit 1; fi
           test "$(echo "$result" | grep -c '^PASS')" -eq 6
+
+  epubcheck:
+    # The reference book, the book fixture and the reference article, exported as EPUB and checked
+    # by EPUBCheck, the W3C's conformance checker, in a job of its own: it needs Java, which no
+    # test and no build does (EPUB PRD §7; settles §14's "EPUBCheck"). A pinned release, checked
+    # against its SHA-256 before it runs; warnings fail the job as errors do.
+    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    env:
+      EPUBCHECK_VERSION: 5.4.0
+      EPUBCHECK_SHA256: 33350c61038e71dfb3d45a76aed04bf5481e6d5500cb780f6e98db8bbd15a28c
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - run: rustup toolchain install
+      - run: cargo build --release -p adocfoundry-cli
+      - name: Export the reference books
+        run: |
+          mkdir -p out /tmp/reference
+          cp -R tests/fixtures/docx/reference/. /tmp/reference/
+          cp -R tests/fixtures/kindle/reference/. /tmp/reference/
+          cp -R tests/fixtures/pdf/book /tmp/book
+          cli="$GITHUB_WORKSPACE/target/release/adocfoundry-cli"
+          # A fixed date, so a book checked here is the book a release would write.
+          export SOURCE_DATE_EPOCH=1795046400
+          "$cli" epub /tmp/reference/manual --component 2.0@manual --output out/manual.epub
+          "$cli" epub tests/fixtures/pdf/reference/article.adoc --output out/article.epub
+          (cd /tmp/book && "$cli" epub guide --output "$GITHUB_WORKSPACE/out/guide.epub")
+      - name: Check with EPUBCheck
+        run: |
+          curl -sSfL -o epubcheck.zip "https://github.com/w3c/epubcheck/releases/download/v${EPUBCHECK_VERSION}/epubcheck-${EPUBCHECK_VERSION}.zip"
+          echo "${EPUBCHECK_SHA256}  epubcheck.zip" | sha256sum -c -
+          unzip -q epubcheck.zip
+          java -version
+          for book in out/*.epub; do
+            java -jar "epubcheck-${EPUBCHECK_VERSION}/epubcheck.jar" --failonwarnings "$book"
+          done
 
   grammar:
     timeout-minutes: 45

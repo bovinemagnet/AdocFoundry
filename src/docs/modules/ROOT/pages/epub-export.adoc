@@ -1,0 +1,157 @@
+= Exporting to EPUB
+Paul Snow
+:revnumber: 0.0.0
+:description: Exporting a page or a whole Antora component to an EPUB 3.3 book: what it contains, how to export, accessibility, repeatable books, settings, warnings and what the reader lays out for itself.
+
+AdocFoundry exports a page, or a whole component version, as a reflowable EPUB 3.3 book (`.epub`).
+AdocFoundry writes the book itself, in Rust, entirely in process.
+It needs no Calibre, Pandoc, Java, other program or network access.
+For the other formats, see xref:pdf-export.adoc[Exporting to PDF], xref:word-export.adoc[Exporting to Word] and xref:kindle-export.adoc[Exporting to Kindle].
+
+NOTE: The export checks the book itself, as described under <<validation>>.
+It does not claim EPUBCheck conformance.
+Checks in reading applications are recorded in the QA notes in the repository.
+
+== What it makes
+
+A book holds the same pages as the PDF, Word and Kindle exports, in navigation order, each once.
+The start page is a preface.
+A page is never split into several files.
+
+* The chapters are semantic, reflowable XHTML: headings, lists, tables with header and footer rows and spans, nested tables, code, admonitions, sidebars, examples, quotes, keys, buttons and menus.
+* Footnotes are linked both ways.
+* The table of contents is in the navigation document, nested as the book's navigation.
+* Landmarks name the cover, the contents and the start of the text.
+* A cross reference between pages of the book is a link inside the book.
+A reference that leads out of the book links to the page's published address when the site has a URL, and otherwise is text with a warning.
+* External web links are kept.
+* Pictures are embedded: PNG, JPEG and GIF as they are, and SVG drawn as PNG.
+* Diagrams are embedded as the export drew them.
+* STEM formulas are embedded as pictures, with their source as the description.
+There is no MathML.
+* The cover is embedded: the `front-cover-image` attribute, else `[epub] cover`, or a profile's `cover`.
+* Nothing is fetched from the network.
+A missing or unreadable picture becomes its description, with a warning at its line.
+
+The reader owns fonts, page layout and page numbers, so a book has no running headers or footers.
+
+=== What it does not support
+
+* Fixed layout.
+* DRM.
+* Embedded fonts.
+* Scripts.
+* Passthrough content, which is shown as text with a warning.
+
+== Exporting
+
+=== In the application
+
+Choose one of these from the File menu.
+Each is also in the command palette.
+
+* Export Page to EPUB… (`export.epub_page`) exports the active page.
+* Export Component to EPUB… (`export.epub_component`) exports the component version that holds the active page.
+* Export EPUB Profile… (`export.epub_profile`) exports a named EPUB publication; see <<settings>>.
+
+The first two ask where to save the file.
+A profile is written to its own output.
+When the export finishes, a notification reports it as other exports do, with any warnings.
+Nothing is previewed, and no reading application is opened.
+
+=== From the command line and MCP
+
+xref:command-line.adoc#epub[`adocfoundry-cli epub`] exports from a shell or a build script.
+The `export_epub` tool of the MCP server does the same for an agent; see xref:mcp-server.adoc#export-epub[MCP server].
+
+=== What is exported
+
+A page exports as an article.
+A component version, or a list of navigation files, exports as a book from the navigation, each page once.
+Unsaved edits are exported, because the export reads open buffers.
+The export selects the same pages as the PDF, Word and Kindle exports.
+
+A page whose header says `:export-read-only:` is refused for EPUB, since an EPUB carries no editing restriction; see xref:read-only-exports.adoc[Read-only exports].
+
+== Accessibility
+
+The book is built to be navigable by assistive technology.
+
+* It has a language, from the `lang` attribute or `[epub] language`.
+When there is none, the export warns and uses English.
+* It has headings, landmarks, descriptions for pictures and header cells for tables.
+
+The export warns about these cases.
+
+* A picture with no description of its own.
+* A skipped heading level.
+* A table with no header row.
+* A missing title.
+
+The book's accessibility metadata states only what the content shows, and says the book has not been checked against an accessibility standard.
+No conformance is claimed.
+
+== Metadata
+
+The book's metadata comes from the page's attributes, and `[epub]` or a profile replaces what the pages give.
+
+* The title.
+* The language, a BCP 47 tag such as `en-GB`.
+* The creators, from `author` and `authors`.
+* The publisher.
+* The description.
+* The subjects, from `keywords`.
+* The date, from `revdate` when it is a date such as 2026-11-19.
+* A stable identifier, which is a `urn:uuid:` made from the title, the authors and the version unless one is given.
+* The modification time.
+
+== Repeatable books
+
+The book is dated, for its modification time, with the first of these.
+
+. `[epub] modified`, or a profile's `modified`.
+. The `SOURCE_DATE_EPOCH` environment variable.
+. The time of the export.
+A note then says that exporting again gives other bytes.
+
+With a fixed date, the same sources give the same bytes.
+
+[#validation]
+== Validation
+
+Before a book is written, the export checks the container, the package, the navigation, that every file is well-formed XML, and that every link and picture reference leads somewhere in the book.
+A book that fails a check is not written.
+This is AdocFoundry's own check and not EPUBCheck.
+
+[#settings]
+== Settings
+
+The `[epub]` table sets the book's metadata and stylesheet, and `[epub.profiles.<name>]` saves EPUB publications under a name.
+See xref:settings.adoc#epub-settings[EPUB export settings] for the keys.
+Nothing is read from `[pdf]`, `[docx]` or `[kindle]`, and nothing in `[epub]` changes another format.
+
+== Warnings
+
+A problem is reported as a warning that names the file and line, in the page or the partial it comes from.
+Warnings cover these cases.
+
+* A missing or unreadable picture.
+* A diagram that nothing can render.
+* Passthrough content, which is shown as text.
+* A reference that leads out of the book, which is a link to the site when the site's address is known, and otherwise text.
+* The accessibility cases above.
+
+The book is still written.
+
+== Safety
+
+* The book is written to a temporary file beside the output and renamed over it only when it is complete.
+A failed or timed-out export leaves any existing file untouched.
+* An output that is a link, a folder or not a `.epub` file is refused.
+* Profiles and the MCP tool write only inside the workspace.
+* A stylesheet of your own is checked and refused if it could load anything from outside the book; see xref:settings.adoc#epub-settings[EPUB export settings].
+
+== The reader lays out the pages
+
+AdocFoundry writes the content and the reading application decides the fonts, the page layout and the page numbers.
+Page breaks and page counts therefore differ from the PDF's and between readers.

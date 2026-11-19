@@ -470,6 +470,8 @@ pub struct Settings {
     pub docx: crate::DocxSettings,
     /// `[kindle]`: Kindle books' defaults and profiles, apart from `[pdf]` and `[docx]`.
     pub kindle: crate::KindleSettings,
+    /// `[epub]`: EPUB books' defaults and profiles, apart from every other format's.
+    pub epub: crate::EpubSettings,
     pub updates: UpdateSettings,
     pub sidebar: SidebarSettings,
     pub history: HistorySettings,
@@ -871,6 +873,12 @@ impl Settings {
                     for (name, problem) in
                         crate::kindle_settings::apply(&mut self.kindle, key, value)
                     {
+                        self.warn(&source, &name, &problem);
+                    }
+                    continue;
+                }
+                if section == "epub" {
+                    for (name, problem) in crate::epub_settings::apply(&mut self.epub, key, value) {
                         self.warn(&source, &name, &problem);
                     }
                     continue;

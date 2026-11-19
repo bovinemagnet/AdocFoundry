@@ -164,3 +164,4 @@ See xref:mcp-server.adoc#errors[MCP server].
 
 For the formats themselves, see xref:word-export.adoc[Exporting to Word] and xref:pdf-export.adoc[Exporting to PDF].
 A Kindle book carries no restriction, so a page that asks for a read-only export is refused for Kindle; see xref:kindle-export.adoc[Exporting to Kindle].
+An EPUB book and an HTML page carry no restriction either, so a page that asks for a read-only export is refused for EPUB; see xref:epub-export.adoc[Exporting to EPUB].

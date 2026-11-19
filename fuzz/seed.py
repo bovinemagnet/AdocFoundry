@@ -42,7 +42,13 @@ def main():
     pages = sorted(FIXTURES.rglob("*.adoc"))
     for page in pages:
         data = page.read_bytes()
-        for target in ("parse_source", "parse_dom", "model_roundtrip", "kindle_write"):
+        for target in (
+            "parse_source",
+            "parse_dom",
+            "model_roundtrip",
+            "kindle_write",
+            "epub_write",
+        ):
             write(target, data)
         text = data.decode("utf-8", errors="replace")
         for match in TARGET.finditer(text):

@@ -7,10 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-adoc-core.workspace = true
-adoc-dom.workspace = true
-adoc-render.workspace = true
-resvg.workspace = true
+adoc-ebook.workspace = true
 sha1_smol.workspace = true
 sha2.workspace = true
 
@@ -19,7 +16,10 @@ sha2.workspace = true
 test-support = []
 
 [dev-dependencies]
+adoc-core.workspace = true
+adoc-dom.workspace = true
 adoc-kindle = { path = ".", features = ["test-support"] }
+adoc-render.workspace = true
 mobi.workspace = true
 tempfile.workspace = true
 

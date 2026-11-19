@@ -119,6 +119,8 @@ pub enum CommandArgs {
     ExportDocx(crate::DocxExportArgs),
     /// A Kindle export: what to export, the format and the file to write.
     ExportKindle(crate::KindleExportArgs),
+    /// An EPUB export: what to export and the `.epub` file to write.
+    ExportEpub(crate::EpubExportArgs),
     /// Pages to export each as its own PDF into a folder: `export.pdf_pages`.
     ExportPages {
         pages: Vec<PathBuf>,

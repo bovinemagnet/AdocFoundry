@@ -85,9 +85,15 @@ The full list and meanings are in xref:developer:engine.adoc#_events[Events].
 `Settings` loads a user layer and a workspace layer (`<root>/.adocfoundry.toml`) from TOML.
 Front ends never read the settings file themselves.
 The keys are in xref:ROOT:settings.adoc#_keys[Settings: keys], and the engine's side is in xref:developer:engine.adoc#settings[Settings].
-Five Cargo features, `typst` (PDF export and typeset STEM, through `adoc-pdf` and `adoc-math`), `docx` (DOCX export, through `adoc-docx`, with no Typst), `kindle` (Kindle export, through `adoc-kindle`, with no Typst), `export` (the pipeline the formats share, which each of them turns on and front ends never name) and `git` (`adoc-git`), are on by default for the crate and off in `[workspace.dependencies]`, so each front end names the ones it wants.
+Six Cargo features, `typst` (PDF export and typeset STEM, through `adoc-pdf` and `adoc-math`), `docx` (DOCX export, through `adoc-docx`, with no Typst), `kindle` (Kindle export, through `adoc-kindle`, with no Typst), `epub` (EPUB export, through `adoc-epub` and `adoc-ebook`, with no Typst), `export` (the pipeline the formats share, which each of them turns on and front ends never name) and `git` (`adoc-git`), are on by default for the crate and off in `[workspace.dependencies]`, so each front end names the ones it wants.
 The engine built with `--no-default-features --features docx` compiles `adoc-docx` and neither `adoc-pdf` nor Typst, and with `--features kindle` it compiles `adoc-kindle` and none of `adoc-pdf`, `adoc-docx`, `adoc-math` or Typst, which `cargo xtask layers` checks.
-Without `git` the engine behaves as with `[git] enabled = false`; without `typst` the PDF export commands are not registered, without `docx` the DOCX ones are not, and without `kindle` the Kindle ones are not.
+Without `git` the engine behaves as with `[git] enabled = false`; without `typst` the PDF export commands are not registered, without `docx` the DOCX ones are not, without `kindle` the Kindle ones are not, and without `epub` the EPUB ones (`export.epub_page`, `export.epub_component`) are not.
+The engine built with `--features epub` compiles `adoc-epub` and `adoc-ebook` and no Typst and no other exporter (`epub_builds_alone`).
+`[epub]` and `[epub.profiles.<name>]` are read by `epub_settings.rs` (`EpubSettings`, `EpubProfile`), which is built without the `epub` feature too.
+`Engine::epub_profile_export_args`, `epub_profile_problems` and `epub_profiles` serve the profiles, and `export.epub_profile` ("Export EPUB Profile…", `CommandArgs::Profile`) exports one.
+`EpubExportArgs` takes each value from its own arguments, else from `[epub]`, else from the document, and the date from its `modified`, else `[epub] modified`, else `SOURCE_DATE_EPOCH`, else the time of the export.
+The user stylesheet is checked with `adoc_epub::check_stylesheet` before anything is written.
+See xref:developer:engine.adoc#the-export-service[the export service] for the keys.
 See xref:developer:engine.adoc#_engine_features[Engine features].
 
 == How to use it
@@ -135,7 +141,7 @@ while let Ok(event) = events.try_recv() {
 
 `Settings::with_git_opt_in()` keeps Git off unless a settings file turns it on, which is what a test that opens a fixture in place wants, since the fixtures lie inside a checkout.
 A GUI does not block: it calls `pump` from a task that sleeps until `next_due()` or a wake.
-A command line can block with `wait_for_workers`, `wait_until`, `render_blocking`, `export_blocking`, `export_docx_blocking` or `export_kindle_blocking`.
+A command line can block with `wait_for_workers`, `wait_until`, `render_blocking`, `export_blocking`, `export_docx_blocking`, `export_kindle_blocking` or `export_epub_blocking`.
 
 .How a front end drives the engine
 [mermaid]

@@ -477,6 +477,10 @@ The overlay holds `[kindle]` settings, a profile and an extra page with Japanese
 `kindle_large_book_is_bounded` (`crates/adoc-engine/tests/kindle_large.rs`, a file of its own for its peak memory) exports 600 pages with 50 pictures in both formats within 90 seconds, the command within 3 seconds, no pump over 3 seconds, and peak memory under 2 GB where Linux reports it.
 A debug build on a 2024 laptop takes about 4 seconds for each format.
 `kindle_is_in_process` (in `xtask`) checks that the sources of `adoc-kindle` name no process or network path, and that every package it builds may be used under a non-copyleft licence.
+
+`epub_reference_book_is_complete` (`crates/adoc-engine/tests/epub_export.rs`) exports the reference book of seven pages, checks that it passes the validator and the link check, holds every page's text, pictures, footnotes, tables and code, and reports the missing picture, and that the same bytes come from another engine in another folder and from its profile.
+`epub_large_book_is_bounded` (`crates/adoc-engine/tests/epub_large.rs`, a file of its own for its peak memory) exports 600 pages with 50 pictures under the budgets of Kindle's large book: the command within 3 seconds, no pump over 3 seconds, the export within 90 seconds, and peak memory under 2 GB where Linux reports it.
+`epub_is_in_process` (in `xtask`) checks that the sources of `adoc-epub` and `adoc-ebook` name no process or network path, and that nothing EPUB export builds is copyleft.
 `ADOC_KINDLE_OUT=<dir> cargo test -p adoc-kindle --test kfx -- --ignored` writes a sample in both formats for the manual checks in `docs/qa/kindle.md`.
 The release smoke test (`packaging/smoke-test.py`) exports a page as AZW3 and as KFX with the packaged `adocfoundry-cli` and checks each file's signature.
 
@@ -824,6 +828,10 @@ The Typst string literal writer of `adoc-pdf`, exposed only under its `fuzzing` 
 
 `kindle_write`::
 For any page, the book is written in both formats without a panic, each file is read back whole by the independent readers of `adoc_kindle::testing`, and every link inside leads to a place the book holds.
+`fuzz/seed.py` seeds it from the fixtures' pages.
+
+`epub_write`::
+For any page, the book is written without a panic, passes the crate's validator, and is read back whole by the independent reader of `adoc_epub::testing`, every link and picture reference resolving.
 `fuzz/seed.py` seeds it from the fixtures' pages.
 
 Run one target from the repository root.

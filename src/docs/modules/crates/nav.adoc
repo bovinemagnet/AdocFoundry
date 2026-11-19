@@ -19,6 +19,8 @@
 *** xref:crates:adoc-git.adoc[adoc-git]
 *** xref:crates:adoc-pdf.adoc[adoc-pdf]
 *** xref:crates:adoc-docx.adoc[adoc-docx]
+*** xref:crates:adoc-ebook.adoc[adoc-ebook]
+*** xref:crates:adoc-epub.adoc[adoc-epub]
 *** xref:crates:adoc-kindle.adoc[adoc-kindle]
 *** xref:crates:adoc-audit.adoc[adoc-audit]
 *** xref:crates:adoc-impact.adoc[adoc-impact]

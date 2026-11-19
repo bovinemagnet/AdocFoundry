@@ -17,9 +17,16 @@ use crate::{DocumentId, PdfStandard};
 
 #[cfg(all(
     feature = "export",
-    not(any(feature = "typst", feature = "docx", feature = "kindle"))
+    not(any(
+        feature = "typst",
+        feature = "docx",
+        feature = "kindle",
+        feature = "epub"
+    ))
 ))]
-compile_error!("the `export` feature is turned on by `typst`, `docx` or `kindle`, not on its own");
+compile_error!(
+    "the `export` feature is turned on by `typst`, `docx`, `kindle` or `epub`, not on its own"
+);
 
 // Without either format only the request and result types remain.
 #[cfg(feature = "typst")]
@@ -176,6 +183,55 @@ impl KindleExportArgs {
     }
 }
 
+/// An EPUB export request: `CommandArgs::ExportEpub`. It holds nothing of another format's.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EpubExportArgs {
+    pub target: ExportTarget,
+    /// The `.epub` file to write. It is written to a new file beside it and renamed over it
+    /// only once the whole book is written and checked, so a failed export leaves what was
+    /// there; a link there is refused, never written through.
+    pub output: PathBuf,
+    /// Attributes every page is read with before its own header, after Antora's, and that a
+    /// book's own attributes take.
+    pub attributes: Vec<(String, String)>,
+    /// Metadata in place of the document's and `[epub]`'s: a profile's.
+    pub title: Option<String>,
+    pub creator: Option<String>,
+    pub language: Option<String>,
+    pub identifier: Option<String>,
+    pub publisher: Option<String>,
+    /// The cover, in place of `[epub] cover` and the document's `front-cover-image`.
+    pub cover: Option<PathBuf>,
+    /// A stylesheet of the user's, in place of `[epub] css`, linked after the default one. It
+    /// must be inside the workspace; one that imports or names anything fails the export.
+    pub css: Option<PathBuf>,
+    /// When the book was last modified, in seconds since the Unix epoch: its
+    /// `dcterms:modified` and the date of every file in it. `None` takes `[epub] modified`,
+    /// else `SOURCE_DATE_EPOCH`, else the time of the export, which is reported, since
+    /// exporting again then gives other bytes.
+    pub modified: Option<i64>,
+}
+
+impl EpubExportArgs {
+    /// An export of `target` to `output`, with nothing else given.
+    #[must_use]
+    pub fn new(target: ExportTarget, output: PathBuf) -> Self {
+        Self {
+            target,
+            output,
+            attributes: Vec::new(),
+            title: None,
+            creator: None,
+            language: None,
+            identifier: None,
+            publisher: None,
+            cover: None,
+            css: None,
+            modified: None,
+        }
+    }
+}
+
 /// A finished export.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExportSummary {
@@ -254,6 +310,21 @@ impl crate::Engine {
     }
 }
 
+#[cfg(not(feature = "epub"))]
+impl crate::Engine {
+    /// Without the `epub` feature there is no EPUB export: every request fails as an unknown
+    /// command.
+    pub fn export_epub_blocking(
+        &mut self,
+        _: EpubExportArgs,
+        _: std::time::Duration,
+    ) -> Result<ExportSummary, crate::EngineError> {
+        Err(crate::EngineError::UnknownCommand(
+            crate::commands::ids::EXPORT_EPUB_PAGE,
+        ))
+    }
+}
+
 /// The pages of an export and how they are arranged.
 #[cfg(feature = "export")]
 #[derive(Clone, Debug)]
@@ -308,6 +379,8 @@ enum Request {
     Docx(DocxExportArgs),
     #[cfg(feature = "kindle")]
     Kindle(KindleExportArgs),
+    #[cfg(feature = "epub")]
+    Epub(EpubExportArgs),
 }
 
 #[cfg(feature = "export")]
@@ -322,6 +395,9 @@ impl Request {
             // A Kindle book shows formulas as pictures too.
             #[cfg(feature = "kindle")]
             Self::Kindle(_) => true,
+            // So does an EPUB, until it can carry MathML.
+            #[cfg(feature = "epub")]
+            Self::Epub(_) => true,
         }
     }
 }
@@ -336,6 +412,8 @@ impl Request {
             Self::Docx(args) => &args.target,
             #[cfg(feature = "kindle")]
             Self::Kindle(args) => &args.target,
+            #[cfg(feature = "epub")]
+            Self::Epub(args) => &args.target,
         }
     }
 
@@ -347,6 +425,8 @@ impl Request {
             Self::Docx(args) => &args.output,
             #[cfg(feature = "kindle")]
             Self::Kindle(args) => &args.output,
+            #[cfg(feature = "epub")]
+            Self::Epub(args) => &args.output,
         }
     }
 
@@ -373,6 +453,8 @@ impl Request {
             Self::Docx(_) => (crate::ExportFormat::Docx, None),
             #[cfg(feature = "kindle")]
             Self::Kindle(_) => (crate::ExportFormat::Kindle, None),
+            #[cfg(feature = "epub")]
+            Self::Epub(_) => (crate::ExportFormat::Epub, None),
         }
     }
 
@@ -385,6 +467,8 @@ impl Request {
             Self::Docx(args) => check_docx_output(&args.output),
             #[cfg(feature = "kindle")]
             Self::Kindle(args) => check_kindle_output(args.format, &args.output),
+            #[cfg(feature = "epub")]
+            Self::Epub(args) => check_epub_output(&args.output),
         }
     }
 
@@ -396,6 +480,8 @@ impl Request {
             Self::Docx(args) => &args.attributes,
             #[cfg(feature = "kindle")]
             Self::Kindle(args) => &args.attributes,
+            #[cfg(feature = "epub")]
+            Self::Epub(args) => &args.attributes,
         }
     }
 }
@@ -535,6 +621,42 @@ pub(crate) fn register_export(registry: &mut CommandRegistry) {
             kindle_profile_command,
         );
     }
+    #[cfg(feature = "epub")]
+    {
+        register(
+            registry,
+            spec(
+                ids::EXPORT_EPUB_PAGE,
+                "Export Page to EPUB…",
+                CommandCategory::Document,
+                None,
+                CommandContext::ActiveDocument,
+            ),
+            epub_command,
+        );
+        register(
+            registry,
+            spec(
+                ids::EXPORT_EPUB_COMPONENT,
+                "Export Component to EPUB…",
+                CommandCategory::Workspace,
+                None,
+                CommandContext::Antora,
+            ),
+            epub_command,
+        );
+        register(
+            registry,
+            spec(
+                ids::EXPORT_EPUB_PROFILE,
+                "Export EPUB Profile…",
+                CommandCategory::Workspace,
+                None,
+                CommandContext::Always,
+            ),
+            epub_profile_command,
+        );
+    }
     #[cfg(feature = "docx")]
     {
         register(
@@ -606,6 +728,35 @@ fn kindle_command(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutco
         });
     };
     engine.start_export(Request::Kindle(args), false)?;
+    Ok(CommandOutcome::Done)
+}
+
+#[cfg(feature = "epub")]
+fn epub_command(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::ExportEpub(args) = args else {
+        return Err(EngineError::InvalidArguments {
+            command: ids::EXPORT_EPUB_PAGE,
+            expected: "an export target and an .epub output path",
+        });
+    };
+    engine.start_export(Request::Epub(args), false)?;
+    Ok(CommandOutcome::Done)
+}
+
+/// Exports an EPUB publication profile to the output it names.
+#[cfg(feature = "epub")]
+fn epub_profile_command(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Profile(name) = args else {
+        return Err(EngineError::InvalidArguments {
+            command: ids::EXPORT_EPUB_PROFILE,
+            expected: "a profile name",
+        });
+    };
+    let args = engine.epub_profile_export_args(&name)?;
+    engine.start_export(Request::Epub(args), false)?;
     Ok(CommandOutcome::Done)
 }
 
@@ -867,6 +1018,37 @@ impl Engine {
     }
 }
 
+#[cfg(feature = "epub")]
+impl Engine {
+    /// Exports an EPUB and waits for the result, for front ends without an event loop such as
+    /// the CLI.
+    pub fn export_epub_blocking(
+        &mut self,
+        args: EpubExportArgs,
+        timeout: Duration,
+    ) -> Result<ExportSummary, EngineError> {
+        let deadline = Instant::now() + timeout;
+        let job = self.start_export(Request::Epub(args), true)?;
+        self.wait_for_export(job, deadline)
+    }
+}
+
+/// Refuses an EPUB output that is not an `.epub` file, or is a folder or a link.
+#[cfg(feature = "epub")]
+fn check_epub_output(output: &Path) -> Result<(), EngineError> {
+    let epub = output
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("epub"));
+    if !epub {
+        return Err(EngineError::InvalidRequest(format!(
+            "{} is not an .epub file",
+            output.display()
+        )));
+    }
+    check_not_link_or_folder(output)
+}
+
 /// Refuses a Kindle output whose extension is not the format's, so that a `.kfx` is never an
 /// AZW3 or the other way round, and one that is a folder or a link.
 #[cfg(feature = "kindle")]
@@ -887,7 +1069,7 @@ fn check_kindle_output(format: KindleFormat, output: &Path) -> Result<(), Engine
 }
 
 /// Refuses an output that is a link, which would be written through, or a folder.
-#[cfg(any(feature = "docx", feature = "kindle"))]
+#[cfg(any(feature = "docx", feature = "kindle", feature = "epub"))]
 fn check_not_link_or_folder(output: &Path) -> Result<(), EngineError> {
     match std::fs::symlink_metadata(output) {
         Ok(meta) if meta.file_type().is_symlink() => Err(EngineError::InvalidRequest(format!(
@@ -1528,6 +1710,10 @@ impl Engine {
             #[cfg(feature = "kindle")]
             Request::Kindle(args) => {
                 self.write_kindle(job, args, written, commit, &protection);
+            }
+            #[cfg(feature = "epub")]
+            Request::Epub(args) => {
+                self.write_epub(job, args, written, commit, &protection);
             }
         }
     }
@@ -2322,7 +2508,7 @@ impl Engine {
             unread,
         } = written;
         let failed = failed_diagrams(&arranged);
-        let document = to_kindle(arranged);
+        let document = to_book(arranged);
         // The export's own (a profile's), else `[kindle]`'s, else the document's.
         let defaults = &self.settings.kindle;
         let root = self.roots.first().cloned();
@@ -2334,6 +2520,7 @@ impl Engine {
             })
         });
         let options = adoc_kindle::KindleOptions {
+            format: adoc_ebook::Format::Kindle,
             title: args.title.clone().or_else(|| defaults.title.clone()),
             creator: args.creator.clone().or_else(|| defaults.creator.clone()),
             language: args.language.clone().or_else(|| defaults.language.clone()),
@@ -2363,21 +2550,14 @@ impl Engine {
             let result = adoc_kindle::write_kindle(&document, format, &options)
                 .map_err(|error| format!("{}: {error}", args.output.display()))
                 .and_then(|output| {
-                    write_kindle_file(&output.bytes, args.format, &args.output, &commit)?;
+                    let format = args.format;
+                    write_book_file(&output.bytes, &args.output, &commit, |output| {
+                        check_kindle_output(format, output)
+                    })?;
                     Ok(output.diagnostics)
                 })
-                .map(|book_diagnostics| {
-                    let mut diagnostics: Vec<ExportDiagnostic> = book_diagnostics
-                        .into_iter()
-                        .map(|diagnostic| ExportDiagnostic {
-                            severity: match diagnostic.severity {
-                                adoc_kindle::KindleSeverity::Error => DiagnosticSeverity::Error,
-                                adoc_kindle::KindleSeverity::Warning => DiagnosticSeverity::Warning,
-                            },
-                            message: diagnostic.message,
-                            location: diagnostic.source.map(|source| (source.path, source.line)),
-                        })
-                        .collect();
+                .map(|written| {
+                    let mut diagnostics = book_diagnostics(written);
                     diagnostics.extend(failed);
                     diagnostics.extend(unread);
                     ExportSummary {
@@ -2394,11 +2574,188 @@ impl Engine {
     }
 }
 
-#[cfg(feature = "kindle")]
-fn to_kindle(arranged: Arranged) -> adoc_kindle::KindleDocument {
-    use adoc_kindle::{BookItem, KindleDocument, KindlePage, KindlePlan};
+#[cfg(feature = "epub")]
+impl Engine {
+    /// Writes the job's EPUB on a worker: mapped, written in memory and checked by
+    /// `adoc-epub`, then put in place through the job's commit.
+    fn write_epub(
+        &mut self,
+        job: u64,
+        args: EpubExportArgs,
+        written: Written,
+        commit: Commit,
+        protection: &crate::ExportProtection,
+    ) {
+        // An EPUB carries no editing restriction, so pages asking for one were refused
+        // before anything was parsed; nothing is written that claims one.
+        if *protection != crate::ExportProtection::Off {
+            self.export_finished(
+                job,
+                Err("an EPUB cannot carry an editing restriction".to_owned()),
+            );
+            return;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| {
+                i64::try_from(since.as_secs()).unwrap_or(i64::MAX)
+            });
+        let source_date_epoch = std::env::var("SOURCE_DATE_EPOCH").ok();
+        // The export's own (a profile's), else `[epub]`'s, else the document's.
+        let defaults = self.settings.epub.clone();
+        let root = self.roots.first().cloned();
+        let in_root = |relative: &str| match &root {
+            Some(root) => crate::normalize_path(&root.join(relative)),
+            None => PathBuf::from(relative),
+        };
+        let given = args.modified.or(defaults.modified);
+        let (modified, dated_now) = match epub_modified(given, source_date_epoch.as_deref(), now) {
+            Ok(modified) => modified,
+            Err(error) => {
+                self.export_finished(job, Err(error));
+                return;
+            }
+        };
+        let css = args
+            .css
+            .clone()
+            .or_else(|| defaults.css.as_deref().map(in_root));
+        let stylesheet = match css.map(|css| self.epub_stylesheet(&css)).transpose() {
+            Ok(stylesheet) => stylesheet,
+            Err(error) => {
+                self.export_finished(job, Err(error));
+                return;
+            }
+        };
+        let Written {
+            sources,
+            arranged,
+            unread,
+        } = written;
+        let failed = failed_diagrams(&arranged);
+        let document = to_book(arranged);
+        let options = adoc_epub::EpubOptions {
+            book: adoc_epub::BookOptions {
+                format: adoc_ebook::Format::Epub,
+                title: args.title.clone().or(defaults.title),
+                creator: args.creator.clone().or(defaults.creator),
+                language: args.language.clone().or(defaults.language),
+                identifier: args.identifier.clone().or(defaults.identifier),
+                publisher: args.publisher.clone().or(defaults.publisher),
+                cover: args
+                    .cover
+                    .clone()
+                    .or_else(|| defaults.cover.as_deref().map(in_root)),
+                page_urls: self
+                    .site_url()
+                    .map(|site| self.page_urls(&site))
+                    .unwrap_or_default(),
+                access: self.file_access.clone(),
+            },
+            modified,
+            stylesheet,
+        };
+        let sender = self.worker_sender.clone();
+        self.workers_running += 1;
+        let crashed = move |error| WorkerMessage::ExportFinished {
+            job,
+            result: Err(format!("writing the book crashed: {error}")),
+        };
+        crate::worker::spawn(sender, crashed, move |sender| {
+            let result = adoc_epub::write_epub(&document, &options)
+                .map_err(|error| format!("{}: {error}", args.output.display()))
+                .and_then(|output| {
+                    write_book_file(&output.bytes, &args.output, &commit, check_epub_output)?;
+                    Ok(output.diagnostics)
+                })
+                .map(|written| {
+                    let mut diagnostics = book_diagnostics(written);
+                    diagnostics.extend(failed);
+                    diagnostics.extend(unread);
+                    diagnostics.extend(dated_now);
+                    ExportSummary {
+                        output: args.output.clone(),
+                        pages: sources.len(),
+                        sources,
+                        diagnostics,
+                        look: None,
+                        protected: false,
+                    }
+                });
+            let _ = sender.send(WorkerMessage::ExportFinished { job, result });
+        });
+    }
+}
+
+#[cfg(feature = "epub")]
+impl Engine {
+    /// A user stylesheet, read through the export's file access and checked: one outside the
+    /// folders the export may read, unreadable, or that could reach outside the book fails the
+    /// export, rather than being left out unseen.
+    fn epub_stylesheet(&self, path: &Path) -> Result<String, String> {
+        if !self.file_access.permits(path) {
+            return Err(format!(
+                "the stylesheet {} is outside the folders the export may read",
+                path.display()
+            ));
+        }
+        let bytes = self
+            .file_access
+            .read(path)
+            .map_err(|error| format!("the stylesheet {}: {error}", path.display()))?;
+        let text = String::from_utf8(bytes)
+            .map_err(|_| format!("the stylesheet {} is not UTF-8 text", path.display()))?;
+        adoc_epub::check_stylesheet(&text)
+            .map_err(|problem| format!("{}: {problem}", path.display()))?;
+        Ok(text)
+    }
+}
+
+/// The time an EPUB is dated with: the export's own, else `SOURCE_DATE_EPOCH`'s, else `now`,
+/// with a note that exporting again will give other bytes. A time an EPUB cannot be dated
+/// with (before 1980 or after 2107) fails the export.
+#[cfg(feature = "epub")]
+fn epub_modified(
+    given: Option<i64>,
+    source_date_epoch: Option<&str>,
+    now: i64,
+) -> Result<(adoc_epub::Modified, Option<ExportDiagnostic>), String> {
+    let datable = |seconds: i64, what: &str| {
+        adoc_epub::Modified::from_unix_seconds(seconds)
+            .ok_or_else(|| format!("{what} is not a time an EPUB can be dated with (1980 to 2107)"))
+    };
+    if let Some(seconds) = given {
+        return Ok((
+            datable(seconds, &format!("the modified time {seconds}"))?,
+            None,
+        ));
+    }
+    if let Some(value) = source_date_epoch.filter(|value| !value.trim().is_empty()) {
+        let what = format!("SOURCE_DATE_EPOCH {value}");
+        let seconds = value
+            .trim()
+            .parse::<i64>()
+            .map_err(|_| format!("{what} is not a number of seconds"))?;
+        return Ok((datable(seconds, &what)?, None));
+    }
+    let modified = datable(now, "the time of the export")?;
+    let note = ExportDiagnostic {
+        severity: DiagnosticSeverity::Information,
+        message: format!(
+            "the book is dated with the time of the export, {modified}, so exporting it again \
+             gives other bytes; set SOURCE_DATE_EPOCH to repeat it"
+        ),
+        location: None,
+    };
+    Ok((modified, Some(note)))
+}
+
+/// The arranged views as the book model Kindle and EPUB export both write.
+#[cfg(any(feature = "kindle", feature = "epub"))]
+fn to_book(arranged: Arranged) -> adoc_ebook::Document {
+    use adoc_ebook::{BookItem, Document, Page, Plan};
     match arranged {
-        Arranged::Article(view) => KindleDocument::Article(KindlePage {
+        Arranged::Article(view) => Document::Article(Page {
             key: "p0".to_owned(),
             view,
             depth: 0,
@@ -2407,7 +2764,7 @@ fn to_kindle(arranged: Arranged) -> adoc_kindle::KindleDocument {
             title,
             attributes,
             items,
-        } => KindleDocument::Book(KindlePlan {
+        } => Document::Book(Plan {
             title,
             subtitle: None,
             attributes,
@@ -2417,7 +2774,7 @@ fn to_kindle(arranged: Arranged) -> adoc_kindle::KindleDocument {
                     ArrangedItem::Part(title) => BookItem::Part(title),
                     ArrangedItem::Heading { title, depth } => BookItem::Heading { title, depth },
                     ArrangedItem::Page { key, view, depth } => {
-                        BookItem::Page(KindlePage { key, view, depth })
+                        BookItem::Page(Page { key, view, depth })
                     }
                 })
                 .collect(),
@@ -2425,19 +2782,36 @@ fn to_kindle(arranged: Arranged) -> adoc_kindle::KindleDocument {
     }
 }
 
+/// A book's diagnostics as the export's.
+#[cfg(any(feature = "kindle", feature = "epub"))]
+fn book_diagnostics(diagnostics: Vec<adoc_ebook::Diagnostic>) -> Vec<ExportDiagnostic> {
+    diagnostics
+        .into_iter()
+        .map(|diagnostic| ExportDiagnostic {
+            severity: match diagnostic.severity {
+                adoc_ebook::Severity::Error => DiagnosticSeverity::Error,
+                adoc_ebook::Severity::Warning => DiagnosticSeverity::Warning,
+            },
+            message: diagnostic.message,
+            location: diagnostic.source.map(|source| (source.path, source.line)),
+        })
+        .collect()
+}
+
 /// Writes a checked book's bytes to a new file beside `output` and renames it over `output`
-/// through the job's commit, so a failed or abandoned export leaves what was there. A link at
-/// `output` is refused again here, in case one appeared since the export was asked for.
-#[cfg(feature = "kindle")]
-fn write_kindle_file(
+/// through the job's commit, so a failed or abandoned export leaves what was there. `check`,
+/// the format's output check, refuses a link at `output` again here, in case one appeared
+/// since the export was asked for.
+#[cfg(any(feature = "kindle", feature = "epub"))]
+fn write_book_file(
     bytes: &[u8],
-    format: KindleFormat,
     output: &Path,
     commit: &Commit,
+    check: impl Fn(&Path) -> Result<(), EngineError>,
 ) -> Result<(), String> {
     use std::io::Write as _;
     let failed = |error: &dyn std::fmt::Display| format!("{}: {error}", output.display());
-    check_kindle_output(format, output).map_err(|error| error.to_string())?;
+    check(output).map_err(|error| error.to_string())?;
     // A profile may name a folder, such as `build/`, that does not exist yet.
     let folder = match output
         .parent()
@@ -2458,4 +2832,43 @@ fn write_kindle_file(
             .map(drop)
             .map_err(|error| failed(&error.error))
     })
+}
+
+#[cfg(all(test, feature = "epub"))]
+mod tests {
+    use super::*;
+
+    /// 2026-11-19T10:30:00Z.
+    const TIME: i64 = 1_795_084_200;
+
+    #[test]
+    fn an_epub_is_dated_from_its_export_then_source_date_epoch_then_now() {
+        let (modified, note) = epub_modified(Some(TIME), Some("1"), 2).unwrap();
+        assert_eq!(modified.unix_seconds(), TIME);
+        assert!(note.is_none());
+
+        let (modified, note) = epub_modified(None, Some(&format!(" {TIME} ")), 2).unwrap();
+        assert_eq!(modified.unix_seconds(), TIME);
+        assert!(note.is_none(), "a reproducible time is not reported");
+
+        let (modified, note) = epub_modified(None, None, TIME).unwrap();
+        assert_eq!(modified.unix_seconds(), TIME);
+        let note = note.expect("the time of the export is reported");
+        assert_eq!(note.severity, DiagnosticSeverity::Information);
+        assert!(
+            note.message.contains("2026-11-19T10:30:00Z"),
+            "{}",
+            note.message
+        );
+        // An empty variable counts as unset.
+        assert!(epub_modified(None, Some(""), TIME).unwrap().1.is_some());
+
+        for (given, variable) in [(Some(0), None), (None, Some("soon")), (None, Some("1"))] {
+            let error = epub_modified(given, variable, TIME).unwrap_err();
+            assert!(
+                error.contains("1980 to 2107") || error.contains("not a number"),
+                "{error}"
+            );
+        }
+    }
 }

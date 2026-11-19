@@ -1,4 +1,4 @@
-//! The view trees of an export mapped to a [`KindleBook`]: chapters in the plan's order,
+//! The view trees of an export mapped to a [`Book`]: chapters in the plan's order,
 //! headings moved down by each page's depth, cross references made links inside the book
 //! where their target is in it, and every id the pages define given a generated anchor.
 //!
@@ -14,20 +14,16 @@ use adoc_dom::SourceSpan;
 use adoc_render::{DiagramView, ResolvedLink, ViewBlock, ViewInline, ViewKind, ViewListItem};
 
 use crate::book::{
-    Block, Cell, Chapter, Inline, KindleBook, Link, Note, ParagraphClass, Row, Target, TocEntry,
+    AsideKind, Block, Book, Cell, Chapter, Inline, InlineStyle, Link, Note, ParagraphClass, Row,
+    Target, TocEntry,
 };
-use crate::{
-    metadata, BookItem, KindleDiagnostic, KindleDocument, KindleOptions, KindlePage, KindleSeverity,
-};
+use crate::{metadata, BookItem, Diagnostic, Document, Format, Options, Page, Severity};
 
 /// How many levels of a page's sections the table of contents lists below the page.
 const TOC_SECTION_LEVELS: u8 = 2;
 
 /// Maps `document` to a book, with what could not be kept as it was.
-pub(crate) fn build(
-    document: &KindleDocument,
-    options: &KindleOptions,
-) -> (KindleBook, Vec<KindleDiagnostic>) {
+pub(crate) fn build(document: &Document, options: &Options) -> (Book, Vec<Diagnostic>) {
     let units = units(document);
     let labels = Labels::collect(&units);
     let pages: HashMap<PathBuf, usize> = units
@@ -49,6 +45,7 @@ pub(crate) fn build(
         notes_used: Vec::new(),
         diagnostics: Vec::new(),
         in_table: false,
+        section_level: 0,
         media: crate::media::Media::default(),
     };
     let mut chapters = Vec::new();
@@ -89,9 +86,32 @@ pub(crate) fn build(
             ..Chapter::default()
         });
     }
-    let metadata = metadata::metadata(document, options);
+    let (metadata, defaults) = metadata::metadata(document, options);
+    if options.format == Format::Epub {
+        mapper.span = None;
+        // An EPUB's metadata is read by reading systems and stores: what was not given is
+        // said, never invented silently (EPUB PRD §5.1, §5.6). A Kindle book's is as before.
+        if defaults.title {
+            mapper.warn(
+                None,
+                format!(
+                    "the book has no title, so it is titled {:?}; give the page a title or the export one",
+                    metadata.title
+                ),
+            );
+        }
+        if let Some(given) = &defaults.language {
+            let message = match given {
+                Some(given) => format!(
+                    "the language {given:?} is not a language tag such as en or en-GB, so the book is marked English (en)"
+                ),
+                None => "the book names no language (the lang attribute, or the export's), so it is marked English (en), which a screen reader then speaks it as".to_owned(),
+            };
+            mapper.warn(None, message);
+        }
+    }
     let cover = mapper.cover(document);
-    let book = KindleBook {
+    let book = Book {
         metadata,
         chapters,
         toc: toc.finish(),
@@ -107,7 +127,7 @@ fn chapter_id(index: usize) -> String {
 
 /// One unit of the reading order, before mapping.
 enum Unit<'a> {
-    Page(&'a KindlePage),
+    Page(&'a Page),
     /// A part's title (level 0 in the table of contents, a top heading in the text) or a
     /// heading of the navigation with no page of its own.
     Title {
@@ -125,10 +145,10 @@ impl Unit<'_> {
     }
 }
 
-fn units(document: &KindleDocument) -> Vec<Unit<'_>> {
+fn units(document: &Document) -> Vec<Unit<'_>> {
     match document {
-        KindleDocument::Article(page) => vec![Unit::Page(page)],
-        KindleDocument::Book(book) => book
+        Document::Article(page) => vec![Unit::Page(page)],
+        Document::Book(book) => book
             .items
             .iter()
             .map(|item| match item {
@@ -318,7 +338,7 @@ struct Mapper<'a> {
     labels: &'a Labels,
     /// The chapter each page of the book is.
     pages: &'a HashMap<PathBuf, usize>,
-    options: &'a KindleOptions,
+    options: &'a Options,
     chapter: usize,
     /// The page being mapped.
     source: PathBuf,
@@ -328,16 +348,18 @@ struct Mapper<'a> {
     footnotes: BTreeMap<u32, Vec<ViewInline>>,
     /// The footnotes the page's marks used, in order, with the first mark's anchor.
     notes_used: Vec<(u32, Option<String>)>,
-    diagnostics: Vec<KindleDiagnostic>,
+    diagnostics: Vec<Diagnostic>,
     /// Whether the blocks being mapped are in a table's cell.
     in_table: bool,
+    /// The level of the page's last section, 0 at its title, to find a skipped level.
+    section_level: u8,
     media: crate::media::Media,
 }
 
 impl Mapper<'_> {
     /// The cover: the export's own picture, else the document's `front-cover-image` (a book's
     /// from its first page, which is read with the book's attributes).
-    fn cover(&mut self, document: &KindleDocument) -> Option<usize> {
+    fn cover(&mut self, document: &Document) -> Option<usize> {
         self.span = None;
         if let Some(path) = self.options.cover.clone() {
             return match self.load(&path) {
@@ -349,8 +371,8 @@ impl Mapper<'_> {
             };
         }
         let first = match document {
-            KindleDocument::Article(page) => Some(page),
-            KindleDocument::Book(book) => book.items.iter().find_map(|item| match item {
+            Document::Article(page) => Some(page),
+            Document::Book(book) => book.items.iter().find_map(|item| match item {
                 BookItem::Page(page) => Some(page),
                 _ => None,
             }),
@@ -382,16 +404,17 @@ impl Mapper<'_> {
     }
 
     fn warn(&mut self, span: Option<&SourceSpan>, message: String) {
-        self.diagnostics.push(KindleDiagnostic {
-            severity: KindleSeverity::Warning,
+        self.diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
             message,
             source: span.or(self.span.as_ref()).cloned(),
         });
     }
 
-    fn page(&mut self, page: &KindlePage, index: usize, toc: &mut Toc) -> Chapter {
+    fn page(&mut self, page: &Page, index: usize, toc: &mut Toc) -> Chapter {
         self.source = page.view.source.clone();
         self.span = None;
+        self.section_level = 0;
         self.footnotes = page
             .view
             .footnotes
@@ -535,6 +558,16 @@ impl Mapper<'_> {
                     content.push(Inline::Text(format!("{number} ")));
                 }
                 content.extend(self.inlines(title));
+                if self.options.format == Format::Epub && *level > self.section_level + 1 {
+                    let previous = self.section_level;
+                    self.warn(
+                        None,
+                        format!(
+                            "a level {level} section follows a level {previous} heading, skipping a level, so the outline a screen reader gives has a gap"
+                        ),
+                    );
+                }
+                self.section_level = *level;
                 let text = crate::book::plain_text(&content);
                 if let (Some(anchor), true) = (&anchor, *level <= TOC_SECTION_LEVELS) {
                     sections.push((*level, text, anchor.clone()));
@@ -623,6 +656,7 @@ impl Mapper<'_> {
                 inner.extend(self.nested(blocks, depth));
                 out.push(Block::Aside {
                     anchor,
+                    kind: AsideKind::Admonition(admonition_name(*kind)),
                     blocks: inner,
                 });
             }
@@ -671,8 +705,17 @@ impl Mapper<'_> {
                 });
             }
             ViewKind::Sidebar(blocks) | ViewKind::Example(blocks) => {
+                let kind = if matches!(block.kind, ViewKind::Sidebar(_)) {
+                    AsideKind::Sidebar
+                } else {
+                    AsideKind::Example
+                };
                 let blocks = self.nested(blocks, depth);
-                out.push(Block::Aside { anchor, blocks });
+                out.push(Block::Aside {
+                    anchor,
+                    kind,
+                    blocks,
+                });
             }
             ViewKind::Open(blocks) => {
                 if let Some(anchor) = anchor {
@@ -684,9 +727,10 @@ impl Mapper<'_> {
                 }
                 self.blocks(blocks, depth, out, sections);
             }
-            ViewKind::Table(table) if self.in_table => {
-                // A table in a table's cell: few readers lay one out, so each row is a line of
-                // text, its cells separated by bars (Kindle PRD §15, "Tables").
+            ViewKind::Table(table) if self.in_table && self.options.format == Format::Kindle => {
+                // A table in a table's cell: few Kindles lay one out, so each row is a line of
+                // text, its cells separated by bars (Kindle PRD §15, "Tables"). An EPUB keeps
+                // it a table.
                 self.warn(
                     None,
                     "a table inside a table cell is exported as lines of text".to_owned(),
@@ -718,9 +762,19 @@ impl Mapper<'_> {
                 }
             }
             ViewKind::Table(table) => {
+                if self.options.format == Format::Epub && table.header.is_none() {
+                    self.warn(
+                        None,
+                        "the table has no header row, so a screen reader cannot name its columns"
+                            .to_owned(),
+                    );
+                }
                 let mut rows = Vec::new();
                 let was_in_table = std::mem::replace(&mut self.in_table, true);
-                let mut push = |mapper: &mut Self, cells: &[adoc_render::ViewCell], header| {
+                let mut push = |mapper: &mut Self,
+                                cells: &[adoc_render::ViewCell],
+                                header: bool,
+                                footer: bool| {
                     let cells = cells
                         .iter()
                         .map(|cell| Cell {
@@ -729,22 +783,26 @@ impl Mapper<'_> {
                             rowspan: u32::try_from(cell.rowspan.max(1)).unwrap_or(u32::MAX),
                         })
                         .collect();
-                    rows.push(Row { header, cells });
+                    rows.push(Row {
+                        header,
+                        footer,
+                        cells,
+                    });
                 };
                 if let Some(header) = &table.header {
-                    push(self, header, true);
+                    push(self, header, true, false);
                 }
                 for row in &table.rows {
-                    push(self, row, false);
+                    push(self, row, false, false);
                 }
                 if let Some(footer) = &table.footer {
-                    push(self, footer, false);
+                    push(self, footer, false, true);
                 }
                 self.in_table = was_in_table;
                 out.push(Block::Table { anchor, rows });
             }
             ViewKind::Image(image) => {
-                let alt = alt_of(image);
+                let alt = self.alt(image);
                 match self.picture(image) {
                     Some(asset) => out.push(Block::Figure { anchor, asset, alt }),
                     None => out.push(Block::Paragraph {
@@ -759,9 +817,10 @@ impl Mapper<'_> {
                     adoc_dom::MediaKind::Audio => "audio",
                     adoc_dom::MediaKind::Video => "video",
                 };
+                let book = self.options.format.book();
                 self.warn(
                     None,
-                    format!("a Kindle book cannot play {kind}; it is exported as its address"),
+                    format!("{book} cannot play {kind}; it is exported as its address"),
                 );
                 let content = targets
                     .iter()
@@ -873,6 +932,23 @@ impl Mapper<'_> {
         }
     }
 
+    /// An image's description, else its file's name; for an EPUB, a missing description is
+    /// said, since a screen reader then reads the file's name aloud.
+    fn alt(&mut self, image: &adoc_render::ViewImage) -> String {
+        if self.options.format == Format::Epub
+            && (image.alt.trim().is_empty() || image.has_default_alt())
+        {
+            self.warn(
+                None,
+                format!(
+                    "the image {} has no description, so its file name stands for it",
+                    image.target
+                ),
+            );
+        }
+        alt_of(image)
+    }
+
     /// The picture a local image shows, embedded; `None`, with a warning, where it cannot be.
     fn picture(&mut self, image: &adoc_render::ViewImage) -> Option<usize> {
         let path = image.path.as_ref()?;
@@ -892,7 +968,8 @@ impl Mapper<'_> {
     }
 
     fn load(&mut self, path: &std::path::Path) -> Result<usize, String> {
-        self.media.load(path, &self.options.access)
+        self.media
+            .load(path, &self.options.access, self.options.format)
     }
 
     /// What an image that is not embedded becomes: its description, and a link to a remote
@@ -971,7 +1048,7 @@ impl Mapper<'_> {
                 }
             }
             ViewInline::Image(image) => {
-                let alt = alt_of(image);
+                let alt = self.alt(image);
                 match self.picture(image) {
                     Some(asset) => out.push(Inline::Image { asset, alt }),
                     None => out.extend(self.picture_fallback(image, alt)),
@@ -992,6 +1069,29 @@ impl Mapper<'_> {
                 });
             }
             ViewInline::LineBreak => out.push(Inline::LineBreak),
+            ViewInline::Keyboard(keys) if self.options.format == Format::Epub => {
+                for (index, key) in keys.iter().enumerate() {
+                    if index > 0 {
+                        out.push(Inline::Text("+".to_owned()));
+                    }
+                    out.push(Inline::Styled {
+                        style: InlineStyle::Keyboard,
+                        content: vec![Inline::Text(key.clone())],
+                    });
+                }
+            }
+            ViewInline::Button(text) if self.options.format == Format::Epub => {
+                out.push(Inline::Styled {
+                    style: InlineStyle::Button,
+                    content: vec![Inline::Text(text.clone())],
+                });
+            }
+            ViewInline::Menu(items) if self.options.format == Format::Epub => {
+                out.push(Inline::Styled {
+                    style: InlineStyle::Menu,
+                    content: vec![Inline::Text(items.join(" › "))],
+                });
+            }
             ViewInline::Keyboard(keys) => {
                 out.push(Inline::Code(vec![Inline::Text(keys.join("+"))]));
             }
@@ -1163,6 +1263,17 @@ fn attribution_paragraph(attribution: Option<&str>, citation: Option<&str>) -> O
         class: ParagraphClass::Attribution,
         content: vec![Inline::Text(text)],
     })
+}
+
+/// An admonition's kind as a name, for a class.
+fn admonition_name(kind: adoc_dom::AdmonitionKind) -> &'static str {
+    match kind {
+        adoc_dom::AdmonitionKind::Note => "note",
+        adoc_dom::AdmonitionKind::Tip => "tip",
+        adoc_dom::AdmonitionKind::Important => "important",
+        adoc_dom::AdmonitionKind::Caution => "caution",
+        adoc_dom::AdmonitionKind::Warning => "warning",
+    }
 }
 
 fn admonition_label(kind: adoc_dom::AdmonitionKind) -> &'static str {
