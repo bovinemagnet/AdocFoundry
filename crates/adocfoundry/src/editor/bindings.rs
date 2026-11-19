@@ -624,6 +624,7 @@ mod tests {
             // every crate.
             ids::EXPORT_DOCBOOK_PAGE,
             ids::EXPORT_DOCBOOK_COMPONENT,
+            ids::EXPORT_DOCBOOK_PROFILE,
         ];
         let engine = Engine::new(Settings::default());
         let missing: Vec<&str> = engine

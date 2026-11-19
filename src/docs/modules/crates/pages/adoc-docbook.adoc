@@ -7,7 +7,7 @@ Paul Snow
 It is at layer L2, beside `adoc-render` and `adoc-epub`.
 The specification is `docs/prd/PRD-AdocFoundry_DocBook_Export.md` in the repository, which is not part of this site.
 
-NOTE: The crate is the DocBook export of epic #615, built in packages: the crate and its XML writer (DocBook 1/9, #649), the engine's feature (DocBook 2/9, #650), a book's structure and metadata (DocBook 3/9, #651), rich blocks, inlines and CALS tables (DocBook 4/9, #652), pictures, diagrams, formulas and the assets folder (DocBook 5/9, #653), and identifiers and cross references (DocBook 6/9, #654).
+NOTE: The crate is the DocBook export of epic #615, built in packages: the crate and its XML writer (DocBook 1/9, #649), the engine's feature (DocBook 2/9, #650), a book's structure and metadata (DocBook 3/9, #651), rich blocks, inlines and CALS tables (DocBook 4/9, #652), pictures, diagrams, formulas and the assets folder (DocBook 5/9, #653), identifiers and cross references (DocBook 6/9, #654), and settings and publication profiles (DocBook 7/9, #655).
 The crate is headless.
 The engine reaches it through its `docbook` feature (the second package, DocBook 2/9, issue #650), which the app, the command line and the MCP server do not yet name.
 Later packages wire those in.
@@ -374,6 +374,12 @@ Then, inside the job's one commit, the old assets folder is moved aside, the new
 Only an assets folder that is provably the export's own is replaced or removed.
 The engine starts no diagram program for DocBook: a Graphviz, PlantUML or D2 diagram is taken from the diagram cache or keeps its source, with a warning.
 See xref:developer:engine.adoc#the-export-service[the export service] for the details.
+
+The `[docbook]` settings table has one key, `assets`, which chooses between copying pictures beside the document (`"copy"`, the default) and referring to them where they are (`"reference"`).
+`[docbook.profiles.<name>]` saves a publication: one of `page`, `component` or `nav`, an `.xml` `output`, `attributes` and `assets`.
+`export.docbook_profile` exports one.
+The settings are read in every build, with or without the `docbook` feature.
+See xref:ROOT:settings.adoc#docbook-settings[DocBook export settings] for the keys.
 
 == Same input, same bytes
 

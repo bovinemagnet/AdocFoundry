@@ -738,3 +738,203 @@ fn docbook_internal_links_resolve() {
         "{xml}"
     );
 }
+
+/// PRD §11 test 17: page, component and navigation profiles export the right documents;
+/// `[docbook]` gives the defaults and a profile overrides them; invalid profiles are refused as
+/// the settings are read; an output outside the workspace, a missing component and an assets
+/// folder that is not the export's own fail explicitly.
+#[test]
+fn docbook_profiles_resolve_and_validate() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("book");
+    copy_tree(&fixture("pdf/book"), &root);
+    fs::create_dir_all(root.join("taken_assets")).unwrap();
+    fs::write(root.join("taken_assets/notes.txt"), "mine").unwrap();
+    fs::write(
+        root.join(".adocfoundry.toml"),
+        r#"
+[docbook]
+assets = "reference"
+
+[docbook.profiles.page]
+page = "guide/modules/ROOT/pages/install.adoc"
+output = "build/install.xml"
+assets = "copy"
+
+[docbook.profiles.handbook]
+component = "1.0@guide"
+
+[docbook.profiles.admin]
+nav = ["guide/modules/admin/nav.adoc"]
+output = "build/admin.xml"
+
+[docbook.profiles.away]
+page = "guide/modules/ROOT/pages/install.adoc"
+output = "../away.xml"
+
+[docbook.profiles.taken]
+page = "guide/modules/ROOT/pages/install.adoc"
+output = "taken.xml"
+
+[docbook.profiles.wrong]
+page = "guide/modules/ROOT/pages/install.adoc"
+output = "wrong.dbk"
+
+[docbook.profiles.odd]
+page = "guide/modules/ROOT/pages/install.adoc"
+theme = "default"
+
+[docbook.profiles.bad-assets]
+page = "guide/modules/ROOT/pages/install.adoc"
+assets = "move"
+
+[docbook.profiles.unknown]
+component = "nowhere"
+"#,
+    )
+    .unwrap();
+    let mut settings = Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    // Invalid profiles are refused when the settings are read.
+    for name in [
+        "docbook.profiles.wrong",
+        "docbook.profiles.odd",
+        "docbook.profiles.bad-assets",
+    ] {
+        assert!(
+            settings
+                .warnings
+                .iter()
+                .any(|warning| warning.contains(name)),
+            "{name}: {:?}",
+            settings.warnings
+        );
+    }
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    assert_eq!(
+        engine.docbook_profiles(),
+        ["admin", "away", "handbook", "page", "taken", "unknown"]
+    );
+
+    // The page profile: its own output, and its own asset policy over `[docbook]`'s.
+    let args = engine.docbook_profile_export_args("page").unwrap();
+    assert_eq!(args.output, root.join("build/install.xml"));
+    assert_eq!(args.assets, Some(adoc_engine::DocBookAssets::Copy));
+    let summary = engine.export_docbook_blocking(args, WAIT).unwrap();
+    assert_eq!(summary.sources, [page(&root, "ROOT/pages/install.adoc")]);
+    assert!(document_text(&root.join("build/install.xml")).contains("Install"));
+
+    // The component profile: `<name>.xml` at the root, the whole book, `[docbook]`'s policy.
+    let args = engine.docbook_profile_export_args("handbook").unwrap();
+    assert_eq!(args.output, root.join("handbook.xml"));
+    assert_eq!(args.assets, None, "the default is applied on export");
+    let summary = engine.export_docbook_blocking(args, WAIT).unwrap();
+    assert_eq!(summary.sources.len(), 8);
+
+    // The navigation profile: the start page as a preface, then the administration guide.
+    let args = engine.docbook_profile_export_args("admin").unwrap();
+    let summary = engine.export_docbook_blocking(args, WAIT).unwrap();
+    assert_eq!(summary.sources[0], page(&root, "ROOT/pages/index.adoc"));
+    let admin = root.join("guide/modules/admin");
+    assert!(summary.sources[1..]
+        .iter()
+        .all(|source| source.starts_with(&admin)));
+
+    // Through the command, as the app and MCP server export a profile.
+    fs::remove_file(root.join("build/install.xml")).unwrap();
+    engine
+        .invoke(
+            ids::EXPORT_DOCBOOK_PROFILE,
+            CommandArgs::Profile("page".to_owned()),
+        )
+        .unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    for _ in 0..200 {
+        engine.pump();
+        if root.join("build/install.xml").is_file() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(root.join("build/install.xml").is_file());
+
+    // An output outside the workspace is refused; so, found without exporting, are a missing
+    // component and an assets folder holding another's files.
+    let error = engine.docbook_profile_export_args("away").unwrap_err();
+    assert!(matches!(error, EngineError::Refused(_)), "{error:?}");
+    assert!(!directory.path().join("away.xml").exists());
+    assert!(engine.docbook_profile_problems("page").is_empty());
+    let problems = engine.docbook_profile_problems("unknown");
+    assert!(
+        problems.iter().any(|problem| problem.contains("nowhere")),
+        "{problems:?}"
+    );
+    let problems = engine.docbook_profile_problems("taken");
+    assert!(
+        problems.iter().any(|problem| problem.contains("notes.txt")),
+        "{problems:?}"
+    );
+    assert!(engine.docbook_profile_export_args("missing").is_err());
+    assert!(engine.docbook_profile_export_args("wrong").is_err());
+}
+
+/// PRD §11 test 18: one book published as PDF and as DocBook through their own profiles takes
+/// the same pages in the same order, and neither format's settings change the other's output.
+#[cfg(feature = "typst")]
+#[test]
+fn docbook_settings_leave_pdf_unchanged() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("book");
+    copy_tree(&fixture("pdf/book"), &root);
+    let open = |settings_text: &str| {
+        fs::write(root.join(".adocfoundry.toml"), settings_text).unwrap();
+        let mut settings = Settings::load(None, Some(&root)).unwrap();
+        settings.git.enabled = false;
+        let mut engine = Engine::new(settings);
+        engine.open_workspace(vec![root.clone()]).unwrap();
+        assert!(engine.wait_for_workers(WAIT));
+        engine
+    };
+    let profiles = r#"
+[pdf.profiles.guide]
+component = "1.0@guide"
+output = "guide.pdf"
+
+[docbook.profiles.guide]
+component = "1.0@guide"
+output = "guide.xml"
+"#;
+    let mut engine = open(profiles);
+    let pdf_settings = engine.settings().pdf.clone();
+    let pdf_args = engine.profile_export_args("guide").unwrap();
+    assert_eq!(pdf_args.output, root.join("guide.pdf"));
+    let pdf = engine
+        .export_blocking(pdf_args, WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let docbook_args = engine.docbook_profile_export_args("guide").unwrap();
+    let profiled = engine
+        .export_docbook_blocking(docbook_args, WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        profiled.sources, pdf.sources,
+        "the same pages, in the same order"
+    );
+    let document = fs::read(root.join("guide.xml")).unwrap();
+
+    // `[pdf]` changed leaves the DocBook as it was; `[docbook]` changed leaves the PDF's
+    // settings and profile as they were.
+    let mut engine = open(&format!(
+        "{profiles}\n[pdf]\ntheme = \"default-with-font-fallbacks\"\nsite_url = \"\"\n"
+    ));
+    engine
+        .export_docbook_blocking(engine.docbook_profile_export_args("guide").unwrap(), WAIT)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(fs::read(root.join("guide.xml")).unwrap(), document);
+    let engine = open(&format!("{profiles}\n[docbook]\nassets = \"reference\"\n"));
+    let after = engine.profile_export_args("guide").unwrap();
+    assert_eq!(after.output, root.join("guide.pdf"));
+    assert_eq!(after.theme, None);
+    assert_eq!(engine.settings().pdf, pdf_settings);
+}

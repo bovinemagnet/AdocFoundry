@@ -792,6 +792,17 @@ pub(crate) fn register_export(registry: &mut CommandRegistry) {
             ),
             docbook_command,
         );
+        register(
+            registry,
+            spec(
+                ids::EXPORT_DOCBOOK_PROFILE,
+                "Export DocBook Profile…",
+                CommandCategory::Workspace,
+                None,
+                CommandContext::Always,
+            ),
+            docbook_profile_command,
+        );
     }
     #[cfg(feature = "docx")]
     {
@@ -875,6 +886,23 @@ fn docbook_command(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutc
             expected: "an export target and an .xml output path",
         });
     };
+    engine.start_export(Request::DocBook(args), false)?;
+    Ok(CommandOutcome::Done)
+}
+
+/// Exports a DocBook publication profile to the output it names.
+#[cfg(feature = "docbook")]
+fn docbook_profile_command(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Profile(name) = args else {
+        return Err(EngineError::InvalidArguments {
+            command: ids::EXPORT_DOCBOOK_PROFILE,
+            expected: "a profile name",
+        });
+    };
+    let args = engine.docbook_profile_export_args(&name)?;
     engine.start_export(Request::DocBook(args), false)?;
     Ok(CommandOutcome::Done)
 }
@@ -1212,7 +1240,7 @@ pub fn docbook_assets_folder(output: &Path) -> PathBuf {
 /// whose assets folder is a link, is not a folder, or holds anything the export did not write:
 /// that folder is replaced whole, so it must be the export's own.
 #[cfg(feature = "docbook")]
-fn check_docbook_output(output: &Path) -> Result<(), EngineError> {
+pub(crate) fn check_docbook_output(output: &Path) -> Result<(), EngineError> {
     let xml = output
         .extension()
         .and_then(|extension| extension.to_str())
@@ -3115,7 +3143,12 @@ impl Engine {
         } = written;
         let failed = failed_diagrams(&arranged);
         let document = to_docbook(arranged, |path| self.docbook_key(path));
-        let assets = match args.assets.unwrap_or_default() {
+        // The export's own (a profile's), else `[docbook]`'s, else copied.
+        let assets = match args
+            .assets
+            .or(self.settings.docbook.assets)
+            .unwrap_or_default()
+        {
             DocBookAssets::Copy => adoc_docbook::AssetPolicy::Copy {
                 folder: docbook_assets_folder(&args.output)
                     .file_name()

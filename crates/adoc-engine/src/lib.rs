@@ -14,6 +14,7 @@ pub mod commands;
 mod commit;
 mod deletion;
 mod discovery;
+mod docbook_settings;
 mod doctor;
 mod document;
 mod docx_look;
@@ -113,6 +114,7 @@ pub use command::{
 };
 pub use deletion::{KeptDeletion, DELETED_DIR};
 pub use discovery::{IncomingReference, ReferenceKind, ResourceEntry, ResourceQuery};
+pub use docbook_settings::{DocBookProfile, DocBookSettings};
 pub use doctor::{Doctor, DoctorLine, DoctorReport, DoctorSection, PROBE_TIMEOUT};
 pub use document::{DocumentId, OpenDocument};
 pub use docx_look::{DocxLook, DocxLookItem, ExportLook, LookChoice, LookKind};

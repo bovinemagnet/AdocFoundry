@@ -358,6 +358,9 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `Peek`, `E
 |`export.epub_profile`
 |Export a `[epub.profiles.<name>]` EPUB profile, with `CommandArgs::Profile`; see <<the-export-service>>.
 
+|`export.docbook_profile`
+|Export a `[docbook.profiles.<name>]` DocBook profile ("Export DocBook Profile…"), with `CommandArgs::Profile`; see <<the-export-service>>. It is registered only with the `docbook` feature.
+
 |`export.docx_profile`
 |Export a `[docx.profiles.<name>]` Word profile, with `CommandArgs::Profile`; see <<the-export-service>>.
 
@@ -615,6 +618,17 @@ They are registered only with the `docbook` feature, which no front end names ye
 DocBook goes through the same publication plan as PDF, Word, Kindle and EPUB: the same pages in the same order, unsaved buffers included (`docbook_and_pdf_select_the_same_pages`).
 It finishes as the other formats do, with `EngineEvent::ExportFinished`, and `Engine::export_docbook_blocking(args, timeout)` serves front ends without an event loop.
 A page that asks for `:export-read-only:` is refused, since `ExportFormat::DocBook` carries no editing restriction.
+
+`[docbook]` is read by `docbook_settings.rs` (`DocBookSettings`, reached as `Settings::docbook` and built without the `docbook` feature too, so a settings file reads the same in every build).
+It has one key, `assets`: `"copy"` (the default) or `"reference"`.
+An unknown key or a bad value is a warning when the settings are read, as for every table.
+`[docbook.profiles.<name>]` (`DocBookProfile`) is a DocBook publication.
+It has exactly one of `page`, `component` or `nav`, which repeats the content and never names another format's profile, an `output` (an `.xml` file inside the first workspace root, `<name>.xml` there when unset), `attributes` and `assets`, which overrides `[docbook] assets`.
+Any other key, an output that is not `.xml` and an unknown `assets` value are refused when the settings are read.
+An export's own policy wins over the profile's, which wins over `[docbook]`'s, which wins over copying.
+The assets folder's name, the self-check and the diagnostic threshold are not settings: the folder is always `<name>_assets`, since the rule for replacing it depends on it, the check always runs, and the threshold is the command line's `--fail-on`.
+`Engine::docbook_profile_export_args(name)` gives the `DocBookExportArgs` (an output outside the workspace is refused), `docbook_profile_problems(name)` finds, without exporting, a missing component or version or an assets folder holding files the export did not write, and `docbook_profiles()` lists the names.
+No PDF setting is read for DocBook and DocBook's change nothing in another format, which `docbook_settings_leave_pdf_unchanged` holds; `docbook_profiles_resolve_and_validate` holds the profiles.
 
 The output is `<name>.xml` with its pictures in `<name>_assets/` beside it (`docbook_assets_folder`).
 Both are written to a staging folder beside the output first.

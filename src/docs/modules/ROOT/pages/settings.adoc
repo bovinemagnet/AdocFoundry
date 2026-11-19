@@ -125,6 +125,13 @@ modified = "2026-11-19"
 page = "docs/modules/ROOT/pages/quick-start.adoc"
 output = "build/quick-start.epub"
 
+[docbook]                        # DocBook export; nothing here is read for other formats
+assets = "copy"                  # copy | reference
+
+[docbook.profiles.quick-start]   # a named DocBook publication, run by name
+page = "docs/modules/ROOT/pages/quick-start.adoc"
+output = "build/quick-start.xml"
+
 [spelling]
 enabled = true                   # underline misspelt words in prose
 language = "en_GB"               # for pages with no lang attribute
@@ -459,6 +466,11 @@ These settings never affect PDF export (`pdf.theme`), HTML or the Antora site.
 |tables
 |see <<epub-settings>>
 |The EPUB export's metadata, stylesheet and repeatable date, and named EPUB publication profiles in `[epub.profiles.<name>]`. See <<epub-settings>>.
+
+|`docbook.*`
+|tables
+|see <<docbook-settings>>
+|Where the DocBook export puts pictures, and named DocBook publication profiles in `[docbook.profiles.<name>]`. See <<docbook-settings>>.
 
 |`history.enabled`
 |boolean
@@ -1083,6 +1095,64 @@ component = "2.0@guide"
 output = "build/admin-guide.epub"
 cover = "images/cover.png"
 css = "epub/extra.css"
+----
+
+[#docbook-settings]
+== DocBook export settings
+
+The `[docbook]` table says where the DocBook documents the engine writes keep their pictures, and `[docbook.profiles.<name>]` saves DocBook publications under a name.
+Nothing is read from `[pdf]`, `[docx]`, `[kindle]` or `[epub]`, and nothing here changes another format.
+An unknown key, or an `assets` value that is neither `"copy"` nor `"reference"`, is reported when the settings are read.
+
+[cols="2,2,2,4"]
+|===
+|Key |Type |Default |Meaning
+
+|`docbook.assets`
+|string
+|`"copy"`
+|`"copy"` writes each picture once into the folder beside the document that is named after it (`guide.xml` gives `guide_assets/`), so the two can be moved together. `"reference"` copies nothing and refers to each picture where it is, by a path from the document's folder; such a document is not portable.
+
+|`docbook.profiles.<name>`
+|table
+|none
+|A named DocBook publication. See <<docbook-profiles>>.
+|===
+
+The assets folder is always named `<name>_assets`, because the rule for replacing it safely depends on the name.
+The export always checks its own document, and the diagnostic level that fails an export is the command line's `--fail-on`, so neither is a setting.
+
+[#docbook-profiles]
+=== DocBook profiles
+
+A profile has exactly one of these.
+
+* `page`, a page.
+* `component`, a component version as `version@name` or `name`.
+* `nav`, an array of navigation files.
+
+It may also have these keys.
+
+* `output`, an `.xml` file inside the first workspace root.
+It is `<name>.xml` there by default.
+* `attributes`, which are set for the export.
+* `assets`, which replaces `[docbook] assets` for this profile.
+
+A profile repeats its content: it never names a PDF, Word, Kindle or EPUB profile.
+Any other key, an output that is not an `.xml` file and an unknown `assets` value are refused when the settings are read.
+
+An export's own choice, from the command line, wins over the profile's, which wins over `[docbook]`'s, which wins over copying.
+The workspace's settings override the user's, key by key, and a profile replaces one of the same name whole.
+
+[source,toml]
+----
+[docbook]
+assets = "copy"
+
+[docbook.profiles.admin-guide]
+component = "2.0@guide"
+output = "build/admin-guide.xml"
+assets = "reference"
 ----
 
 == What a workspace file may set
