@@ -293,6 +293,7 @@ fn write_tools_need_allow_write() {
         "create_project",
         "create_partial",
         "edit_page",
+        "export_docbook",
         "export_docx",
         "export_epub",
         "export_kindle",

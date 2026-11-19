@@ -472,6 +472,8 @@ pub struct Settings {
     pub kindle: crate::KindleSettings,
     /// `[epub]`: EPUB books' defaults and profiles, apart from every other format's.
     pub epub: crate::EpubSettings,
+    /// `[docbook]`: DocBook documents' defaults and profiles, apart from every other format's.
+    pub docbook: crate::DocBookSettings,
     pub updates: UpdateSettings,
     pub sidebar: SidebarSettings,
     pub history: HistorySettings,
@@ -879,6 +881,14 @@ impl Settings {
                 }
                 if section == "epub" {
                     for (name, problem) in crate::epub_settings::apply(&mut self.epub, key, value) {
+                        self.warn(&source, &name, &problem);
+                    }
+                    continue;
+                }
+                if section == "docbook" {
+                    for (name, problem) in
+                        crate::docbook_settings::apply(&mut self.docbook, key, value)
+                    {
                         self.warn(&source, &name, &problem);
                     }
                     continue;

@@ -9,7 +9,7 @@ repository.workspace = true
 [dependencies]
 adoc-core.workspace = true
 adoc-dom = { workspace = true, features = ["comparison"] }
-adoc-engine = { workspace = true, features = ["typst", "git", "docx", "kindle", "epub"] }
+adoc-engine = { workspace = true, features = ["typst", "git", "docx", "kindle", "epub", "docbook"] }
 adoc-index.workspace = true
 adoc-render.workspace = true
 serde_json.workspace = true
@@ -19,6 +19,8 @@ serde_json.workspace = true
 adoc-docx = { workspace = true, features = ["test-support"] }
 # Reading written EPUB books back in `epub_cli_exports_and_gates`.
 adoc-epub = { workspace = true, features = ["test-support"] }
+# Checking written DocBook against its schema in `docbook_cli_exports_and_gates`.
+adoc-docbook = { workspace = true, features = ["test-support"] }
 adoc-git = { workspace = true, features = ["test-support"] }
 hayro.workspace = true
 insta.workspace = true

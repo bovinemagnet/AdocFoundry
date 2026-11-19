@@ -11833,3 +11833,130 @@ fn a_workspace_without_a_playbook_says_so_until_dismissed(cx: &mut TestAppContex
     redraw(&app, &mut cx);
     assert!(cx.debug_bounds("playbook-notice-dismiss").is_none());
 }
+
+/// The DocBook export PRD, §11 test 21: Export Component as DocBook… and Export Page as
+/// DocBook… write, through the save dialog, the documents the engine writes, with their
+/// pictures beside them; Export DocBook Profile… exports the profile chosen; each is reported,
+/// and no preview is opened nor any application offered.
+#[gpui::test]
+fn docbook_app_exports_through_engine(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("reference"));
+    copy_dir(&fixture("docx/reference"), &root);
+    std::fs::write(
+        root.join(".adocfoundry.toml"),
+        "[docbook.profiles.handbook]\ncomponent = \"2.0@manual\"\noutput = \"build/handbook.xml\"\n",
+    )
+    .unwrap();
+    let page = root.join("manual/modules/ROOT/pages/media.adoc");
+    let mut settings = Settings::default();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    let events = engine.subscribe();
+    let app = app_with(engine, cx);
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx.new(|cx| {
+            WorkspaceView::new(
+                app.clone(),
+                Some(root.clone()),
+                vec![page.clone()],
+                window,
+                cx,
+            )
+        });
+        Root::new(view, window, cx)
+    });
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| {
+            app.read(cx).engine.active().is_some() && !app.read(cx).engine.is_indexing()
+        })
+    }));
+    let tabs = cx.update(|_, cx| app.read(cx).engine.tab_order().len());
+
+    // The component, through the save dialog.
+    cx.dispatch_action(crate::editor::bindings::ExportComponentDocBook);
+    let output = directory.path().join("manual.xml");
+    let summary =
+        finish_export(&app, &events, &output, &mut cx).unwrap_or_else(|error| panic!("{error}"));
+    let from_app = std::fs::read_to_string(&output).unwrap();
+    assert!(from_app.contains("<book "), "{from_app}");
+    assert!(directory.path().join("manual_assets").is_dir());
+    let message = crate::workspace_view::export_message(&output, &Ok(summary.clone()));
+    assert!(
+        message.starts_with(&format!(
+            "Exported manual.xml ({} AsciiDoc pages)",
+            summary.pages
+        )),
+        "{message}"
+    );
+    assert_eq!(
+        crate::workspace_view::export_message(&output, &Err("no space".to_owned())),
+        "DocBook export failed: no space"
+    );
+    // No application is offered for the document, as one is for a PDF.
+    assert!(!crate::workspace_view::opens_after_export(&output));
+
+    // What the engine writes for the same component.
+    let from_engine = directory.path().join("engine/manual.xml");
+    cx.update(|_, cx| {
+        app.update(cx, |app, _| {
+            let (name, version) = ("manual".to_owned(), Some("2.0".to_owned()));
+            app.engine
+                .export_docbook_blocking(
+                    adoc_engine::DocBookExportArgs::new(
+                        adoc_engine::ExportTarget::Component { name, version },
+                        from_engine.clone(),
+                    ),
+                    std::time::Duration::from_secs(120),
+                )
+                .unwrap();
+        })
+    });
+    assert!(
+        std::fs::read_to_string(&from_engine).unwrap() == from_app,
+        "the app's document differs from the engine's"
+    );
+
+    // The active page, through the save dialog, once the engine's own export has reported.
+    events.try_iter().for_each(drop);
+    cx.dispatch_action(crate::editor::bindings::ExportPageDocBook);
+    let output = directory.path().join("media.xml");
+    let summary =
+        finish_export(&app, &events, &output, &mut cx).unwrap_or_else(|error| panic!("{error}"));
+    assert!(std::fs::read_to_string(&output)
+        .unwrap()
+        .contains("<article "));
+    assert!(directory.path().join("media_assets/i1.png").is_file());
+    assert_eq!(summary.sources, vec![page.clone()]);
+
+    // The profile, from the picker, to the output it names.
+    cx.dispatch_action(crate::editor::bindings::ExportDocBookProfile);
+    cx.run_until_parked();
+    cx.simulate_input("handbook");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    let mut finished = None;
+    assert!(drain_until(&app, &mut cx, |_| {
+        finished = finished.take().or_else(|| {
+            events.try_iter().find_map(|event| match event {
+                adoc_engine::EngineEvent::ExportFinished { output, result } => {
+                    Some((output, result))
+                }
+                _ => None,
+            })
+        });
+        finished.is_some()
+    }));
+    let (output, result) = finished.unwrap();
+    assert_eq!(output, root.join("build/handbook.xml"));
+    result.unwrap_or_else(|error| panic!("{error}"));
+    assert!(root.join("build/handbook_assets").is_dir());
+
+    // No tab or preview opened for any of them.
+    assert_eq!(
+        cx.update(|_, cx| app.read(cx).engine.tab_order().len()),
+        tabs
+    );
+}

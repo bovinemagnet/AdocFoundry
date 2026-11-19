@@ -157,6 +157,11 @@ pub trait DiagramProvider: Send + Sync {
     /// Forgets what the provider found out about its tools, so the next render looks again.
     /// Nothing by default.
     fn look_again(&self) {}
+    /// Whether rendering starts another program, which an export that must run in process
+    /// (DocBook) never asks for. No by default.
+    fn runs_a_program(&self) -> bool {
+        false
+    }
     /// The local files the diagram names for the renderer to read, such as a PlantUML
     /// `!include`, whose changes change the image. None by default.
     fn inputs(&self, _request: &DiagramRequest) -> Vec<PathBuf> {
@@ -218,6 +223,14 @@ impl Diagrams {
     #[must_use]
     pub fn supports(&self, kind: &str) -> bool {
         self.provider(kind).is_some()
+    }
+
+    /// Whether rendering a `kind` diagram starts another program: Graphviz, PlantUML, D2 and
+    /// the like, not Mermaid, which is drawn in process.
+    #[must_use]
+    pub fn runs_a_program(&self, kind: &str) -> bool {
+        self.provider(kind)
+            .is_some_and(|provider| provider.runs_a_program())
     }
 
     fn provider(&self, kind: &str) -> Option<&dyn DiagramProvider> {
@@ -353,6 +366,19 @@ mod tests {
     /// Only the Unix tests write and run scripts.
     #[cfg(unix)]
     static SPAWN: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn only_tools_run_a_program() {
+        let cache = DiagramCache::new(std::env::temp_dir().join("adocfoundry-runs-a-program"));
+        let diagrams = Diagrams::new(cache.clone());
+        for kind in ["graphviz", "dot", "plantuml", "uml", "d2"] {
+            assert!(diagrams.runs_a_program(kind), "{kind}");
+        }
+        for kind in ["mermaid", "unknown"] {
+            assert!(!diagrams.runs_a_program(kind), "{kind}");
+        }
+        assert!(!Diagrams::in_process(cache).runs_a_program("graphviz"));
+    }
 
     #[cfg(unix)]
     fn spawn_guard() -> MutexGuard<'static, ()> {

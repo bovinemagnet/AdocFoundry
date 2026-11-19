@@ -32,6 +32,7 @@ Output beyond `MAX_OUTPUT` is refused.
 `Diagrams` joins the providers and a `DiagramCache`.
 `render(request)` returns the path of the SVG, rendering and caching it when it is not cached.
 `cached` looks without rendering, `supports(kind)` asks whether a provider handles a kind, `in_use` lists the checksums shown since it was made (which pruning keeps), and `look_for_tools_again` makes every provider look for its tools again.
+`runs_a_program(kind)` says whether a kind is drawn by starting a program (Graphviz, PlantUML and D2) rather than in process, which lets the engine's DocBook export start none.
 `with_provider` adds a provider for kinds a layer above renders; the engine adds `StemProvider` for formulas this way.
 
 `DiagramCache` keeps `<workspace>/.cache/adocfoundry/diagrams` (`DiagramCache::for_workspace`) or any folder (`DiagramCache::new`).

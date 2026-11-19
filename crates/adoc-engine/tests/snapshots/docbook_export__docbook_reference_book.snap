@@ -1,0 +1,71 @@
+---
+source: crates/adoc-engine/tests/docbook_export.rs
+expression: xml
+---
+<?xml version="1.0" encoding="UTF-8"?>
+<book xmlns="http://docbook.org/ns/docbook" xmlns:xlink="http://www.w3.org/1999/xlink" version="5.2">
+<info><title>The Manual</title><author><personname>Paul Snow</personname></author><releaseinfo>2.0</releaseinfo></info>
+<preface xml:id="manual-2.0-ROOT-index"><title>The Manual</title>
+<para>The start page, exported as the book’s preface.</para>
+</preface>
+<part><title>Using the product</title>
+<chapter xml:id="manual-2.0-ROOT-install"><title>Installing</title>
+<section xml:id="manual-2.0-ROOT-install.requirements"><title>Requirements</title>
+<orderedlist numeration="arabic"><listitem><para>Download the archive.</para></listitem><listitem><para>Unpack it:</para><orderedlist numeration="loweralpha"><listitem><para>on Linux, with <literal>tar</literal>;</para></listitem><listitem><para>on Windows, with Explorer.</para></listitem></orderedlist>
+</listitem><listitem><para>Run the installer.</para><itemizedlist role="checklist"><listitem override="checkedbox"><para>Read the licence</para></listitem><listitem override="checkbox"><para>Register</para></listitem></itemizedlist>
+</listitem></orderedlist>
+<variablelist><varlistentry><term>Term</term><listitem><para>A description of the term.</para></listitem></varlistentry></variablelist>
+</section>
+<section xml:id="manual-2.0-ROOT-install._steps"><title>Steps</title>
+<para>The steps come from a partial.</para>
+<warning><para>NESTED-PARTIAL-MARKER: a partial included by another partial.</para>
+</warning>
+<formalpara><title>Starting the service</title><para><programlisting language="sh">systemctl start product<co xml:id="manual-2.0-ROOT-install.co1-1-1"/></programlisting></para></formalpara>
+<calloutlist><callout arearefs="manual-2.0-ROOT-install.co1-1-1"><para>Starts it now.</para></callout></calloutlist>
+<para>Special characters stay text: Ünïcødé, "quotes", 'apostrophes’, &amp; &lt;angle brackets&gt;, and 3 &gt; 2.</para>
+</section>
+<section xml:id="manual-2.0-ROOT-tables"><title>Tables</title>
+<table frame="all" rowsep="1" colsep="1"><title>Supported platforms</title><tgroup cols="3"><colspec colname="col_1" colwidth="1*" align="left"/><colspec colname="col_2" colwidth="1*" align="left"/><colspec colname="col_3" colwidth="1*" align="left"/><thead><row><entry align="left" valign="top"><para>Platform</para>
+</entry><entry align="left" valign="top"><para>Architecture</para>
+</entry><entry align="left" valign="top"><para>Status</para>
+</entry></row></thead><tbody><row><entry align="left" valign="top" morerows="1"><para>Linux</para>
+</entry><entry align="left" valign="top"><para>x86_64</para>
+</entry><entry align="left" valign="top"><para>Supported</para>
+</entry></row><row><entry align="left" valign="top"><para>aarch64</para>
+</entry><entry align="left" valign="top"><para>Supported</para>
+</entry></row><row><entry align="left" valign="top" namest="col_1" nameend="col_2"><para>Windows</para>
+</entry><entry align="left" valign="top"><para>Supported</para>
+</entry></row></tbody></tgroup></table>
+</section>
+</chapter>
+<chapter xml:id="manual-2.0-ROOT-media"><title>Media</title>
+<figure><title>The logo</title><mediaobject><imageobject><imagedata fileref="manual_assets/i1.png"/></imageobject><textobject><phrase>The product logo</phrase></textobject></mediaobject></figure>
+<figure><title>A photograph</title><mediaobject><imageobject><imagedata fileref="manual_assets/i2.jpg" contentwidth="120"/></imageobject><textobject><phrase>A photograph</phrase></textobject></mediaobject></figure>
+<figure><title>The pipeline</title><mediaobject><imageobject><imagedata fileref="manual_assets/i3.svg"/></imageobject><textobject><phrase>The pipeline drawn as SVG</phrase></textobject></mediaobject></figure>
+<informalfigure><mediaobject><imageobject><imagedata fileref="manual_assets/i4.svg"/></imageobject><textobject><phrase>A diagram</phrase></textobject></mediaobject></informalfigure>
+<para>The area of a circle is <inlineequation><alt>A = pi r^2</alt><inlinemediaobject><imageobject><imagedata fileref="manual_assets/i5.svg"/></imageobject><textobject><phrase role="math">A = pi r^2</phrase></textobject></inlinemediaobject></inlineequation>.</para>
+<informalequation><alt>sum_(i=1)^n i = (n(n+1))/2</alt><mediaobject><imageobject><imagedata fileref="manual_assets/i6.svg"/></imageobject><textobject><phrase role="math">sum_(i=1)^n i = (n(n+1))/2</phrase></textobject></mediaobject></informalequation>
+</chapter>
+<chapter xml:id="manual-2.0-ROOT-links"><title>Links</title>
+<para>See <link linkend="manual-2.0-ROOT-install.requirements">the requirements</link> and <link linkend="manual-2.0-admin-security">security</link>.
+The API is described in the API reference, outside this book.
+The project lives at <link xlink:href="https://example.com/product">its site</link>.</para>
+<para>A statement with a note.<footnote xml:id="manual-2.0-ROOT-links.fn1"><para>The note, written once.</para></footnote>
+Another statement with the same note.<footnoteref linkend="manual-2.0-ROOT-links.fn1"/></para>
+</chapter>
+</part>
+<part><title>Administration</title>
+<chapter xml:id="manual-2.0-admin-security"><title>Security</title>
+<section xml:id="manual-2.0-admin-security.keys"><title>Keys</title>
+<note><para>Keep the keys safe.</para>
+</note>
+<sidebar><title>Where keys live</title><para>A sidebar about where keys live.</para>
+</sidebar>
+<example><title>An example</title><para>An example of a key.</para>
+</example>
+<blockquote><attribution>A security engineer</attribution><para>Rotate keys often.</para>
+</blockquote>
+</section>
+</chapter>
+</part>
+</book>

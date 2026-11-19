@@ -1,0 +1,448 @@
+= adoc-docbook
+Paul Snow
+:revnumber: 0.0.0
+:description: DocBook export: DocBook 5.2 XML written in process from the view trees the engine builds, with no HTML in between.
+
+`adoc-docbook` turns a rendered view tree into a DocBook 5.2 document.
+It is at layer L2, beside `adoc-render` and `adoc-epub`.
+The specification is `docs/prd/PRD-AdocFoundry_DocBook_Export.md` in the repository, which is not part of this site.
+
+NOTE: The crate is the DocBook export of epic #615, built in nine packages, DocBook 1/9 to 9/9 (#649 to #657): the crate and its XML writer (DocBook 1/9, #649), the engine's feature (DocBook 2/9, #650), a book's structure and metadata (DocBook 3/9, #651), rich blocks, inlines and CALS tables (DocBook 4/9, #652), pictures, diagrams, formulas and the assets folder (DocBook 5/9, #653), identifiers and cross references (DocBook 6/9, #654), settings and publication profiles (DocBook 7/9, #655), the app, command line and MCP server (DocBook 8/9, #656), and conformance, regression and performance QA (DocBook 9/9, #657).
+The crate is headless.
+The engine reaches it through its `docbook` feature (the second package, DocBook 2/9, issue #650).
+The app, the command line and the MCP server name it too (DocBook 8/9, issue #656).
+
+== What it does
+
+`write_docbook(&DocBookDocument, &DocBookOptions)` writes the document in memory.
+The result is a `DocBookOutput`, or a `DocBookError`.
+
+`DocBookDocument` is either:
+
+* `Article(Page)`, a single page; or
+* `Book(Book)`, with a title, a subtitle, attributes and a list of `BookItem` values: `Part`, `Heading` or `Page`.
+
+A `Page` has a key, its view tree and its navigation depth.
+The crate reads the view trees the engine builds.
+AsciiDoc is not parsed again, and nothing passes through HTML.
+
+`DocBookOutput` holds the XML, a `String` in UTF-8 that starts with its XML declaration, and the diagnostics.
+A `Diagnostic` has a `Severity`, which is `Error` or `Warning`, and an optional source span.
+
+`DocBookOptions` holds `access`, the engine's `FileAccess`, which says which files may be read, and `assets`, an `AssetPolicy`.
+`DocBookOptions` also holds `page_urls`, each page's published address, for references out of the publication (see <<references>>).
+`DocBookOutput` holds `assets` beside the XML and the diagnostics: each is an `Asset` with a `name` and its `bytes`.
+
+== The document
+
+The root is `article` or `book` in the DocBook namespace `http://docbook.org/ns/docbook`, with the XLink namespace declared.
+It carries:
+
+* `version="5.2"`, the constant `VERSION`.
+The 5.2.1 schema accepts any text there and its Schematron only requires a version on the root, and 5.2 is what the documents of DocBook 5.2.1 carry;
+* `xml:lang`, from the `lang` attribute;
+* an `info` element, with the title first.
+
+== What is written so far
+
+* a page's title, sections and blocks, with their inlines (see <<content-mapping>>);
+* CALS tables;
+* a book's structure, from the engine's publication plan;
+* the metadata in the root's `info`;
+* pictures, diagrams, formulas and media (see <<pictures>>);
+* identifiers and cross references (see <<references>>).
+
+Every other construct has its own element.
+
+An article, chapter or section with nothing at all gets an empty `para`, since DocBook does not allow them empty.
+A page with no blocks of its own but pages under it needs no empty paragraph.
+
+[#content-mapping]
+== Blocks and inlines
+
+The mapping below is what the crate writes for each construct.
+A block's roles become the `role` of its element.
+
+[cols="2,3",options="header"]
+|===
+|AsciiDoc construct |DocBook element
+
+|Paragraph
+|`para`, or `formalpara` when it has a title.
+
+|Discrete heading
+|`bridgehead` with `renderas="sect<n>"`.
+
+|Unordered list
+|`itemizedlist`.
+
+|Ordered list
+|`orderedlist`, with `numeration` from the list style (`arabic`, `loweralpha`, `upperalpha`, `lowerroman` or `upperroman`) and `startingnumber` from `start`.
+
+|Checklist
+|`itemizedlist` with `role="checklist"`.
+Each item's `override` is `checkedbox` or `checkbox`, the marks that DocBook's stylesheets draw as ticked and empty boxes.
+The schema needs a name there, not a character.
+
+|Description list
+|`variablelist`, with `role="horizontal"` for that style.
+The `qanda` style gives a `qandaset`.
+
+|A list's title
+|The list's `title`.
+
+|Source block
+|`programlisting` with `language`, and `linenumbering="numbered"` when the block has `linenums`.
+
+|Callout
+|A `co` at the end of its line.
+The callout list after the listing is a `calloutlist`, each `callout` naming its marks in `arearefs`.
+A callout list whose numbers the listing does not mark becomes an `orderedlist`, with a warning.
+
+|Literal block
+|`screen`.
+
+|Titled listing or literal block
+|Put in a `formalpara`, as Asciidoctor writes it.
+
+|Admonition
+|`note`, `tip`, `important`, `caution` or `warning`, with its title.
+
+|Quotation and verse
+|`blockquote` with `attribution` and `citetitle`.
+A verse's lines are a `literallayout`.
+
+|Sidebar
+|`sidebar`.
+
+|Example
+|`example` with a title, `informalexample` without.
+
+|Open block
+|Only its content.
+Its title, if it has one, is a `para` with `role="title"` before the content.
+
+|Thematic break, page break and table of contents macro
+|Nothing: presentation belongs to the DocBook processor.
+
+|Footnote
+|A `footnote` where it is first referenced, with an `xml:id` of `<page id>.fn<n>` (see <<references>>), and a `footnoteref` to it where it is referenced again.
+
+|Hard line break
+|Asciidoctor's `<?asciidoc-br?>` processing instruction followed by a line feed, because DocBook has no element for one.
+It is the one processing instruction written, and `check` refuses any other.
+
+|Passthrough block
+|A `literallayout` with `role="passthrough"`, its text escaped, with a warning.
+An inline passthrough reaches the view as plain text, so it is escaped like any text and cannot be reported separately.
+|===
+
+No `procedure` is written in the first release: nothing is guessed to be one.
+
+=== Inlines
+
+[cols="2,3",options="header"]
+|===
+|AsciiDoc construct |DocBook element
+
+|Emphasis, strong and highlight
+|`emphasis`, with `role="strong"` for strong and `role="marked"` for highlighted text.
+
+|Monospace
+|`literal`, which may hold only text, emphasis, links, phrases, footnotes, subscripts, superscripts, index terms and inline pictures.
+Inside a code span, a nested code span, a formula, a key, a button or a menu is written as its text, and an inline anchor is written just after the span, so a reference to it still lands.
+
+|Superscript and subscript
+|`superscript` and `subscript`.
+
+|Role on a span
+|`phrase` with the roles.
+
+|Link
+|`link` with `xlink:href`.
+A cross reference is a `link` with `linkend`, or an `xref` (see <<references>>).
+`inlines::followable` decides which addresses may be links: an `xlink:href` is written only for a web, mail, file transfer or telephone address, or a relative one with no scheme.
+Any other address (`javascript:`, `data:`, `file:` and the like) is written as its text, with a warning.
+A link inside a link keeps only its text.
+
+|Keyboard
+|`keycap`, or `keycombo` for a combination.
+
+|Button
+|`guibutton`.
+
+|Menu
+|`guimenu`, or `menuchoice` with `guisubmenu` and `guimenuitem`.
+
+|Index term
+|`indexterm` with `primary`, `secondary` and `tertiary`.
+
+|Icon
+|`phrase` with `role="icon"`.
+|===
+
+[#references]
+== Identifiers and cross references
+
+Every `xml:id` is decided before anything is written, so a reference may lead forward.
+
+=== Identifiers
+
+* A page's id is its key.
+The engine makes the key from the page's Antora resource: the component, the version, the module and the path, with the path's folders joined by `-` and its extension dropped (`manual-2.0-ROOT-install`).
+A file outside Antora is keyed by its name.
+The key never comes from a path on disk, so the same pages give the same ids from any checkout and in any navigation order.
+* An anchor a page defines, whether a section's or a block's id or an inline anchor, is `<page id>.<anchor>` in a book, where pages meet, and the anchor itself in an article.
+An anchor defined twice on a page is written once.
+* Each id is made a valid XML name.
+A character that no name may hold becomes `_`, and a name that may not start as it does gets a leading `_`.
+Unicode letters are kept.
+* Each id is unique.
+A later one that would repeat an earlier one gets `-2`, `-3` and so on.
+* Footnotes (`<page id>.fn<n>`) and callout marks take their ids from the same allocator as they are written.
+* A block whose element writes nothing but which has an id leaves an `anchor` in its place, so a reference to it still lands.
+Inline anchors are `anchor` elements.
+
+=== Cross references
+
+Cross references reuse the view's resolution, and nothing is resolved again.
+
+* A reference into the publication is a `link` with `linkend` and the text the view gives it: the author's, else the target's title.
+Where the view has only its `[target]` placeholder, it is an `xref`, so the DocBook processor writes the target's label.
+* The target page is the one whose file the reference names or, for an anchor, the one that holds an anchor written in that file.
+A reference to an anchor in a partial therefore leads to it in the page that includes the partial.
+* A reference to a page outside the publication is a `link` with `xlink:href` to its published address, with the anchor as the fragment, when the site's address is known.
+The address is the `[pdf] site_url` setting or the playbook's, and each page's is in `DocBookOptions::page_urls`.
+* Otherwise the reference is written as its text, with a warning at its location.
+That is also what happens to an unresolved reference and to one naming an anchor the publication does not have.
+* A `linkend` is never written to an id the publication lacks, and the crate's check refuses one anyway.
+* A link inside a link keeps only its text.
+
+[#pictures]
+== Pictures, diagrams and formulas
+
+=== Pictures and the assets folder
+
+`AssetPolicy` says where pictures go.
+
+`AssetPolicy::Copy { folder }` is the default.
+The engine names the folder after the document, so `guide.xml` gets `guide_assets`.
+A local picture is:
+
+* read through the options' `access`;
+* recognised by its bytes: PNG, JPEG, GIF, or SVG whose root element is `svg`;
+* limited to 16 MB a picture and 256 MB a document;
+* returned once, as an asset named in the order it is first used, `i<n>.<ext>`, where the extension is `png`, `jpg`, `gif` or `svg`.
+
+Identical content is stored once.
+Every `fileref` is `<folder>/i<n>.<ext>`, so the document and its folder move together, and nothing in the XML names the author's checkout.
+SVG is copied as it is, not drawn as PNG.
+
+`AssetPolicy::Reference { folder }` copies nothing.
+Each `fileref` is the path from the document's folder to the picture where it is, which may climb out of the folder.
+Such a document is not portable.
+The engine's `DocBookExportArgs::assets` chooses between the two (`DocBookAssets::Copy` or `DocBookAssets::Reference`).
+The crate's check then allows those paths, and `testing::assert_valid_referenced` checks such a document.
+
+A picture that is missing, cannot be read (or is outside what the engine may read), is not one of those kinds or is too large keeps its caption and its description, with a warning located at its block.
+A remote picture is never fetched: its web address is the `fileref`, with a warning.
+The check accepts `http` and `https` addresses there.
+
+A block picture is a `figure` with its title, else an `informalfigure`.
+It holds a `mediaobject` with:
+
+* an `imageobject` whose `imagedata` carries `contentwidth` and `contentdepth` from the picture's width and height when they are lengths;
+* a `textobject` with the description.
+
+An inline picture is an `inlinemediaobject`.
+
+=== Diagrams
+
+A diagram the view drew, in process or taken from the cache, is a figure of its SVG.
+Its description is the block's `alt`, else "A diagram".
+A diagram that was not drawn keeps its source as a `programlisting` with `role="diagram"`, and the export reports why, as it does for every format.
+
+=== Formulas
+
+The schema lets an equation hold pictures or `mathphrase` elements, never both.
+
+* With a picture drawn of the formula, the equation's `alt` is the source, followed by a `mediaobject` (an `inlinemediaobject` inline) of the picture.
+Its text alternative is the source in a `phrase` with `role="math"`.
+* Without a picture, the formula is a `mathphrase`.
+
+A display formula is an `equation` with its title, else an `informalequation`.
+An inline one is an `inlineequation`.
+No MathML is made.
+One warning per page says how many formulas were written without a picture.
+
+=== Audio and video
+
+Audio and video are never copied or fetched.
+A target at a web address is a `videodata` or `audiodata` element's `fileref`, in a figure's `mediaobject`, with the targets as its text.
+A local file keeps only its name, with a warning.
+
+== Tables
+
+A table is written as CALS:
+
+* `table` when it has a title, `informaltable` when it has none.
+* `frame` comes from the frame attribute, with `ends` becoming `topbot`.
+`rowsep` and `colsep` come from `grid`.
+* One `tgroup` holds a `colspec` for each column, with `colname` set to `col_1`, `col_2` and so on, a proportional `colwidth` and `align`.
+* Then come `thead`, `tfoot` and `tbody`, in the order CALS requires.
+* Each `entry` has `align` and `valign`, `namest` and `nameend` for a column span and `morerows` for a row span, placed on the grid as the table lays out.
+* Blocks in cells are kept.
+A table that is all its cell holds becomes that cell's CALS `entrytbl`, the table CALS allows in a cell.
+Its footer rows end its body, since an `entrytbl` has no footer group, and a cell that spans rows keeps no `entrytbl`, since one cannot.
+A table beside other content in a cell is written as its rows, each a paragraph of its cells' text separated by `|`, with a warning.
+
+The edge cases are handled as follows:
+
+* A table of only a header row has it as its body.
+* A table with no rows is left out, with a warning.
+* A span that runs past the edge of the table is cut back, with a warning.
+* A row whose every cell is covered by a span from above is folded into those spans.
+
+=== Nestings the schema forbids
+
+The schema's Schematron rules forbid some nestings that its RELAX NG part allows, so the writer lowers what a container forbids.
+
+* An admonition inside another admonition is a `para` with its label (Note, Tip and so on) in strong emphasis and `role` set to its kind, followed by its content, with a warning.
+* A sidebar inside a sidebar is its title, a `para` with `role="title"`, and its content.
+* A titled example, figure, table or equation where its formal element may not be is its informal element (`informalexample`, `informalfigure`, `informaltable` or `informalequation`), with its title as a `para` with `role="title"` before it.
+
+== A book's structure
+
+A book follows the engine's publication plan:
+
+* The start page that the navigation does not list leads as the `preface`.
+The engine marks it in the plan, and other formats ignore the mark.
+Only a book's first item can be the preface.
+* Each navigation list's title is a `part`.
+* A top-level heading of the navigation with no page of its own is a `part` when it is not inside a list title's part.
+When it is inside one, it is a `chapter` holding its pages, because DocBook parts do not nest.
+* A top-level page is a `chapter`.
+* A page or heading that the navigation nests under another is a `section` of it, at any depth, written after the page's own sections.
+A page's own sections nest as they do in the page.
+* A part or heading with no page under it is left out with one warning, since DocBook allows neither empty.
+
+== Metadata
+
+The root's `info` holds only what the attributes give, as Asciidoctor's DocBook converter writes it, and nothing is made up:
+
+* The title and subtitle.
+A page title of plain text is split at its last `": "` into title and subtitle, as Asciidoctor does.
+A title with markup is kept whole.
+* One `author` for each author on the header's author line, with `firstname`, `othername` (from `middlename`), `surname` and `email`.
+Failing that, an `authors` attribute gives names separated by semicolons, or by commas when there is no semicolon, each a `personname`.
+* `date`, from `revdate`.
+* A `revhistory` of one `revision` when there is a date and a `revnumber` or `revremark`.
+A `revnumber` with no date gives a `releaseinfo` instead, because a `revision` must have a date.
+* A `keywordset`, from `keywords` (separated by commas), and an `abstract`, from `description`.
+
+A book's attributes are its component's, so its `revnumber` is the component version and its title is the component's title.
+
+A page with no title, after the navigation's text for it, takes its file's name, with a warning located at the page.
+A book with no title is "Untitled", with a warning.
+
+== Escaping
+
+Every document string goes through the crate's own small XML writer (`xml.rs`).
+Characters that XML 1.0 forbids become U+FFFD.
+No `DOCTYPE`, entity, processing instruction or passthrough markup is ever written as XML.
+
+== Checks
+
+`check(xml)` is the export's own structural check.
+It runs on every document before it is returned, and a failure is `DocBookError::Invalid`.
+It requires:
+
+* well-formed XML with no `DOCTYPE` and no processing instruction;
+* the root `article` or `book`, in the DocBook namespace, with version 5.2;
+* every element in the DocBook namespace;
+* every `xml:id` a valid name, and unique;
+* every `linkend` and `linkends` naming an `xml:id`, and every `footnoteref` naming a `footnote`;
+* no empty `xlink:href`;
+* every `fileref` a relative path below the document's folder, or an `http` or `https` address.
+With the reference policy, the paths from the document's folder to the pictures are allowed too.
+
+* none of the nestings the schema's Schematron rules forbid: no admonition inside an admonition, no sidebar in a sidebar, no example, figure, table or equation inside an example, figure or equation, no example, figure or equation inside a table, no table inside a table's cell (`entry`), and no admonition, sidebar, table, figure, example, equation or footnote inside a footnote.
+
+It is not schema validation.
+
+== Validation
+
+The tests check every document against the official DocBook 5.2.1 RELAX NG schema, in process.
+The schema is committed unchanged, with its notice, as `crates/adoc-docbook/schema/docbook.rng`, and is never downloaded.
+It is checked through the `oxixml-relaxng` crate (Apache-2.0, pure Rust), which is a dependency only of the crate's `test-support` feature, so no shipped binary carries it.
+
+The feature gives the `testing` module: `assert_valid`, `schema_problems` and `parse`.
+The schema's embedded Schematron rules are only partly run, so that part of conformance is partial.
+`check` enforces the root's version, that a `footnoteref` points at a `footnote`, and every rule that keeps an element out of another's descendants (listed under <<Checks>>).
+The other rules are not run: they concern elements the export does not write, namely other kinds of links, `coref`, glossaries, synopses, XLink typing and transclusion.
+The tests validate every document they write, including the whole reference book.
+
+== In the engine
+
+The engine's `docbook` feature adds `export.docbook_page` and `export.docbook_component`, and `Engine::export_docbook_blocking`.
+The crate writes no file, so the engine puts the document in place: `<name>.xml` with its pictures in `<name>_assets/` beside it.
+The engine writes the assets the crate returns into the staged assets folder.
+Both are written to a staging folder first.
+Then, inside the job's one commit, the old assets folder is moved aside, the new one is moved into place and the XML is renamed over the output last, with the old folder put back if that rename fails.
+Only an assets folder that is provably the export's own is replaced or removed.
+The engine starts no diagram program for DocBook: a Graphviz, PlantUML or D2 diagram is taken from the diagram cache or keeps its source, with a warning.
+See xref:developer:engine.adoc#the-export-service[the export service] for the details.
+
+The `[docbook]` settings table has one key, `assets`, which chooses between copying pictures beside the document (`"copy"`, the default) and referring to them where they are (`"reference"`).
+`[docbook.profiles.<name>]` saves a publication: one of `page`, `component` or `nav`, an `.xml` `output`, `attributes` and `assets`.
+`export.docbook_profile` exports one.
+The settings are read in every build, with or without the `docbook` feature.
+See xref:ROOT:settings.adoc#docbook-settings[DocBook export settings] for the keys.
+
+== Same input, same bytes
+
+The crate reads no clock, so the same input gives the same bytes.
+It writes no file: the caller puts the document in place.
+
+== Tests
+
+The acceptance tests are `docbook_root_is_wellformed_and_versioned`, `docbook_text_is_escaped` and `docbook_output_is_deterministic`, in `crates/adoc-docbook/tests/root.rs`.
+
+The structure and metadata are tested in `crates/adoc-docbook/tests/structure.rs`, including `docbook_article_has_metadata`.
+
+The blocks, inlines and tables are tested in `crates/adoc-docbook/tests/content.rs`, which holds `docbook_rich_content_uses_docbook_elements`, `docbook_tables_are_cals` and `docbook_unsupported_nodes_warn`.
+The placement of cells on the table's grid has unit tests in `crates/adoc-docbook/src/table.rs`.
+`nestings_the_schema_forbids_are_lowered` and `code_spans_hold_only_what_a_literal_may` in the same file check the lowerings above.
+Every document in these tests is checked against the DocBook 5.2.1 RELAX NG schema and the export's own check, exclusions included.
+
+`corpus` (`crates/adoc-docbook/tests/corpus.rs`) writes every AsciiDoc page of the repository's fixtures and documentation (255 pages) as an article and checks each against the RELAX NG schema and the check, exclusions included.
+
+Pictures, diagrams and formulas are tested in `crates/adoc-docbook/tests/media.rs`, which holds `docbook_assets_are_copied_and_relative`, `docbook_missing_media_is_reported`, `docbook_formulas_have_a_fallback` and `diagrams_are_pictures_or_their_source`.
+In the engine, `docbook_pictures_go_beside_the_document` in `crates/adoc-engine/tests/docbook_export.rs` exports the reference book and checks that every `fileref` leads to a file in the assets folder, that a later export with fewer pictures leaves only those, and the reference policy.
+In the engine, `docbook_book_hierarchy_follows_the_plan` in `crates/adoc-engine/tests/docbook_export.rs` checks the hierarchy over the PDF book fixture and the reference fixture of several components and versions.
+
+Identifiers and references are tested in `crates/adoc-docbook/tests/references.rs`, which holds `docbook_ids_are_unique_and_stable` (including that the same pages from another checkout give the same document), `docbook_references_resolve` and `anchors_in_partials_are_found_in_their_page`.
+In the engine, `docbook_internal_links_resolve` in `crates/adoc-engine/tests/docbook_export.rs` exports the reference book and checks its links, its repeated footnote and the published address of a page outside it.
+
+Conformance, regression and performance QA (DocBook 9/9, #657) is tested in the engine, in `crates/adoc-engine/tests/`:
+
+* `docbook_reference_book_is_complete` exports the reference book (two components, two versions, every construct the exporter writes) and compares it with a snapshot; the same sources give the same bytes, pictures included.
+* `docbook_large_book_is_bounded`, in `docbook_large.rs`, holds a 1,000-page book to budgets.
+* `docbook_hostile_input_is_safe` checks that markup, entity and DOCTYPE tricks are written as text, that a picture outside what the export may read, or reached through `..`, is never read or copied, and that unsafe addresses never become links.
+* `docbook_failed_export_keeps_existing_output` checks that a failed export leaves the previous document and assets folder as they were.
+
+The fuzz target `docbook_write` (`fuzz/fuzz_targets/docbook_write.rs`) writes arbitrary pages and runs `check`.
+`docbook_is_in_process`, in `xtask`, checks that the crate names no process, network, file or thread and builds nothing copyleft.
+
+== Where it sits
+
+`adoc-docbook` is headless.
+It depends on `adoc-core`, `adoc-dom`, `adoc-render` and `roxmltree`.
+The pair `adoc-docbook` on `adoc-render` is a same-layer pair listed in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`.
+It starts no process, uses no network, no files and no threads of its own: `cargo xtask layers` holds its sources to the same forbidden paths as `adoc-audit`.
+
+== Related
+
+* xref:adoc-epub.adoc[adoc-epub], the EPUB writer
+* xref:adoc-render.adoc[adoc-render], which builds the view tree
+* xref:index.adoc[Crates]

@@ -18,9 +18,9 @@ use std::{
 use adoc_core::{DiagnosticSeverity, LineIndex, SourceRange};
 use adoc_engine::{
     commands::ids, report::display_path, to_svg_laid_out, CommandArgs, CommandOutcome,
-    DefinitionTarget, DocxExportArgs, Engine, EngineEvent, EpubExportArgs, ExportArgs,
-    ExportTarget, FileAccess, GraphFilter, GraphScope, KindleExportArgs, KindleFormat, LookChoice,
-    NavItem, SearchRequest, SvgStyle,
+    DefinitionTarget, DocBookAssets, DocBookExportArgs, DocxExportArgs, Engine, EngineEvent,
+    EpubExportArgs, ExportArgs, ExportTarget, FileAccess, GraphFilter, GraphScope,
+    KindleExportArgs, KindleFormat, LookChoice, NavItem, SearchRequest, SvgStyle,
 };
 use rmcp::{
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
@@ -45,7 +45,7 @@ use crate::{
 };
 
 /// The tools that change files, listed and callable only with `--allow-write`.
-const WRITE_TOOLS: [&str; 12] = [
+const WRITE_TOOLS: [&str; 13] = [
     "edit_page",
     "revert_page",
     "rename_page",
@@ -53,6 +53,7 @@ const WRITE_TOOLS: [&str; 12] = [
     "export_docx",
     "export_kindle",
     "export_epub",
+    "export_docbook",
     "apply_changes",
     "create_page",
     "create_partial",
@@ -343,6 +344,19 @@ struct ExportKindleArgs {
     format: Option<String>,
     /// The `.azw3` or `.kfx` file to write, inside a root; with a profile, in place of the
     /// profile's. A file there already is replaced only when it is a Kindle book's extension.
+    output: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct ExportDocBookArgs {
+    /// The page to export as an article.
+    path: Option<String>,
+    /// Or a component version to export as a book: `name` or `version@name`.
+    component: Option<String>,
+    /// Or a `[docbook.profiles.<name>]` of the workspace's settings, exported as it says.
+    profile: Option<String>,
+    /// The `.xml` file to write, inside a root; with a profile, in place of the profile's. Its
+    /// pictures go in the folder beside it named after it (`guide.xml`, `guide_assets/`).
     output: Option<String>,
 }
 
@@ -1457,6 +1471,62 @@ impl Server {
     }
 
     #[tool(
+        description = "Export a page as a DocBook article, a component version as a DocBook book, or a `[docbook.profiles]` publication, to DocBook 5.2 XML (.xml) for a DocBook toolchain, with its pictures copied into the folder beside it named after it (`guide.xml`, `guide_assets/`), so the two can be moved together. Pictures are always copied here, whatever the settings say; referring to them in place is for the command line. A page that asks to be read-only (`:export-read-only:`) is refused, since DocBook carries no editing restriction. Nothing is opened, sent or uploaded, and no external tool is run: a diagram another program draws is used only once the preview has drawn it.",
+        output_schema = schemas::export_docbook(),
+        annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn export_docbook(&self, Parameters(args): Parameters<ExportDocBookArgs>) -> Answer {
+        self.run(move |state| {
+            let mut export = match (&args.profile, &args.path, &args.component) {
+                (Some(profile), None, None) => state.engine.docbook_profile_export_args(profile)?,
+                (None, Some(path), None) => {
+                    let path = state.confine(path)?;
+                    DocBookExportArgs::new(ExportTarget::Page(state.open(&path)?.0), PathBuf::new())
+                }
+                (None, None, Some(component)) => {
+                    let (version, name) = match component.split_once('@') {
+                        Some((version, name)) => (Some(version.to_owned()), name.to_owned()),
+                        None => (None, component.clone()),
+                    };
+                    DocBookExportArgs::new(
+                        ExportTarget::Component { name, version },
+                        PathBuf::new(),
+                    )
+                }
+                _ => {
+                    return Err(Failure::invalid(
+                        "give one of a `path`, a `component` or a `profile`",
+                    ))
+                }
+            };
+            export.output = match &args.output {
+                Some(output) => docbook_output(state, Path::new(output), output)?,
+                None if args.profile.is_some() => {
+                    let shown = state.shown(&export.output);
+                    docbook_output(state, &export.output, &shown)?
+                }
+                None => return Err(Failure::invalid("give the `output` to write")),
+            };
+            // Portable output only: the pictures are copied, whatever the settings say.
+            export.assets = Some(DocBookAssets::Copy);
+            let summary = state
+                .engine
+                .export_docbook_blocking(export, TIMEOUT)
+                .map_err(|error| export_failure(state, error))?;
+            let folder = adoc_engine::docbook_assets_folder(&summary.output);
+            Ok(json!({
+                "output": state.shown(&summary.output),
+                "assets": folder.is_dir().then(|| state.shown(&folder)),
+                "pages": summary.pages,
+                "sources": summary.sources.iter().map(|path| state.shown(path)).collect::<Vec<_>>(),
+                "warnings": summary.diagnostics.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "protected": summary.protected,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
         description = "Export a page as an article, a component version as a book, or a `[epub.profiles]` publication, to an EPUB 3 book (.epub) for e-readers and reading apps. A page that asks to be read-only (`:export-read-only:`) is refused, since an EPUB carries no editing restriction. Nothing is opened, sent or uploaded, and no external tool is run.",
         output_schema = schemas::export_epub(),
         annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = false)
@@ -1673,6 +1743,29 @@ fn docx_output(state: &State, output: &Path, shown: &str) -> Result<PathBuf, Fai
             "{shown} is not a `.docx` file; export to one"
         )));
     }
+    Ok(output)
+}
+
+/// `output` checked as a DocBook document to write: inside the roots (`shown` is how the client
+/// named it), not a link, an `.xml` file that no page is, with its assets folder inside the
+/// roots too. The engine refuses an assets folder that is a link or holds others' files.
+fn docbook_output(state: &State, output: &Path, shown: &str) -> Result<PathBuf, Failure> {
+    let output = state.confine(&output.to_string_lossy())?;
+    if std::fs::symlink_metadata(&output).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return Err(Failure::invalid(format!(
+            "{shown} is a link, which is not written through"
+        )));
+    }
+    let xml = output
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("xml"));
+    if !xml || state.engine.workspace().index.file(&output).is_some() {
+        return Err(Failure::invalid(format!(
+            "{shown} is not an `.xml` file; export to one"
+        )));
+    }
+    let folder = adoc_engine::docbook_assets_folder(&output);
+    state.confine(&folder.to_string_lossy())?;
     Ok(output)
 }
 

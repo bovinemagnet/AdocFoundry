@@ -36,6 +36,10 @@ adocfoundry-cli epub <file|component-dir> [--root <dir>] [--component [<version>
     [--output <file.epub>] [--fail-on none|warning|error]
 adocfoundry-cli epub --profile <name> [<root>] [--output <file.epub>]
     [--fail-on none|warning|error]
+adocfoundry-cli docbook <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
+    [--output <file.xml>] [--assets copy|reference] [--fail-on none|warning|error]
+adocfoundry-cli docbook --profile <name> [<root>] [--output <file.xml>]
+    [--assets copy|reference] [--fail-on none|warning|error]
 adocfoundry-cli git-status <root> [--format text|json]
 adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--format json|dot|svg]
     [--no-partials] [--no-nav] [--unresolved] [--ages] [--dark]
@@ -579,6 +583,54 @@ Set `SOURCE_DATE_EPOCH` to make books repeatable in CI.
 ----
 SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) adocfoundry-cli epub --profile user-guide --fail-on warning
 ----
+
+[[docbook]]
+== docbook
+
+`docbook` exports a page, or a whole component version, as a DocBook 5.2 XML document.
+See xref:settings.adoc#docbook-settings[DocBook export settings] for the settings it reads.
+For what the document contains, see xref:docbook-export.adoc[Exporting to DocBook].
+
+[source,sh]
+----
+adocfoundry-cli docbook docs/modules/ROOT/pages/index.adoc
+adocfoundry-cli docbook docs --output docs.xml
+adocfoundry-cli docbook docs --root . --component 2.0@guide --assets reference --fail-on warning
+adocfoundry-cli docbook --profile admin-guide .
+----
+
+Targets are chosen as `epub` chooses them.
+A file argument exports that page as an article, and by default the document is written beside the page, as `<page>.xml`.
+A directory that holds an `antora.yml`, or `--component`, exports the component version as a book in navigation order, by default as `<name>.xml` in the current folder.
+
+[cols="2,4"]
+|===
+|Option |Meaning
+
+|`--root <dir>`
+|The workspace root, so that includes, xrefs and images resolve across components.
+
+|`--component [<version>@]<name>`
+|Export this component version as a book, with coordinates written as Antora writes them.
+
+|`--profile <name>`
+|Export the DocBook profile `[docbook.profiles.<name>]` from the settings; see xref:settings.adoc#docbook-profiles[DocBook profiles]. The workspace root is the argument, `--root <dir>`, or else the current directory. `--output` replaces the profile's output.
+
+|`--output <file.xml>`
+|Where to write the document. An output that is not an `.xml` file is refused before anything is read: the command exits with 2 and writes nothing.
+
+|`--assets copy\|reference`
+|`copy` writes the pictures into `<name>_assets/` beside the document, and `reference` refers to them where they are, which is not portable. It replaces `[docbook] assets` and a profile's `assets`. Any other value exits with 2 before anything is read.
+
+|`--fail-on none\|warning\|error`
+|Exit with 1 when the export reports a diagnostic at least this severe. The document is written all the same. The default, `none`, never fails for a diagnostic.
+|===
+
+The command prints the warnings, then `<output> (<n> AsciiDoc pages)` on standard output and, when pictures were written, `assets: <folder> (<n> pictures)`.
+Warnings print on standard error as `path:line: warning: message`.
+An export that fails always exits with 1, a warning fails only under `--fail-on warning`, and a usage error exits with 2.
+A page that asks for a read-only export (`:export-read-only:`) is refused, since DocBook carries no restriction; the command exits with 1 and writes nothing.
+See xref:read-only-exports.adoc[Read-only exports].
 
 [[git-status]]
 == git-status

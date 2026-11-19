@@ -21,11 +21,13 @@ use crate::{DocumentId, PdfStandard};
         feature = "typst",
         feature = "docx",
         feature = "kindle",
-        feature = "epub"
+        feature = "epub",
+        feature = "docbook"
     ))
 ))]
 compile_error!(
-    "the `export` feature is turned on by `typst`, `docx`, `kindle` or `epub`, not on its own"
+    "the `export` feature is turned on by `typst`, `docx`, `kindle`, `epub` or `docbook`, not on \
+     its own"
 );
 
 // Without either format only the request and result types remain.
@@ -232,6 +234,70 @@ impl EpubExportArgs {
     }
 }
 
+/// A DocBook export request: `CommandArgs::ExportDocBook`. It holds nothing of another
+/// format's.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocBookExportArgs {
+    pub target: ExportTarget,
+    /// The `.xml` file to write. Its pictures go in the folder beside it named after it
+    /// (`guide.xml`, `guide_assets/`). Both are staged beside it and put in place only once the
+    /// whole document is written and checked, so a failed export leaves what was there; a link
+    /// at either is refused, never written through, and a folder there holding files the
+    /// export did not write is never replaced.
+    pub output: PathBuf,
+    /// Attributes every page is read with before its own header, after Antora's, and that a
+    /// book's own attributes take.
+    pub attributes: Vec<(String, String)>,
+    /// How the document refers to its pictures. `None` copies them.
+    pub assets: Option<DocBookAssets>,
+}
+
+impl DocBookExportArgs {
+    /// An export of `target` to `output`, with nothing else given.
+    #[must_use]
+    pub fn new(target: ExportTarget, output: PathBuf) -> Self {
+        Self {
+            target,
+            output,
+            attributes: Vec::new(),
+            assets: None,
+        }
+    }
+}
+
+/// How a DocBook document refers to its pictures.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum DocBookAssets {
+    /// Each picture is copied once into the folder beside the document named after it
+    /// (`guide_assets`), and referred to there, so the two can be moved together.
+    #[default]
+    Copy,
+    /// Nothing is copied: each picture is referred to where it is, by a path from the
+    /// document's folder. Not portable.
+    Reference,
+}
+
+impl DocBookAssets {
+    /// The policy's name in settings and on the command line: `copy` or `reference`.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Copy => "copy",
+            Self::Reference => "reference",
+        }
+    }
+
+    /// The policy `name` names, in any letter case.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "copy" => Some(Self::Copy),
+            "reference" => Some(Self::Reference),
+            _ => None,
+        }
+    }
+}
+
 /// A finished export.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExportSummary {
@@ -310,6 +376,21 @@ impl crate::Engine {
     }
 }
 
+#[cfg(not(feature = "docbook"))]
+impl crate::Engine {
+    /// Without the `docbook` feature there is no DocBook export: every request fails as an
+    /// unknown command.
+    pub fn export_docbook_blocking(
+        &mut self,
+        _: DocBookExportArgs,
+        _: std::time::Duration,
+    ) -> Result<ExportSummary, crate::EngineError> {
+        Err(crate::EngineError::UnknownCommand(
+            crate::commands::ids::EXPORT_DOCBOOK_PAGE,
+        ))
+    }
+}
+
 #[cfg(not(feature = "epub"))]
 impl crate::Engine {
     /// Without the `epub` feature there is no EPUB export: every request fails as an unknown
@@ -350,6 +431,9 @@ enum PlanItem {
         path: PathBuf,
         depth: u8,
         nav_title: Option<String>,
+        /// The start page, leading the book because the navigation does not list it: a
+        /// DocBook book's preface. Other formats read it as any page.
+        preface: bool,
     },
 }
 
@@ -381,6 +465,8 @@ enum Request {
     Kindle(KindleExportArgs),
     #[cfg(feature = "epub")]
     Epub(EpubExportArgs),
+    #[cfg(feature = "docbook")]
+    DocBook(DocBookExportArgs),
 }
 
 #[cfg(feature = "export")]
@@ -398,6 +484,21 @@ impl Request {
             // So does an EPUB, until it can carry MathML.
             #[cfg(feature = "epub")]
             Self::Epub(_) => true,
+            // DocBook writes a formula's source, and its picture where one was drawn.
+            #[cfg(feature = "docbook")]
+            Self::DocBook(_) => true,
+        }
+    }
+
+    /// Whether the views exported may start a program to draw a diagram (Graphviz, PlantUML,
+    /// D2): every format but DocBook, which runs wholly in process (its PRD §5.4) and takes
+    /// such a diagram only when the cache already has it.
+    fn starts_programs(&self) -> bool {
+        match self {
+            #[cfg(feature = "docbook")]
+            Self::DocBook(_) => false,
+            #[allow(unreachable_patterns)]
+            _ => true,
         }
     }
 }
@@ -414,6 +515,8 @@ impl Request {
             Self::Kindle(args) => &args.target,
             #[cfg(feature = "epub")]
             Self::Epub(args) => &args.target,
+            #[cfg(feature = "docbook")]
+            Self::DocBook(args) => &args.target,
         }
     }
 
@@ -427,6 +530,8 @@ impl Request {
             Self::Kindle(args) => &args.output,
             #[cfg(feature = "epub")]
             Self::Epub(args) => &args.output,
+            #[cfg(feature = "docbook")]
+            Self::DocBook(args) => &args.output,
         }
     }
 
@@ -455,6 +560,8 @@ impl Request {
             Self::Kindle(_) => (crate::ExportFormat::Kindle, None),
             #[cfg(feature = "epub")]
             Self::Epub(_) => (crate::ExportFormat::Epub, None),
+            #[cfg(feature = "docbook")]
+            Self::DocBook(_) => (crate::ExportFormat::DocBook, None),
         }
     }
 
@@ -469,6 +576,8 @@ impl Request {
             Self::Kindle(args) => check_kindle_output(args.format, &args.output),
             #[cfg(feature = "epub")]
             Self::Epub(args) => check_epub_output(&args.output),
+            #[cfg(feature = "docbook")]
+            Self::DocBook(args) => check_docbook_output(&args.output),
         }
     }
 
@@ -482,6 +591,8 @@ impl Request {
             Self::Kindle(args) => &args.attributes,
             #[cfg(feature = "epub")]
             Self::Epub(args) => &args.attributes,
+            #[cfg(feature = "docbook")]
+            Self::DocBook(args) => &args.attributes,
         }
     }
 }
@@ -657,6 +768,42 @@ pub(crate) fn register_export(registry: &mut CommandRegistry) {
             epub_profile_command,
         );
     }
+    #[cfg(feature = "docbook")]
+    {
+        register(
+            registry,
+            spec(
+                ids::EXPORT_DOCBOOK_PAGE,
+                "Export Page as DocBook…",
+                CommandCategory::Document,
+                None,
+                CommandContext::ActiveDocument,
+            ),
+            docbook_command,
+        );
+        register(
+            registry,
+            spec(
+                ids::EXPORT_DOCBOOK_COMPONENT,
+                "Export Component as DocBook…",
+                CommandCategory::Workspace,
+                None,
+                CommandContext::Antora,
+            ),
+            docbook_command,
+        );
+        register(
+            registry,
+            spec(
+                ids::EXPORT_DOCBOOK_PROFILE,
+                "Export DocBook Profile…",
+                CommandCategory::Workspace,
+                None,
+                CommandContext::Always,
+            ),
+            docbook_profile_command,
+        );
+    }
     #[cfg(feature = "docx")]
     {
         register(
@@ -728,6 +875,35 @@ fn kindle_command(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutco
         });
     };
     engine.start_export(Request::Kindle(args), false)?;
+    Ok(CommandOutcome::Done)
+}
+
+#[cfg(feature = "docbook")]
+fn docbook_command(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::ExportDocBook(args) = args else {
+        return Err(EngineError::InvalidArguments {
+            command: ids::EXPORT_DOCBOOK_PAGE,
+            expected: "an export target and an .xml output path",
+        });
+    };
+    engine.start_export(Request::DocBook(args), false)?;
+    Ok(CommandOutcome::Done)
+}
+
+/// Exports a DocBook publication profile to the output it names.
+#[cfg(feature = "docbook")]
+fn docbook_profile_command(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Profile(name) = args else {
+        return Err(EngineError::InvalidArguments {
+            command: ids::EXPORT_DOCBOOK_PROFILE,
+            expected: "a profile name",
+        });
+    };
+    let args = engine.docbook_profile_export_args(&name)?;
+    engine.start_export(Request::DocBook(args), false)?;
     Ok(CommandOutcome::Done)
 }
 
@@ -1033,6 +1209,94 @@ impl Engine {
     }
 }
 
+#[cfg(feature = "docbook")]
+impl Engine {
+    /// Exports DocBook and waits for the result, for front ends without an event loop such as
+    /// the CLI.
+    pub fn export_docbook_blocking(
+        &mut self,
+        args: DocBookExportArgs,
+        timeout: Duration,
+    ) -> Result<ExportSummary, EngineError> {
+        let deadline = Instant::now() + timeout;
+        let job = self.start_export(Request::DocBook(args), true)?;
+        self.wait_for_export(job, deadline)
+    }
+}
+
+/// The folder a DocBook document's pictures are written to: beside it, named after it
+/// (`guide.xml`, `guide_assets`).
+#[cfg(feature = "docbook")]
+#[must_use]
+pub fn docbook_assets_folder(output: &Path) -> PathBuf {
+    let stem = output
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    output.with_file_name(format!("{stem}_assets"))
+}
+
+/// Refuses a DocBook output that is not an `.xml` file, or is a folder or a link, and one
+/// whose assets folder is a link, is not a folder, or holds anything the export did not write:
+/// that folder is replaced whole, so it must be the export's own.
+#[cfg(feature = "docbook")]
+pub(crate) fn check_docbook_output(output: &Path) -> Result<(), EngineError> {
+    let xml = output
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("xml"));
+    if !xml {
+        return Err(EngineError::InvalidRequest(format!(
+            "{} is not an .xml file",
+            output.display()
+        )));
+    }
+    check_not_link_or_folder(output)?;
+    let assets = docbook_assets_folder(output);
+    let refused = |why: &str| {
+        Err(EngineError::InvalidRequest(format!(
+            "{} {why}, so it is not replaced by the export's pictures",
+            assets.display()
+        )))
+    };
+    match std::fs::symlink_metadata(&assets) {
+        Err(_) => Ok(()),
+        Ok(meta) if meta.file_type().is_symlink() => refused("is a link"),
+        Ok(meta) if !meta.is_dir() => refused("is not a folder"),
+        Ok(_) => {
+            let entries = std::fs::read_dir(&assets).map_err(|error| {
+                EngineError::InvalidRequest(format!("{}: {error}", assets.display()))
+            })?;
+            for entry in entries {
+                let entry = entry.map_err(|error| {
+                    EngineError::InvalidRequest(format!("{}: {error}", assets.display()))
+                })?;
+                let ours = entry.file_type().is_ok_and(|kind| kind.is_file())
+                    && entry.file_name().to_str().is_some_and(is_asset_name);
+                if !ours {
+                    return refused(&format!(
+                        "holds {}, which the export did not write",
+                        entry.file_name().to_string_lossy()
+                    ));
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Whether `name` is one a DocBook export gives a picture: `i<n>.<extension>`.
+#[cfg(feature = "docbook")]
+fn is_asset_name(name: &str) -> bool {
+    let Some((stem, extension)) = name.split_once('.') else {
+        return false;
+    };
+    let number = stem.strip_prefix('i').unwrap_or_default();
+    !number.is_empty()
+        && number.bytes().all(|byte| byte.is_ascii_digit())
+        && matches!(extension, "png" | "jpg" | "gif" | "svg")
+}
+
 /// Refuses an EPUB output that is not an `.epub` file, or is a folder or a link.
 #[cfg(feature = "epub")]
 fn check_epub_output(output: &Path) -> Result<(), EngineError> {
@@ -1069,7 +1333,12 @@ fn check_kindle_output(format: KindleFormat, output: &Path) -> Result<(), Engine
 }
 
 /// Refuses an output that is a link, which would be written through, or a folder.
-#[cfg(any(feature = "docx", feature = "kindle", feature = "epub"))]
+#[cfg(any(
+    feature = "docx",
+    feature = "kindle",
+    feature = "epub",
+    feature = "docbook"
+))]
 fn check_not_link_or_folder(output: &Path) -> Result<(), EngineError> {
     match std::fs::symlink_metadata(output) {
         Ok(meta) if meta.file_type().is_symlink() => Err(EngineError::InvalidRequest(format!(
@@ -1489,6 +1758,7 @@ impl Engine {
                 path: start,
                 depth: 1,
                 nav_title: None,
+                preface: true,
             });
         }
         for (title, entries) in &groups {
@@ -1505,6 +1775,7 @@ impl Engine {
                         path,
                         depth: 1,
                         nav_title: Some(title.title.clone()),
+                        preface: false,
                     });
                 }
             }
@@ -1565,6 +1836,7 @@ impl Engine {
                         path,
                         depth,
                         nav_title: Some(entry.title.clone()),
+                        preface: false,
                     });
                 }
                 Some(_) => {}
@@ -1659,15 +1931,16 @@ impl Engine {
             .unwrap_or_default();
         // A PDF typesets its own formulas; a Word document shows them as the images rendered
         // for the preview, waited for like diagrams.
-        let formulas = self
-            .export
-            .jobs
-            .get(&job)
-            .is_some_and(|state| state.request.draws_formulas());
+        let (formulas, programs) = self.export.jobs.get(&job).map_or((false, true), |state| {
+            (
+                state.request.draws_formulas(),
+                state.request.starts_programs(),
+            )
+        });
         let mut views = Vec::new();
         let mut waiting = BTreeSet::new();
         for (path, dom) in &doms {
-            let (view, wanted) = self.view_of(path, dom, formulas);
+            let (view, wanted) = self.view_of(path, dom, formulas, programs);
             waiting.extend(wanted);
             views.push((path.clone(), view));
         }
@@ -1714,6 +1987,10 @@ impl Engine {
             #[cfg(feature = "epub")]
             Request::Epub(args) => {
                 self.write_epub(job, args, written, commit, &protection);
+            }
+            #[cfg(feature = "docbook")]
+            Request::DocBook(args) => {
+                self.write_docbook(job, args, written, commit, &protection);
             }
         }
     }
@@ -1956,6 +2233,8 @@ enum ArrangedItem {
         key: String,
         view: ViewTree,
         depth: u8,
+        /// The start page as the book's preface ([`PlanItem::Page`]).
+        preface: bool,
     },
 }
 
@@ -1982,6 +2261,7 @@ fn arrange(plan: &Plan, views: Vec<(PathBuf, ViewTree)>) -> Arranged {
                         path,
                         depth,
                         nav_title,
+                        preface,
                     } => {
                         let mut view = views.remove(path)?;
                         if view.title.is_none() {
@@ -1994,6 +2274,7 @@ fn arrange(plan: &Plan, views: Vec<(PathBuf, ViewTree)>) -> Arranged {
                             key: format!("p{index}"),
                             view,
                             depth: *depth,
+                            preface: *preface,
                         })
                     }
                 })
@@ -2045,9 +2326,9 @@ fn to_pdf(arranged: Arranged) -> adoc_pdf::Document {
                 .map(|item| match item {
                     ArrangedItem::Part(title) => BookItem::Part(title),
                     ArrangedItem::Heading { title, depth } => BookItem::Heading { title, depth },
-                    ArrangedItem::Page { key, view, depth } => {
-                        BookItem::Page(PageView { key, view, depth })
-                    }
+                    ArrangedItem::Page {
+                        key, view, depth, ..
+                    } => BookItem::Page(PageView { key, view, depth }),
                 })
                 .collect(),
         }),
@@ -2076,9 +2357,9 @@ fn to_docx(arranged: Arranged) -> adoc_docx::DocxDocument {
                 .map(|item| match item {
                     ArrangedItem::Part(title) => BookItem::Part(title),
                     ArrangedItem::Heading { title, depth } => BookItem::Heading { title, depth },
-                    ArrangedItem::Page { key, view, depth } => {
-                        BookItem::Page(DocxPage { key, view, depth })
-                    }
+                    ArrangedItem::Page {
+                        key, view, depth, ..
+                    } => BookItem::Page(DocxPage { key, view, depth }),
                 })
                 .collect(),
         }),
@@ -2773,9 +3054,9 @@ fn to_book(arranged: Arranged) -> adoc_ebook::Document {
                 .map(|item| match item {
                     ArrangedItem::Part(title) => BookItem::Part(title),
                     ArrangedItem::Heading { title, depth } => BookItem::Heading { title, depth },
-                    ArrangedItem::Page { key, view, depth } => {
-                        BookItem::Page(Page { key, view, depth })
-                    }
+                    ArrangedItem::Page {
+                        key, view, depth, ..
+                    } => BookItem::Page(Page { key, view, depth }),
                 })
                 .collect(),
         }),
@@ -2831,6 +3112,282 @@ fn write_book_file(
         file.persist(output)
             .map(drop)
             .map_err(|error| failed(&error.error))
+    })
+}
+
+#[cfg(feature = "docbook")]
+impl Engine {
+    /// Writes the job's DocBook on a worker: written in memory and checked by `adoc-docbook`,
+    /// then the document and its assets folder put in place through the job's commit.
+    fn write_docbook(
+        &mut self,
+        job: u64,
+        args: DocBookExportArgs,
+        written: Written,
+        commit: Commit,
+        protection: &crate::ExportProtection,
+    ) {
+        // DocBook carries no editing restriction, so pages asking for one were refused before
+        // anything was parsed; nothing is written that claims one.
+        if *protection != crate::ExportProtection::Off {
+            self.export_finished(
+                job,
+                Err("DocBook cannot carry an editing restriction".to_owned()),
+            );
+            return;
+        }
+        let Written {
+            sources,
+            arranged,
+            unread,
+        } = written;
+        let failed = failed_diagrams(&arranged);
+        let document = to_docbook(arranged, |path| self.docbook_key(path));
+        // The export's own (a profile's), else `[docbook]`'s, else copied.
+        let assets = match args
+            .assets
+            .or(self.settings.docbook.assets)
+            .unwrap_or_default()
+        {
+            DocBookAssets::Copy => adoc_docbook::AssetPolicy::Copy {
+                folder: docbook_assets_folder(&args.output)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            },
+            DocBookAssets::Reference => {
+                let folder = args
+                    .output
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .unwrap_or_else(|| Path::new("."));
+                match std::path::absolute(folder) {
+                    Ok(folder) => adoc_docbook::AssetPolicy::Reference {
+                        folder: crate::normalize_path(&folder),
+                    },
+                    Err(error) => {
+                        self.export_finished(job, Err(format!("{}: {error}", folder.display())));
+                        return;
+                    }
+                }
+            }
+        };
+        let options = adoc_docbook::DocBookOptions {
+            access: self.file_access.clone(),
+            assets,
+            page_urls: self
+                .site_url()
+                .map(|site| self.page_urls(&site))
+                .unwrap_or_default(),
+        };
+        let sender = self.worker_sender.clone();
+        self.workers_running += 1;
+        let crashed = move |error| WorkerMessage::ExportFinished {
+            job,
+            result: Err(format!("writing the DocBook crashed: {error}")),
+        };
+        crate::worker::spawn(sender, crashed, move |sender| {
+            let result = adoc_docbook::write_docbook(&document, &options)
+                .map_err(|error| format!("{}: {error}", args.output.display()))
+                .and_then(|output| {
+                    write_docbook_files(&output.xml, &output.assets, &args.output, &commit)?;
+                    Ok(output.diagnostics)
+                })
+                .map(|written| {
+                    let mut diagnostics = docbook_diagnostics(written);
+                    diagnostics.extend(failed);
+                    diagnostics.extend(unread);
+                    ExportSummary {
+                        output: args.output.clone(),
+                        pages: sources.len(),
+                        sources,
+                        diagnostics,
+                        look: None,
+                        protected: false,
+                    }
+                });
+            let _ = sender.send(WorkerMessage::ExportFinished { job, result });
+        });
+    }
+}
+
+/// The arranged views as what DocBook export writes, each page keyed by `key_of` its file.
+#[cfg(feature = "docbook")]
+fn to_docbook(
+    arranged: Arranged,
+    key_of: impl Fn(&Path) -> String,
+) -> adoc_docbook::DocBookDocument {
+    use adoc_docbook::{Book, BookItem, DocBookDocument, Page};
+    match arranged {
+        Arranged::Article(view) => DocBookDocument::Article(Page {
+            key: key_of(&view.source),
+            view,
+            depth: 0,
+        }),
+        Arranged::Book {
+            title,
+            attributes,
+            items,
+        } => DocBookDocument::Book(Book {
+            title,
+            subtitle: None,
+            attributes,
+            items: items
+                .into_iter()
+                .map(|item| match item {
+                    ArrangedItem::Part(title) => BookItem::Part(title),
+                    ArrangedItem::Heading { title, depth } => BookItem::Heading { title, depth },
+                    ArrangedItem::Page {
+                        view,
+                        depth,
+                        preface,
+                        ..
+                    } => {
+                        let page = Page {
+                            key: key_of(&view.source),
+                            view,
+                            depth,
+                        };
+                        if preface {
+                            BookItem::Preface(page)
+                        } else {
+                            BookItem::Page(page)
+                        }
+                    }
+                })
+                .collect(),
+        }),
+    }
+}
+
+#[cfg(feature = "docbook")]
+impl Engine {
+    /// A page's key in a DocBook publication, from which its ids are made: its Antora resource
+    /// (`manual-2.0-ROOT-install`, `component-version-module-path`, the path's folders joined
+    /// by `-` and its extension dropped), never a path on disk; a file outside Antora is keyed
+    /// by its name. The writer makes it a valid, unique XML name.
+    fn docbook_key(&self, path: &Path) -> String {
+        let stem = |path: &Path| {
+            path.with_extension("")
+                .components()
+                .filter_map(|part| match part {
+                    std::path::Component::Normal(name) => Some(name.to_string_lossy().into_owned()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("-")
+        };
+        match self.workspace.antora.resource_for_path(path) {
+            Some(resource) => {
+                let coordinate = &resource.coordinate;
+                let mut parts = vec![coordinate.component.clone()];
+                parts.extend(
+                    coordinate
+                        .version
+                        .clone()
+                        .filter(|version| !version.is_empty() && version != "~"),
+                );
+                parts.push(coordinate.module.clone());
+                parts.push(stem(&coordinate.relative_path));
+                parts.join("-")
+            }
+            None => path.file_stem().map_or_else(
+                || "page".to_owned(),
+                |stem| stem.to_string_lossy().into_owned(),
+            ),
+        }
+    }
+}
+
+/// DocBook's diagnostics as the export's.
+#[cfg(feature = "docbook")]
+fn docbook_diagnostics(diagnostics: Vec<adoc_docbook::Diagnostic>) -> Vec<ExportDiagnostic> {
+    diagnostics
+        .into_iter()
+        .map(|diagnostic| ExportDiagnostic {
+            severity: match diagnostic.severity {
+                adoc_docbook::Severity::Error => DiagnosticSeverity::Error,
+                adoc_docbook::Severity::Warning => DiagnosticSeverity::Warning,
+            },
+            message: diagnostic.message,
+            location: diagnostic.source.map(|source| (source.path, source.line)),
+        })
+        .collect()
+}
+
+/// Puts a checked DocBook document and its pictures (`assets`, each a name in the assets
+/// folder and its bytes) in place, so that a failed or abandoned export leaves what was there.
+///
+/// Both are written first to a staging folder beside `output`. Then, through the job's commit,
+/// the old assets folder is moved into the staging folder, the new one (if there are pictures)
+/// moved into its place, and the document renamed over `output` last. A document and a folder
+/// cannot be replaced in one step: if the document's rename fails, the old folder is put back,
+/// so the old document still finds its pictures. The old folder goes with the staging folder.
+/// The output's checks run again inside the commit, in case a link or a stranger's file
+/// appeared since the export was asked for.
+#[cfg(feature = "docbook")]
+fn write_docbook_files(
+    xml: &str,
+    assets: &[adoc_docbook::Asset],
+    output: &Path,
+    commit: &Commit,
+) -> Result<(), String> {
+    let failed =
+        |path: &Path, error: &dyn std::fmt::Display| format!("{}: {error}", path.display());
+    check_docbook_output(output).map_err(|error| error.to_string())?;
+    // A profile may name a folder, such as `build/`, that does not exist yet.
+    let folder = match output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        Some(parent) => {
+            std::fs::create_dir_all(parent).map_err(|error| failed(parent, &error))?;
+            parent
+        }
+        None => Path::new("."),
+    };
+    let staging = tempfile::Builder::new()
+        .prefix(".adocfoundry-docbook-")
+        .tempdir_in(folder)
+        .map_err(|error| failed(folder, &error))?;
+    let new_assets = staging.path().join("assets");
+    if !assets.is_empty() {
+        std::fs::create_dir(&new_assets).map_err(|error| failed(&new_assets, &error))?;
+        for asset in assets {
+            let path = new_assets.join(&asset.name);
+            std::fs::write(&path, &asset.bytes).map_err(|error| failed(&path, &error))?;
+        }
+    }
+    let new_xml = staging.path().join("document.xml");
+    std::fs::write(&new_xml, xml).map_err(|error| failed(&new_xml, &error))?;
+    let assets_folder = docbook_assets_folder(output);
+    let old_assets = staging.path().join("old");
+    commit.replace(|| {
+        check_docbook_output(output).map_err(|error| error.to_string())?;
+        let had_old = std::fs::symlink_metadata(&assets_folder).is_ok();
+        if had_old {
+            std::fs::rename(&assets_folder, &old_assets)
+                .map_err(|error| failed(&assets_folder, &error))?;
+        }
+        let put_back = || {
+            if had_old {
+                let _ = std::fs::rename(&old_assets, &assets_folder);
+            }
+        };
+        if !assets.is_empty() {
+            if let Err(error) = std::fs::rename(&new_assets, &assets_folder) {
+                put_back();
+                return Err(failed(&assets_folder, &error));
+            }
+        }
+        if let Err(error) = std::fs::rename(&new_xml, output) {
+            if !assets.is_empty() {
+                let _ = std::fs::remove_dir_all(&assets_folder);
+            }
+            put_back();
+            return Err(failed(output, &error));
+        }
+        Ok(())
     })
 }
 

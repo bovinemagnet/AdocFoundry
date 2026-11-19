@@ -33,6 +33,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("adoc-docx", 2),
     ("adoc-ebook", 2),
     ("adoc-epub", 2),
+    ("adoc-docbook", 2),
     ("adoc-kindle", 2),
     ("adoc-audit", 2),
     ("adoc-impact", 2),
@@ -56,6 +57,7 @@ pub const SAME_LAYER_ALLOWED: &[(&str, &str)] = &[
     ("adoc-kindle", "adoc-ebook"),
     ("adoc-epub", "adoc-ebook"),
     ("adoc-epub", "adoc-render"),
+    ("adoc-docbook", "adoc-render"),
 ];
 
 /// Crates whose logic the engine orchestrates: front ends reach them only through
@@ -286,6 +288,9 @@ pub fn check_sources(name: &str, files: &BTreeMap<PathBuf, String>) -> Vec<Strin
         "adoc-kindle" | "adoc-ebook" => ADOC_KINDLE_FORBIDDEN_PATHS,
         // So does EPUB export (EPUB PRD §7).
         "adoc-epub" => ADOC_KINDLE_FORBIDDEN_PATHS,
+        // DocBook export is held as the audit is (DocBook PRD §7): no process and no network,
+        // and no files or threads of its own; the engine writes what it hands back.
+        "adoc-docbook" => ADOC_AUDIT_FORBIDDEN_PATHS,
         _ => return Vec::new(),
     };
     let mut violations = Vec::new();
@@ -441,6 +446,7 @@ const LEAN_EXCLUDED: &[&str] = &[
     "adoc-git",
     "adoc-ebook",
     "adoc-epub",
+    "adoc-docbook",
     "adoc-kindle",
     "typst",
     "gix",
@@ -530,6 +536,38 @@ fn epub_engine_packages(root: &Path) -> Result<BTreeSet<String>, String> {
         "adoc-engine",
         &["--no-default-features", "--features", "epub"],
     )
+}
+
+/// The packages the engine compiles with DocBook export alone: `--no-default-features
+/// --features docbook`.
+fn docbook_engine_packages(root: &Path) -> Result<BTreeSet<String>, String> {
+    build_packages(
+        root,
+        "adoc-engine",
+        &["--no-default-features", "--features", "docbook"],
+    )
+}
+
+/// What DocBook export must never compile, in `adoc-docbook` or in the engine built with
+/// `docbook` alone: the document is written from the view trees, never through another
+/// format's exporter or Typst (DocBook PRD §8).
+const DOCBOOK_EXCLUDED: &[&str] = &[
+    "adoc-pdf",
+    "adoc-docx",
+    "adoc-ebook",
+    "adoc-epub",
+    "adoc-kindle",
+    "adoc-math",
+    "typst",
+];
+
+/// A violation for each crate of [`DOCBOOK_EXCLUDED`] in a DocBook build.
+fn docbook_violations(packages: &BTreeSet<String>) -> Vec<String> {
+    DOCBOOK_EXCLUDED
+        .iter()
+        .filter(|name| packages.contains(**name))
+        .map(|name| format!("DocBook export builds {name}; it needs no other exporter or Typst"))
+        .collect()
 }
 
 /// What EPUB export must never compile, in `adoc-epub` or in the engine built with `epub`
@@ -644,6 +682,18 @@ fn epub_licence_violations(licences: &[(String, String)]) -> Vec<String> {
         .collect()
 }
 
+/// A violation for each package of DocBook export that may be used only under a copyleft
+/// licence, or declares none (DocBook PRD §7: reviewed for licence, as Kindle's and EPUB's).
+fn docbook_licence_violations(licences: &[(String, String)]) -> Vec<String> {
+    licences
+        .iter()
+        .filter(|(_, licence)| !permissive(licence))
+        .map(|(name, licence)| {
+            format!("DocBook export builds {name}, licensed `{licence}`; no copyleft is allowed")
+        })
+        .collect()
+}
+
 /// Runs every check over the workspace rooted at `root`.
 pub fn run(root: &Path) -> Result<Vec<String>, String> {
     let crates = root.join("crates");
@@ -682,8 +732,14 @@ pub fn run(root: &Path) -> Result<Vec<String>, String> {
     violations.extend(kindle_violations(&kindle_engine_packages(root)?));
     violations.extend(epub_violations(&default_build_packages(root, "adoc-epub")?));
     violations.extend(epub_violations(&epub_engine_packages(root)?));
+    violations.extend(docbook_violations(&default_build_packages(
+        root,
+        "adoc-docbook",
+    )?));
+    violations.extend(docbook_violations(&docbook_engine_packages(root)?));
     violations.extend(kindle_licence_violations(&kindle_licences(root)?));
     violations.extend(epub_licence_violations(&licences(root, "adoc-epub")?));
+    violations.extend(docbook_licence_violations(&licences(root, "adoc-docbook")?));
     Ok(violations)
 }
 
@@ -1100,6 +1156,70 @@ libc = "=0.2.0"
         assert_eq!(epub_licence_violations(&licences), Vec::<String>::new());
         let copyleft = [("boko".to_owned(), "GPL-3.0-or-later".to_owned())];
         assert_eq!(epub_licence_violations(&copyleft).len(), 1);
+    }
+
+    /// DocBook PRD §11 test 5: DocBook export alone, in `adoc-docbook` and in the engine built
+    /// with `docbook` and no other format, compiles neither Typst nor another exporter.
+    #[test]
+    fn docbook_builds_alone() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let packages = default_build_packages(&root, "adoc-docbook").unwrap();
+        assert!(packages.contains("adoc-render"), "{packages:?}");
+        assert!(
+            !packages.contains("oxixml-relaxng"),
+            "the schema validator is for tests only: {packages:?}"
+        );
+        assert_eq!(docbook_violations(&packages), Vec::<String>::new());
+
+        let engine = docbook_engine_packages(&root).unwrap();
+        assert!(engine.contains("adoc-docbook"), "{engine:?}");
+        assert_eq!(docbook_violations(&engine), Vec::<String>::new());
+
+        let with_others: BTreeSet<String> = ["adoc-docbook", "adoc-epub", "typst"]
+            .map(str::to_owned)
+            .into();
+        assert_eq!(
+            docbook_violations(&with_others),
+            [
+                "DocBook export builds adoc-epub; it needs no other exporter or Typst",
+                "DocBook export builds typst; it needs no other exporter or Typst",
+            ]
+        );
+    }
+
+    /// DocBook PRD §11 test 22: `adoc-docbook` names no process, network, file or thread
+    /// (the audit's list, `check_sources`), and builds nothing copyleft.
+    #[test]
+    fn docbook_is_in_process() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut sources = BTreeMap::new();
+        collect_sources(&root.join("crates/adoc-docbook/src"), &mut sources);
+        assert!(sources.len() > 8, "{}", sources.len());
+        assert_eq!(
+            check_sources("adoc-docbook", &sources),
+            Vec::<String>::new()
+        );
+        // A source naming a process, the network or a file is caught.
+        let mut sources = BTreeMap::new();
+        sources.insert(
+            PathBuf::from("x.rs"),
+            "std::process::Command::new(\"xmllint\"); std::net::TcpStream; std::fs::write"
+                .to_owned(),
+        );
+        assert_eq!(check_sources("adoc-docbook", &sources).len(), 5);
+
+        let licences = licences(&root, "adoc-docbook").unwrap();
+        assert!(
+            licences.iter().any(|(name, _)| name == "roxmltree"),
+            "{licences:?}"
+        );
+        assert!(
+            !licences.iter().any(|(name, _)| name == "oxixml-relaxng"),
+            "the schema validator is for tests only: {licences:?}"
+        );
+        assert_eq!(docbook_licence_violations(&licences), Vec::<String>::new());
+        let copyleft = [("libxml2-sys".to_owned(), "GPL-2.0".to_owned())];
+        assert_eq!(docbook_licence_violations(&copyleft).len(), 1);
     }
 
     /// The Word looks PRD, §9 test 1: themes load without Typst, so Word export can read them

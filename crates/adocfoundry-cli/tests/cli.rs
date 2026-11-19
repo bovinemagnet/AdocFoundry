@@ -2097,3 +2097,175 @@ fn protection_cli_exit_codes() {
         "export them separately",
     );
 }
+
+/// The DocBook export PRD, §11 test 19: an article, a component book and a profile, each with
+/// its pictures beside it, with exit codes that follow `--fail-on`; `--assets reference` copies
+/// nothing.
+#[test]
+fn docbook_cli_exports_and_gates() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("reference");
+    copy_tree(
+        &repository_root().join("tests/fixtures/docx/reference"),
+        &root,
+    );
+    std::fs::write(
+        root.join(".adocfoundry.toml"),
+        "[docbook.profiles.handbook]\ncomponent = \"2.0@manual\"\noutput = \"build/handbook.xml\"\n",
+    )
+    .unwrap();
+    let run = |folder: &Path, arguments: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+            .current_dir(folder)
+            .args(arguments)
+            .output()
+            .unwrap()
+    };
+    let succeeded = |output: &Output| {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    let is_docbook = |path: &Path| {
+        let xml = std::fs::read_to_string(path).unwrap();
+        adoc_docbook::testing::assert_valid(&xml);
+        xml
+    };
+    let pages = root.join("manual/modules/ROOT/pages");
+
+    // A page: beside it, with its pictures in the folder named after it.
+    let output = run(&root, &["docbook", "manual/modules/ROOT/pages/media.adoc"]);
+    succeeded(&output);
+    let xml = is_docbook(&pages.join("media.xml"));
+    assert!(xml.contains("fileref=\"media_assets/i1.png\""), "{xml}");
+    assert!(pages.join("media_assets/i1.png").is_file());
+    let shown = stdout(&output);
+    assert!(shown.contains("media.xml (1 AsciiDoc page)"), "{shown}");
+    assert!(shown.contains("assets: "), "{shown}");
+    // An output that is not an `.xml` file, or an unknown asset policy, is refused, and
+    // nothing is written.
+    for (flag, value, problem) in [
+        ("--output", "x.dbk", "is not an .xml file"),
+        ("--output", "x.epub", "is not an .xml file"),
+        ("--assets", "move", "expected copy or reference"),
+    ] {
+        let output = run(
+            &root,
+            &[
+                "docbook",
+                "manual/modules/ROOT/pages/media.adoc",
+                flag,
+                value,
+            ],
+        );
+        assert_eq!(output.status.code(), Some(2), "{flag} {value}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(problem),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert!(!root.join("x.dbk").exists());
+
+    // Referred to where they are: nothing copied.
+    succeeded(&run(
+        &root,
+        &[
+            "docbook",
+            "manual/modules/ROOT/pages/media.adoc",
+            "--output",
+            "referenced.xml",
+            "--assets",
+            "reference",
+        ],
+    ));
+    let xml = std::fs::read_to_string(root.join("referenced.xml")).unwrap();
+    adoc_docbook::testing::assert_valid_referenced(&xml);
+    assert!(
+        xml.contains("fileref=\"manual/modules/ROOT/images/logo.png\""),
+        "{xml}"
+    );
+    assert!(!root.join("referenced_assets").exists());
+
+    // A component folder: its book, in the current folder; and by `--component`.
+    let output = run(
+        directory.path(),
+        &[
+            "docbook",
+            "reference",
+            "--component",
+            "2.0@manual",
+            "--output",
+            "manual.xml",
+        ],
+    );
+    succeeded(&output);
+    let xml = is_docbook(&directory.path().join("manual.xml"));
+    assert!(xml.contains("<book "), "{xml}");
+    assert!(directory.path().join("manual_assets").is_dir());
+
+    // A profile writes what the app's command writes.
+    succeeded(&run(
+        directory.path(),
+        &["docbook", "--profile", "handbook", "reference"],
+    ));
+    let written = root.join("build/handbook.xml");
+    let from_cli = std::fs::read(&written).unwrap();
+    is_docbook(&written);
+    std::fs::remove_file(&written).unwrap();
+    let mut settings = adoc_engine::Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = adoc_engine::Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    let wait = std::time::Duration::from_secs(120);
+    assert!(engine.wait_for_workers(wait));
+    engine
+        .invoke(
+            adoc_engine::commands::ids::EXPORT_DOCBOOK_PROFILE,
+            adoc_engine::CommandArgs::Profile("handbook".to_owned()),
+        )
+        .unwrap();
+    while engine.is_exporting() {
+        assert!(engine.wait_for_workers(wait));
+    }
+    assert!(
+        std::fs::read(&written).unwrap() == from_cli,
+        "the app's document differs from the command line's"
+    );
+    let output = run(
+        directory.path(),
+        &["docbook", "--profile", "missing", "reference"],
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no DocBook profile `missing`"));
+
+    // `--fail-on`: a reference that leads nowhere is a warning; the document is written all
+    // the same.
+    std::fs::write(
+        pages.join("broken.adoc"),
+        "= Broken\n\nSee xref:missing.adoc[nowhere].\n",
+    )
+    .unwrap();
+    let page = [
+        "docbook",
+        "manual/modules/ROOT/pages/broken.adoc",
+        "--output",
+        "broken.xml",
+    ];
+    let output = run(&root, &page);
+    succeeded(&output);
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("broken.adoc:3: warning: the cross reference missing.adoc leads to nothing"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::remove_file(root.join("broken.xml")).unwrap();
+    let output = run(&root, &[&page[..], &["--fail-on", "warning"]].concat());
+    assert_eq!(output.status.code(), Some(1));
+    is_docbook(&root.join("broken.xml"));
+    succeeded(&run(&root, &[&page[..], &["--fail-on", "error"]].concat()));
+    succeeded(&run(&root, &[&page[..], &["--fail-on", "none"]].concat()));
+}

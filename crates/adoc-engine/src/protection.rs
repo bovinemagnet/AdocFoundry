@@ -19,6 +19,8 @@ pub enum ExportFormat {
     Kindle,
     /// An EPUB book, which carries no editing restriction either.
     Epub,
+    /// DocBook XML, which carries none either.
+    DocBook,
 }
 
 impl ExportFormat {
@@ -29,6 +31,7 @@ impl ExportFormat {
             Self::Html => "HTML",
             Self::Kindle => "Kindle",
             Self::Epub => "EPUB",
+            Self::DocBook => "DocBook",
         }
     }
 
@@ -38,7 +41,9 @@ impl ExportFormat {
     fn protects_whole_document(self) -> bool {
         match self {
             Self::Docx => true,
-            Self::Pdf | Self::PdfA | Self::Html | Self::Kindle | Self::Epub => false,
+            Self::Pdf | Self::PdfA | Self::Html | Self::Kindle | Self::Epub | Self::DocBook => {
+                false
+            }
         }
     }
 }

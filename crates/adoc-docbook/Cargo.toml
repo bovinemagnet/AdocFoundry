@@ -1,0 +1,29 @@
+[package]
+name = "adoc-docbook"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+adoc-core.workspace = true
+adoc-dom.workspace = true
+adoc-render.workspace = true
+roxmltree.workspace = true
+oxixml-relaxng = { workspace = true, optional = true }
+
+[features]
+# `testing`: every document checked against the DocBook 5.2.1 RELAX NG schema, for tests.
+test-support = ["dep:oxixml-relaxng"]
+
+[dev-dependencies]
+adoc-docbook = { path = ".", features = ["test-support"] }
+adoc-core.workspace = true
+adoc-dom.workspace = true
+adoc-render.workspace = true
+roxmltree.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

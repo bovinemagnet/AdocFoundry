@@ -26,6 +26,10 @@
 //!     [--output <file.epub>] [--fail-on none|warning|error]
 //! adocfoundry-cli epub --profile <name> [<root>] [--output <file.epub>]
 //!     [--fail-on none|warning|error]
+//! adocfoundry-cli docbook <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
+//!     [--output <file.xml>] [--assets copy|reference] [--fail-on none|warning|error]
+//! adocfoundry-cli docbook --profile <name> [<root>] [--output <file.xml>]
+//!     [--assets copy|reference] [--fail-on none|warning|error]
 //! adocfoundry-cli git-status <root> [--format text|json]
 //! adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--ages]
 //!     [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
@@ -46,9 +50,9 @@ use adoc_engine::{
     commands::ids,
     pdf_standard,
     report::{display_path, severity_name, ChangedFile},
-    CommandArgs, CommandOutcome, DocxExportArgs, Engine, EngineError, EpubExportArgs, ExportArgs,
-    ExportSummary, ExportTarget, GraphFilter, GraphScope, KindleExportArgs, KindleFormat,
-    LookChoice, Settings, SvgStyle,
+    CommandArgs, CommandOutcome, DocBookAssets, DocBookExportArgs, DocxExportArgs, Engine,
+    EngineError, EpubExportArgs, ExportArgs, ExportSummary, ExportTarget, GraphFilter, GraphScope,
+    KindleExportArgs, KindleFormat, LookChoice, Settings, SvgStyle,
 };
 
 const USAGE: &str = "usage:
@@ -77,6 +81,10 @@ const USAGE: &str = "usage:
       [--output <file.epub>] [--fail-on none|warning|error]
   adocfoundry-cli epub --profile <name> [<root>] [--output <file.epub>]
       [--fail-on none|warning|error]
+  adocfoundry-cli docbook <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
+      [--output <file.xml>] [--assets copy|reference] [--fail-on none|warning|error]
+  adocfoundry-cli docbook --profile <name> [<root>] [--output <file.xml>]
+      [--assets copy|reference] [--fail-on none|warning|error]
   adocfoundry-cli git-status <root> [--format text|json]
   adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--ages]
       [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
@@ -186,6 +194,7 @@ fn run(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         "docx" => docx(rest, out),
         "kindle" => kindle(rest, out),
         "epub" => epub(rest, out),
+        "docbook" => docbook(rest, out),
         "git-status" => git_status(rest, out),
         "graph" => graph(rest, out),
         "doctor" => doctor(rest, out),
@@ -1313,6 +1322,76 @@ fn kindle(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
 
 /// Exports a page, or a component version as a book, to an EPUB 3 book. An output that is not
 /// an `.epub` file is refused before anything is read.
+/// Exports a page as a DocBook article, or a component version as a DocBook book, with its
+/// pictures in the folder beside it named after it. An output that is not an `.xml` file is
+/// refused before anything is read.
+fn docbook(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+    let (positional, options) = parse_options(
+        arguments,
+        &[
+            "root",
+            "component",
+            "output",
+            "profile",
+            "fail-on",
+            "assets",
+        ],
+    )?;
+    let fail_on = fail_on(&options)?;
+    if let Some(output) = option(&options, "output") {
+        let xml = Path::new(output)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("xml"));
+        if !xml {
+            return Err(format!("{output} is not an .xml file"));
+        }
+    }
+    let assets = option(&options, "assets")
+        .map(|name| {
+            DocBookAssets::from_name(name)
+                .ok_or_else(|| format!("--assets {name}: expected copy or reference"))
+        })
+        .transpose()?;
+    let (mut engine, root, args) = if let Some(profile) = option(&options, "profile") {
+        let root = profile_root(&positional, &options)?;
+        let engine = open_engine(&root, false)?;
+        let mut args = engine
+            .docbook_profile_export_args(profile)
+            .map_err(|error| error.to_string())?;
+        if let Some(output) = option(&options, "output") {
+            args.output = PathBuf::from(output);
+        }
+        (engine, root, args)
+    } else {
+        let [target] = positional.as_slice() else {
+            return Err(USAGE.to_owned());
+        };
+        let (engine, root, target, default_output) = open_target(target, &options, "xml")?;
+        let output = option(&options, "output").map_or(default_output, PathBuf::from);
+        (engine, root, DocBookExportArgs::new(target, output))
+    };
+    let args = DocBookExportArgs {
+        assets: assets.or(args.assets),
+        ..args
+    };
+    let output = args.output.clone();
+    let result = engine.export_docbook_blocking(args, INDEX_TIMEOUT);
+    let written = result.is_ok();
+    let code = report(result, &output, &root, fail_on, out, true)?;
+    let folder = adoc_engine::docbook_assets_folder(&output);
+    if written && folder.is_dir() {
+        let count = std::fs::read_dir(&folder).map_or(0, Iterator::count);
+        let plural = if count == 1 { "" } else { "s" };
+        outln!(
+            out,
+            "assets: {} ({count} picture{plural})",
+            display_path(&folder, &root)
+        );
+    }
+    Ok(code)
+}
+
 fn epub(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(
         arguments,
