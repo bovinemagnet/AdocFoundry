@@ -523,6 +523,7 @@ dependencies = [
  "adoc-index",
  "adoc-pdf",
  "adoc-render",
+ "adoc-share",
  "base64 0.22.1",
  "embed-resource",
  "gpui-component",

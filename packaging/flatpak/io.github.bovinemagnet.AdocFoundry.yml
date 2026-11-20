@@ -51,7 +51,9 @@ modules:
     buildsystem: simple
     build-commands:
       - cargo --offline fetch --manifest-path Cargo.toml --verbose
-      - cargo --offline build --release -p adocfoundry -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
+      # The app alone, so the other three do not take its collaboration features.
+      - cargo --offline build --release -p adocfoundry
+      - cargo --offline build --release -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
       - install -Dm755 target/release/adocfoundry -t /app/bin
       - install -Dm755 target/release/adocfoundry-cli -t /app/bin
       - install -Dm755 target/release/adoc-ls -t /app/bin

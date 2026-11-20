@@ -128,6 +128,12 @@ jobs:
         run: cargo install cargo-nextest --version 0.9.151 --locked
       - if: runner.os == 'Windows'
         run: cargo nextest run --workspace --exclude adocfoundry --profile ci
+      # ring, collaboration's TLS provider, builds C and assembly with clang for Windows on
+      # ARM, which only a release builds otherwise: checked here on every pull request.
+      - if: runner.os == 'Windows'
+        run: rustup target add aarch64-pc-windows-msvc
+      - if: runner.os == 'Windows'
+        run: cargo build -p adoc-share --target aarch64-pc-windows-msvc
       # The app's tests run on GPUI's test platform; on macOS it builds without a display server.
       - name: App tests
         if: runner.os == 'macOS'

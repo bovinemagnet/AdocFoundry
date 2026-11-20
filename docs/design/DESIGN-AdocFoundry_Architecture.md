@@ -220,7 +220,7 @@ Core              adoc-core: Document, LineIndex, SourceRange, Section, Anchor, 
 
 *Crate ladder: 5 layers, 4 front ends and collaboration's transport. Arrows are the only permitted dependency direction.*
 
-Arrows show the only permitted dependency direction; a crate never imports a crate above it, and only `adocfoundry` imports GPUI. `cargo xtask layers` checks the ladder in CI from `LAYERS` in `xtask/src/layers.rs`, with a few same-layer pairs allowed (`adoc-index` and `adoc-lang` on `adoc-parser`; `adoc-lang` on `adoc-index` and `adoc-antora`; `adoc-pdf`, `adoc-docx`, `adoc-ebook` and `adoc-kindle` on `adoc-render`; `adoc-kindle` and `adoc-epub` on `adoc-ebook`; `adoc-epub` and `adoc-docbook` on `adoc-render`). Front ends reach `adoc-audit` and `adoc-impact` only through the engine.
+Arrows show the only permitted dependency direction; a crate never imports a crate above it, and only `adocfoundry` imports GPUI. `cargo xtask layers` checks the ladder in CI from `LAYERS` in `xtask/src/layers.rs`, with a few same-layer pairs allowed (`adoc-index` and `adoc-lang` on `adoc-parser`; `adoc-lang` on `adoc-index` and `adoc-antora`; `adoc-pdf`, `adoc-docx`, `adoc-ebook` and `adoc-kindle` on `adoc-render`; `adoc-kindle` and `adoc-epub` on `adoc-ebook`; `adoc-epub` and `adoc-docbook` on `adoc-render`; `adocfoundry` on `adoc-share`). Front ends reach `adoc-audit` and `adoc-impact` only through the engine.
 
 **Workspace layout** (Typst/Zed pattern: `crates/*`, shared `[workspace.package]`, `default-members` on the app binary):
 

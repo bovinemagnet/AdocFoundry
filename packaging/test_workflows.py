@@ -112,6 +112,25 @@ class ReleaseWaitsForCi(unittest.TestCase):
         self.assertIn("pattern: macos-binaries-*", join)
         self.assertNotIn("cargo build", join, "the join builds nothing")
 
+    def test_the_app_is_built_apart_from_the_other_binaries(self):
+        # Built together, the command-line tools would take the app's features (collaboration
+        # and `yrs`) through Cargo's feature unification (COLLAB design §3).
+        release = jobs(read("release.yml"))
+        flatpak = read_root("packaging/flatpak/io.github.bovinemagnet.AdocFoundry.yml")
+        builds = [
+            line
+            for lines in release.values()
+            for line in lines
+            if "cargo build --release" in line
+        ] + [line for line in flatpak.splitlines() if "cargo --offline build" in line]
+        self.assertTrue(builds)
+        for line in builds:
+            if "-p adocfoundry " in line + " ":
+                self.assertNotRegex(line, r"-p (adocfoundry-cli|adoc-ls|adoc-mcp)\b", line)
+        apps = [line for line in builds if re.search(r"-p adocfoundry(\s|$)", line)]
+        # macOS (one job for both architectures), Windows, Linux and the Flatpak.
+        self.assertEqual(len(apps), 4, "the app is built alone on every platform and in the Flatpak")
+
     def test_only_the_packages_are_published(self):
         # Each platform's packages, by name: not the macOS jobs' binaries, nor the Flatpak bundle,
         # which stays with the run, whichever has finished by then.

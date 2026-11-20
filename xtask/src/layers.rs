@@ -60,6 +60,8 @@ pub const SAME_LAYER_ALLOWED: &[(&str, &str)] = &[
     ("adoc-epub", "adoc-ebook"),
     ("adoc-epub", "adoc-render"),
     ("adoc-docbook", "adoc-render"),
+    // The app runs collaboration's transport (COLLAB design §3).
+    ("adocfoundry", "adoc-share"),
 ];
 
 /// Crates whose logic the engine orchestrates: front ends reach them only through
