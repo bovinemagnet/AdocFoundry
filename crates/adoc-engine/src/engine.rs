@@ -760,7 +760,11 @@ impl Engine {
             CommandContext::Deletion => self.active_item().is_some() && self.can_delete_files(),
             CommandContext::DeletedFile => self.last_deleted().is_some(),
             CommandContext::KeptDeletions => !self.roots.is_empty() && self.can_delete_files(),
+            #[cfg(feature = "collab")]
             CommandContext::Collaboration => self.collaboration_offered(),
+            // Without collaboration no command asks for it.
+            #[cfg(not(feature = "collab"))]
+            CommandContext::Collaboration => false,
         }
     }
 
