@@ -35,7 +35,9 @@ AdocFoundry is a native desktop editor for AsciiDoc documentation sites laid out
 | 6 | Signed releases and updates | Inline STEM typeset in the text flow; MCP over Streamable HTTP on loopback with a token; Developer ID signing and notarisation, Authenticode through Azure Trusted Signing; an update check, and updating in place on macOS and Windows | Delta updates, update channels, package-manager publishing |
 | 7 | Graph view | An interactive graph of pages, partials and navigation files joined by xrefs, includes and navigation entries, kept current as pages change; the whole workspace in its own window, and the active page's neighbourhood in the sidebar; a `graph` CLI command and MCP tool | Images as nodes, saved layouts, editing links from the graph |
 
-Non-goals for now: a web or mobile build, collaborative editing, hosting or publishing the site (Antora itself does that), and bit-for-bit output parity with Asciidoctor. The editor targets the Asciidoctor dialect of AsciiDoc that Antora consumes, so Antora-built sites and AdocFoundry agree on what a document means.
+Non-goals for now: a web or mobile build, hosting or publishing the site (Antora itself does that), and bit-for-bit output parity with Asciidoctor. The editor targets the Asciidoctor dialect of AsciiDoc that Antora consumes, so Antora-built sites and AdocFoundry agree on what a document means.
+
+Collaborative editing, once a non-goal, is now planned: epic #686, `docs/prd/PRD-AdocFoundry_COLAB.md`, with its decisions and contracts in `docs/design/DESIGN-AdocFoundry_Collaboration.md` (a CRDT per shared file with `yrs`, a host-only filesystem, an authenticated private-network transport in its own L4 crate).
 
 Cross-cutting requirements: one binary per platform with no runtime dependency on Ruby, Node or Java; sub-16 ms keystroke-to-paint in the editor; parse and re-render a page under 50 ms on save for the preview; no telemetry.
 
@@ -164,7 +166,7 @@ GPUI is viable outside Zed, but only through third-party snapshot crates, and Ze
 | Source buffer | [ropey](https://docs.rs/ropey/2.0.0-beta.1/ropey/) 2.0.0-beta.1 (byte-indexed; gpui-kit already pins it). [crop](https://github.com/nomad/crop) 0.4.3 is 3 to 4x faster on edit traces but LF/CRLF only | Byte offsets match `adoc-core`'s `SourceRange`; Zed's rope is GPL |
 | Incremental syntax | tree-sitter 0.27.1 with the fork's block + inline grammars | Highlighting, folding, outline at keystroke speed |
 | Shaping | Whatever the framework uses (cosmic-text 0.19 on GPUI/Linux, Core Text/DirectWrite elsewhere) | Do not add a second shaping stack |
-| Structured document model (Phase 3) | Own `adoc-model` crate: typed node tree + ProseMirror-style steps and position mapping. Evaluate [prosemirror-rs](https://docs.rs/crate/prosemirror/0.5.0) 0.5 (Jun 2026, MIT) first | Transactions with inverse steps give undo, selection mapping and collaborative-ready history. CRDTs (loro 1.17, automerge 0.12) only if collaboration ever becomes a goal |
+| Structured document model (Phase 3) | Own `adoc-model` crate: typed node tree + ProseMirror-style steps and position mapping. Evaluate [prosemirror-rs](https://docs.rs/crate/prosemirror/0.5.0) 0.5 (Jun 2026, MIT) first | Transactions with inverse steps give undo, selection mapping and collaborative-ready history. Collaborative editing uses `yrs` (Yjs-compatible, MIT), chosen by the COLLAB 1/8 spike over `loro` and `automerge` (`docs/qa/spike-collab.md`) |
 
 ### Preview rendering
 

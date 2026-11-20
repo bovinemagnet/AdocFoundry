@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed, 2026-11-17 (epic #686). COLLAB 1/8 is a feasibility and contract gate: the open decisions in §13 are settled there or in the package they affect, and recorded in §14 |
+| Status | Proposed, 2026-11-17 (epic #686). COLLAB 1/8, the feasibility and contract gate, proposed its decisions on 2026-11-20 (§14), pending the maintainer's acceptance |
 | Date | 2026-11-17 |
 | Author | Paul Snow |
 | Version | 0.0.0 |
@@ -291,6 +291,26 @@ Each work package records here where the implementation departs from this docume
 
 - `docs/design/DESIGN-AdocFoundry_Architecture.md` lists collaborative editing as a non-goal and names `loro` and `automerge` as the CRDTs to consider "if collaboration ever becomes a goal". This document makes it a goal; C1 updates the design document with its decision.
 - `AGENTS.md`'s confinement rules allow no HTTP client below `adocfoundry`, which runs the system's `curl` for its update check (`src/updates.rs`), and nothing there covers a listener in the app. C4 adds the app's TLS and WebSocket crates to the confinement lists in `xtask/src/layers.rs` and updates `AGENTS.md` in the same pull request.
+
+### C1 (COLLAB 1/8, #688)
+
+The spike is `spikes/collab/`, recorded in `docs/qa/spike-collab.md`. The contracts are in `docs/design/DESIGN-AdocFoundry_Collaboration.md`, which later packages change first when they depart from it. Settled from §13:
+
+- **CRDT library:** `yrs` 0.28.2 with its `sync` feature (without it the undo manager is not `Send`) and `OffsetKind::Bytes`. Its deltas count bytes. It does not refuse an offset inside a character, so the bridge checks every offset first.
+- **Topology:** a star through the host over ordered TLS streams. With three or more replicas exchanging updates out of the order sent, `yrs` can leave an update pending for ever; a star never produces that order. A guest left with something pending asks the host for a resynchronisation. The host never resynchronises from a guest: a guest update that leaves it pending drops the guest, and the host rebuilds the file's replica from its own text in a new epoch.
+- **Where the edit type lives:** `adoc-collab` has its own `ByteEdit` over `adoc_core::SourceRange`, converted by the engine; `TextEdit` stays in the engine.
+- **Undo across a session boundary:** a file's `UndoStack` is dropped when it becomes shared and starts empty when it stops being shared. While shared, undo is the replica's, grouped where the engine's coalescing rules end a group. Multi-file grouped commands are refused while a file they touch is shared.
+- **Transport stack and its home:** framed TLS over TCP, no WebSocket, with `rustls` 0.23 (`ring`), `tokio-rustls` and `tokio`, all already in the lock file, plus `rcgen`, in a new L4 crate `adoc-share` added to the network confinement lists. The protocol's types and limits live in `adoc-collab`.
+- **Trust and pairing:**
+  - The host's identity is per session, never persisted.
+  - Invitations carry the certificate's fingerprint and a 256-bit, single-use secret valid for 10 minutes.
+  - A safety code is compared out of band before the secret is sent.
+  - The host admits each authenticated guest before anything about the workspace is sent.
+  - The host assigns each guest's CRDT client id and refuses updates that create items for any other.
+- **Guest preview and navigation:** the guest's engine renders from its own replicas through a resolver over the shared files only; out-of-scope links and includes are placeholders.
+- **Media and manifest scope:** v1 shares `.adoc` pages and partials only, with no media; dotfiles, `.git`, ignored folders and links leaving the root are never offered.
+- **Guest saves and conflict prompts:** Editors may request saves. A change on disk to a shared file is a conflict the host resolves: keep the shared text, reload from disk (a new epoch), or save a copy.
+- **Still open:** platform firewall and interface experience (C8); media for guests.
 
 ## 15. References
 

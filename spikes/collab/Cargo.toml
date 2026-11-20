@@ -1,0 +1,17 @@
+# COLLAB 1/8 (#688): the CRDT spike, a Cargo workspace of its own outside the main one (which
+# excludes this folder), so `yrs` reaches no shipped binary, lean build or release notice until
+# COLLAB 2/8 adopts it. `docs/qa/spike-collab.md` records what these tests showed.
+[package]
+name = "adocfoundry-collab-spike"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[workspace]
+
+[dependencies]
+yrs = { version = "=0.28.2", features = ["sync"] }
+
+[lints.rust]
+unsafe_code = "forbid"
