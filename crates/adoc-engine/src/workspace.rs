@@ -542,6 +542,7 @@ impl Engine {
             self.due_problems(),
             self.due_audit(),
             self.due_graph(),
+            self.due_collaboration(),
         ]
         .into_iter()
         .flatten()
@@ -608,6 +609,23 @@ impl Engine {
             + self.update_due_problems()
             + self.update_due_audit()
             + self.update_due_graph()
+            + self.pump_collaboration()
+    }
+
+    /// When the collaboration session next needs a pump: at once while events wait or local
+    /// changes are unsent.
+    fn due_collaboration(&self) -> Option<Instant> {
+        #[cfg(feature = "collab")]
+        return self.due_session();
+        #[cfg(not(feature = "collab"))]
+        None
+    }
+
+    fn pump_collaboration(&mut self) -> usize {
+        #[cfg(feature = "collab")]
+        return self.pump_session();
+        #[cfg(not(feature = "collab"))]
+        0
     }
 
     /// Blocks until every running worker has reported back, or `timeout` passes, applying the

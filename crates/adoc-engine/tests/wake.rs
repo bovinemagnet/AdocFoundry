@@ -479,3 +479,79 @@ fn a_change_on_disk_wakes_the_front_end() {
     let due = engine.next_due().expect("the change is due");
     assert!(due <= Instant::now() + adoc_engine::WATCH_DEBOUNCE);
 }
+
+/// A host's own change to a shared file is due at once, to be sent (COLLAB 4/8); once sent,
+/// nothing is due. A document shared outside the session is never due.
+#[cfg(feature = "collab")]
+#[test]
+fn a_shared_change_to_send_is_due_at_once() {
+    use std::{collections::VecDeque, sync::Mutex};
+
+    use adoc_engine::{
+        protocol::{ErrorCode, Message, PeerId},
+        Link, LinkError, LinkEvent,
+    };
+
+    /// A link that hands over the events queued, and accepts everything sent.
+    struct Scripted(Arc<Mutex<VecDeque<LinkEvent>>>);
+    impl Link for Scripted {
+        fn try_recv(&mut self) -> Option<LinkEvent> {
+            self.0.lock().unwrap().pop_front()
+        }
+        fn send(&mut self, _: PeerId, _: Message) -> Result<(), LinkError> {
+            Ok(())
+        }
+        fn admit(&mut self, _: PeerId) -> Result<(), LinkError> {
+            Ok(())
+        }
+        fn remove(&mut self, _: PeerId, _: ErrorCode, _: &str) {}
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("page.adoc"), "= Page\n").unwrap();
+    fs::write(directory.path().join("other.adoc"), "= Other\n").unwrap();
+    let mut engine = Engine::new(plain());
+    let peer = PeerId(1);
+    let events = Arc::new(Mutex::new(VecDeque::from([LinkEvent::Knock {
+        peer,
+        name: "guest".to_owned(),
+    }])));
+    engine
+        .host_session(
+            Box::new(Scripted(Arc::clone(&events))),
+            directory.path(),
+            &["page.adoc".into()],
+        )
+        .unwrap();
+    engine.pump();
+    engine.admit_peer(peer).unwrap();
+    assert_eq!(engine.next_due(), None);
+
+    // Shared outside the session: its changes are nobody's to send, and never due.
+    let other = engine.open(&directory.path().join("other.adoc")).unwrap();
+    engine
+        .share_document(
+            other,
+            adoc_engine::SharedFileId(9),
+            adoc_engine::ReplicaId::new(9).unwrap(),
+        )
+        .unwrap();
+    insert(&mut engine, other, "Text.\n");
+    settle(&mut engine);
+    assert_eq!(engine.next_due(), None);
+    engine.close(other).unwrap();
+
+    // Opened by the guest through the session, the page's changes are due at once.
+    events.lock().unwrap().push_back(LinkEvent::Message {
+        peer,
+        message: Message::OpenFile { file: 1 },
+    });
+    engine.pump();
+    let page = engine.session_document(1).unwrap();
+    settle(&mut engine);
+    assert_eq!(engine.next_due(), None);
+    insert(&mut engine, page, "Text.\n");
+    assert!(engine.next_due().is_some_and(|due| due <= Instant::now()));
+    engine.pump();
+    assert!(engine.take_shared_updates(page).is_empty());
+}

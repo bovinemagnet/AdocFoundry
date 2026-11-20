@@ -10,6 +10,8 @@ mod auto_save;
 mod clock;
 #[cfg(feature = "collab")]
 mod collab;
+#[cfg(feature = "collab")]
+mod collab_session;
 mod command;
 pub mod commands;
 #[cfg(feature = "git")]
@@ -98,7 +100,10 @@ pub use about::{About, Notice, Notices, DOCUMENTATION};
 pub use adoc_audit as audit;
 /// What a shared document's updates, state vectors and participants are, for the transport.
 #[cfg(feature = "collab")]
-pub use adoc_collab::{EncodedUpdate, ReplicaId, Sender, StateVectorBytes};
+pub use adoc_collab::{
+    protocol, EncodedUpdate, Link, LinkError, LinkEvent, RelativeSelection, ReplicaId, Sender,
+    StateVectorBytes,
+};
 /// The documentation impact analysis, for front ends, which never name the crate.
 pub use adoc_impact as impact;
 pub use adoc_lang::effective::{
@@ -115,6 +120,8 @@ pub use auto_save::AUTO_SAVE_DELAY;
 pub use clock::{Clock, ManualClock, SystemClock};
 #[cfg(feature = "collab")]
 pub use collab::{SharedFileId, SharedReceipt, SharedRole};
+#[cfg(feature = "collab")]
+pub use collab_session::{Participant, PeerSelection, SESSION_EVENTS_PER_PUMP};
 pub use command::{
     Command, CommandArgs, CommandCategory, CommandContext, CommandId, CommandOutcome,
     CommandRegistry, CommandSpec, RegistryError,

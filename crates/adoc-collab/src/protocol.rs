@@ -245,10 +245,12 @@ pub enum Message {
         epoch: u32,
         seq: u64,
     },
-    /// The sender's selection in a file.
+    /// A participant's selection in a file. The host forwards a guest's with `peer` set to the
+    /// guest, whatever the guest put there.
     Awareness {
         file: u64,
         epoch: u32,
+        peer: PeerId,
         selection: RelativeSelection,
     },
     SaveRequest {
@@ -382,6 +384,7 @@ struct SequenceControl {
 struct AwarenessControl {
     file: u64,
     epoch: u32,
+    peer: PeerId,
     /// The length of the anchor's encoding; the head's follows it in the payload.
     anchor: u16,
 }
@@ -548,6 +551,7 @@ impl Message {
             Self::Awareness {
                 file,
                 epoch,
+                peer,
                 selection,
             } => {
                 let mut payload = selection.anchor.clone();
@@ -557,6 +561,7 @@ impl Message {
                     json(&AwarenessControl {
                         file: *file,
                         epoch: *epoch,
+                        peer: *peer,
                         anchor: selection.anchor.len() as u16,
                     })?,
                     payload,
@@ -777,6 +782,7 @@ pub fn decode(frame: &[u8]) -> Result<Message, FrameError> {
             let AwarenessControl {
                 file,
                 epoch,
+                peer,
                 anchor,
             } = read(control)?;
             let anchor = anchor as usize;
@@ -787,6 +793,7 @@ pub fn decode(frame: &[u8]) -> Result<Message, FrameError> {
             Message::Awareness {
                 file,
                 epoch,
+                peer,
                 selection: RelativeSelection {
                     anchor: anchor.to_vec(),
                     head: head.to_vec(),

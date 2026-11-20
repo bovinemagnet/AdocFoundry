@@ -110,6 +110,9 @@ pub struct Engine {
     /// files at once is refused at the other files too.
     #[cfg(feature = "collab")]
     pub(crate) shared_group: Option<UndoGroup>,
+    /// The collaboration session this engine hosts or takes part in (`src/collab_session.rs`).
+    #[cfg(feature = "collab")]
+    pub(crate) collab_session: Option<crate::collab_session::Session>,
     /// Documents whose typed edits are parsed but not yet in the index, with the time after
     /// which `pump` indexes them.
     pub(crate) pending_index: BTreeMap<DocumentId, std::time::Instant>,
@@ -253,6 +256,8 @@ impl Engine {
             shared: BTreeMap::new(),
             #[cfg(feature = "collab")]
             shared_group: None,
+            #[cfg(feature = "collab")]
+            collab_session: None,
             pending_index: BTreeMap::new(),
             settling: crate::index_settle::Settling::default(),
             typing: false,

@@ -73,6 +73,7 @@ fn every_message() -> Vec<Message> {
         Message::Awareness {
             file: 1,
             epoch: 1,
+            peer: PeerId(2),
             selection,
         },
         Message::SaveRequest {
@@ -199,7 +200,11 @@ fn malformed_frames_are_refused() {
     );
     // An awareness anchor longer than the payload.
     assert_eq!(
-        decode(&body(10, r#"{"file":1,"epoch":1,"anchor":9}"#, &[1, 2])),
+        decode(&body(
+            10,
+            r#"{"file":1,"epoch":1,"peer":1,"anchor":9}"#,
+            &[1, 2]
+        )),
         Err(FrameError::Payload)
     );
     // A heartbeat with anything in it.
@@ -277,6 +282,7 @@ fn fields_outside_their_limits_are_refused() {
     let selection = Message::Awareness {
         file: 1,
         epoch: 1,
+        peer: PeerId(1),
         selection: RelativeSelection {
             anchor: vec![0; adoc_collab::MAX_ANCHOR + 1],
             head: Vec::new(),

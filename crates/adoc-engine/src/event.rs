@@ -28,6 +28,9 @@ pub enum EngineEvent {
     /// A shared document has updates of the local author's changes for the transport to send
     /// (`Engine::take_shared_updates`).
     SharedUpdates(DocumentId),
+    /// Who is in the collaboration session, what they may do or where their selections are
+    /// changed, or a guest's link went down or came back (`Engine::participants`).
+    SessionChanged,
     DocumentSaved(DocumentId),
     DocumentClosed(DocumentId),
     /// `new` took the preview tab's place from `old`, which is closed next.

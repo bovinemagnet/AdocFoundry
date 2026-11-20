@@ -63,6 +63,13 @@ pub(crate) struct SharedDocument {
     group: Option<UndoGroup>,
 }
 
+impl SharedDocument {
+    /// Whether local changes wait to be sent.
+    pub(crate) fn has_outbox(&self) -> bool {
+        !self.outbox.is_empty()
+    }
+}
+
 fn refused(message: &str) -> EngineError {
     EngineError::Refused(message.to_owned())
 }
@@ -99,6 +106,18 @@ impl Engine {
         file: SharedFileId,
         host: ReplicaId,
     ) -> Result<(), EngineError> {
+        self.share_document_at(id, file, host, 1)
+    }
+
+    /// [`Engine::share_document`] starting at `epoch`: a file shared again in a session goes on
+    /// from the epoch after its last, so no update of the earlier sharing applies to it.
+    pub(crate) fn share_document_at(
+        &mut self,
+        id: DocumentId,
+        file: SharedFileId,
+        host: ReplicaId,
+        epoch: u32,
+    ) -> Result<(), EngineError> {
         if self.shared.contains_key(&id) {
             return Err(refused("the document is already shared"));
         }
@@ -121,7 +140,7 @@ impl Engine {
                 replica,
                 role: SharedRole::Host,
                 file,
-                epoch: 1,
+                epoch,
                 outbox: Vec::new(),
                 typing: None,
                 group: None,
