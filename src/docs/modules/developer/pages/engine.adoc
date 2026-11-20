@@ -837,6 +837,9 @@ The code is `crates/adoc-engine/src/collab.rs`, with hooks marked `#[cfg(feature
 `share_document(id, SharedFileId, ReplicaId)` shares an open document as the host, and drops its undo history.
 `open_shared(name, file, epoch, snapshot, me, can_edit)` opens a document with no file on disk, as a guest, from the host's snapshot.
 `reset_shared` restarts a guest from a new snapshot, and `stop_sharing` ends the sharing.
+`shared_snapshot(id)` gives the host's snapshot of a shared document and its epoch, for a guest joining or resynchronising.
+A snapshot checks itself by building a replica from what it encoded: when that would give another text (an altered update can leave such a state while every participant already connected agrees), or the replica waits for an update, the host first rebuilds the replica from its own text in a new epoch and snapshots that.
+A changed epoch tells the transport that every guest needs the new snapshot.
 
 === Local edits
 

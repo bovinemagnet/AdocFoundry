@@ -179,7 +179,22 @@ impl Engine {
     }
 
     /// The whole state of a shared document, for a guest joining or rebuilding, and its epoch.
-    pub fn shared_snapshot(&self, id: DocumentId) -> Result<(EncodedUpdate, u32), EngineError> {
+    ///
+    /// A snapshot checks itself (`adoc_collab::Replica::snapshot`): when the replica holds a
+    /// state whose encoding would rebuild another text, or waits for something, the host
+    /// rebuilds it from its own text first, in a new epoch, and snapshots that. A changed epoch
+    /// tells the caller every guest needs the new snapshot.
+    pub fn shared_snapshot(&mut self, id: DocumentId) -> Result<(EncodedUpdate, u32), EngineError> {
+        let shared = self.shared.get(&id).ok_or_else(|| refused("not shared"))?;
+        if let Ok(snapshot) = shared.replica.snapshot() {
+            return Ok((snapshot, shared.epoch));
+        }
+        if shared.role != SharedRole::Host {
+            return Err(refused("only the host gives a snapshot"));
+        }
+        if !matches!(self.broken(id), SharedReceipt::Rebuilt { .. }) {
+            return Err(refused("the shared document could not be rebuilt"));
+        }
         let shared = self.shared.get(&id).ok_or_else(|| refused("not shared"))?;
         let snapshot = shared
             .replica

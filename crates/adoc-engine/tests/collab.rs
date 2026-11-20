@@ -424,3 +424,32 @@ fn a_hostile_update_makes_the_host_rebuild_and_the_guest_start_again() {
         )
         .is_err());
 }
+
+#[test]
+fn a_snapshot_that_would_rebuild_another_text_makes_the_host_rebuild() {
+    // `adoc-collab`'s `a_snapshot_that_would_rebuild_another_text_is_refused`, through the
+    // engine: a guest's altered update applies consistently, but the host's next snapshot would
+    // give a later joiner another text, so the host rebuilds from its own text in a new epoch.
+    let mut pair = Pair::new("= Page\n\nUn café 👋\r\nMore.\n");
+    replace(&mut pair.guest, pair.guest_doc, 8, 17, "Thé 🇬🇧");
+    let mut update = pair.guest.take_shared_updates(pair.guest_doc).remove(0);
+    let len = update.0.len();
+    update.0[8 % len] = 0x01;
+    let receipt = pair
+        .host
+        .apply_shared_update(pair.host_doc, 1, &update, Sender::Guest(id(2)))
+        .unwrap();
+    assert_eq!(receipt, SharedReceipt::Applied);
+    let text_now = text(&pair.host, pair.host_doc);
+    let (snapshot, epoch) = pair.host.shared_snapshot(pair.host_doc).unwrap();
+    assert_eq!(epoch, 2, "rebuilt before the snapshot was given");
+    let mut joiner = engine();
+    let doc = joiner
+        .open_shared("page.adoc", SharedFileId(1), epoch, &snapshot, id(5), true)
+        .unwrap();
+    assert_eq!(
+        text(&joiner, doc),
+        text_now,
+        "the joiner sees the host's text"
+    );
+}
