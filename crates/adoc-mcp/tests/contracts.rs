@@ -425,22 +425,14 @@ fn mcp_resources_cursor_stable_and_bounded() {
     client.stop();
 }
 
-/// The workspace revision `check` reports.
-fn revision(client: &mut Client) -> u64 {
-    client.call("check", json!({ "limit": 1 })).unwrap()["workspace_revision"]
-        .as_u64()
-        .unwrap()
-}
-
 #[test]
 fn mcp_cursor_rejects_stale_index_revision() {
     let (_directory, root) = big_workspace(600);
     let mut client = Client::start(&root, false);
     let first = client.request("resources/list", json!({}));
     let cursor = first["result"]["nextCursor"].as_str().unwrap().to_owned();
-    let before = revision(&mut client);
 
-    add_page_and_wait(&mut client, &root, before);
+    add_page_and_wait(&mut client, &root);
     let stale = client.request("resources/list", json!({ "cursor": cursor }));
     let error = &stale["error"];
     assert!(
@@ -454,14 +446,19 @@ fn mcp_cursor_rejects_stale_index_revision() {
     client.stop();
 }
 
-/// Writes a page on disk and waits until the server has indexed it. While it indexes, `check`
-/// answers `index_incomplete`, which is a wait too.
-fn add_page_and_wait(client: &mut Client, root: &Path, before: u64) {
+/// Writes a page on disk and waits until the server has indexed that page. Waiting for the
+/// workspace revision to move is not enough: anything else that moves it first (a late event for
+/// the pages the workspace was made with, or the end of a whole index that ran before the page's
+/// event came) leaves the listing without the page, as on macOS CI once. While it indexes,
+/// `get_page_context` answers `index_incomplete` or `not_found`, which are waits too.
+fn add_page_and_wait(client: &mut Client, root: &Path) {
     std::fs::write(root.join("big/modules/ROOT/pages/added.adoc"), "= Added\n").unwrap();
     let deadline = Instant::now() + WAIT;
-    let indexed = |client: &mut Client| match client.call("check", json!({ "limit": 1 })) {
-        Ok(result) => result["workspace_revision"].as_u64() != Some(before),
+    let page = json!({ "path": "big/modules/ROOT/pages/added.adoc", "navigation": false });
+    let indexed = |client: &mut Client| match client.call("get_page_context", page.clone()) {
+        Ok(_) => true,
         Err(error) if error.contains("still being indexed") => false,
+        Err(error) if error.contains("is not an indexed page") => false,
         Err(error) => panic!("{error}"),
     };
     while !indexed(client) {
