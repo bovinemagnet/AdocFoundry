@@ -95,6 +95,22 @@ fn every_message() -> Vec<Message> {
             peer: PeerId(1),
             role: Role::Editor,
         },
+        Message::FileState {
+            file: 1,
+            epoch: 2,
+            saved: Some("0f".repeat(32)),
+            conflict: false,
+        },
+        Message::FileState {
+            file: 1,
+            epoch: 2,
+            saved: None,
+            conflict: true,
+        },
+        Message::SaveResult {
+            request: 6,
+            outcome: SaveOutcome::Stale,
+        },
         Message::Resync {
             file: 1,
             epoch: 2,
@@ -289,6 +305,19 @@ fn fields_outside_their_limits_are_refused() {
         },
     };
     assert!(matches!(selection.encode(), Err(FrameError::TooLarge(_))));
+    for revision in ["", "abc", &"G".repeat(64), &"A".repeat(64), &"0".repeat(65)] {
+        let state = Message::FileState {
+            file: 1,
+            epoch: 1,
+            saved: Some(revision.to_owned()),
+            conflict: false,
+        };
+        assert_eq!(
+            state.encode(),
+            Err(FrameError::Invalid("revision")),
+            "{revision}"
+        );
+    }
     let empty = Message::Resync {
         file: 1,
         epoch: 1,

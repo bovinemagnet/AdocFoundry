@@ -31,7 +31,7 @@ use adoc_collab::{
 use adoc_core::FileAccess;
 
 use crate::{
-    collab::{SharedFileId, SharedReceipt},
+    collab::{revision_of, SharedFileId, SharedReceipt, SharedSaveState},
     normalize_path, DocumentId, Engine, EngineError, EngineEvent,
 };
 
@@ -85,6 +85,8 @@ struct Offered {
     document: Option<DocumentId>,
     /// The file's epoch as last seen: a change means every peer needs a new snapshot.
     epoch: u32,
+    /// The file's state as last announced to the peers: the saved revision, and a conflict.
+    announced: Option<(Option<String>, bool)>,
 }
 
 struct Peer {
@@ -116,6 +118,9 @@ struct Guest {
     manifest: Vec<ManifestFile>,
     manifest_done: bool,
     files: BTreeMap<u64, GuestFile>,
+    /// The next save request's number, and which file each one waiting is for.
+    next_request: u64,
+    requests: BTreeMap<u64, u64>,
 }
 
 #[derive(Default)]
@@ -133,6 +138,11 @@ struct GuestFile {
     /// The link came back: the host's acknowledgement decides what is sent again.
     resuming: bool,
     selections: BTreeMap<PeerId, RelativeSelection>,
+    /// What the host last said of its file: the revision on disk, and a conflict.
+    saved: Option<String>,
+    conflict: bool,
+    /// The answer to this guest's last save request.
+    last_save: Option<(u64, SaveOutcome)>,
 }
 
 fn refused(message: &str) -> EngineError {
@@ -231,6 +241,7 @@ impl Engine {
                     },
                     document: None,
                     epoch: 0,
+                    announced: None,
                 },
             );
         }
@@ -266,6 +277,8 @@ impl Engine {
                 manifest: Vec::new(),
                 manifest_done: false,
                 files: BTreeMap::new(),
+                next_request: 1,
+                requests: BTreeMap::new(),
             }),
             backlog: false,
         });
@@ -577,6 +590,88 @@ impl Engine {
         }
     }
 
+    /// Asks the host to save shared document `id` (COLLAB 5/8): only the host writes, and only
+    /// if this guest may edit. Returns the request's number; the answer is
+    /// [`Engine::shared_save_result`].
+    pub fn request_shared_save(&mut self, id: DocumentId) -> Result<u64, EngineError> {
+        let session = self
+            .collab_session
+            .as_mut()
+            .ok_or_else(|| refused("no session"))?;
+        let Side::Guest(guest) = &mut session.side else {
+            return Err(refused("the host saves its files itself"));
+        };
+        if !guest.connected {
+            return Err(refused("not connected to the host"));
+        }
+        let (file, epoch) = guest
+            .files
+            .iter()
+            .find(|(_, state)| state.document == Some(id))
+            .map(|(file, state)| (*file, state.epoch))
+            .ok_or_else(|| refused("not a shared document"))?;
+        let request = guest.next_request;
+        guest.next_request += 1;
+        session
+            .link
+            .send(
+                PeerId::HOST,
+                Message::SaveRequest {
+                    file,
+                    epoch,
+                    request,
+                },
+            )
+            .map_err(|error| refused(&error.to_string()))?;
+        guest.requests.insert(request, file);
+        Ok(request)
+    }
+
+    /// The host's answer to this guest's last save request for document `id`, with its number.
+    #[must_use]
+    pub fn shared_save_result(&self, id: DocumentId) -> Option<(u64, SaveOutcome)> {
+        match self.collab_session.as_ref().map(|session| &session.side) {
+            Some(Side::Guest(guest)) => guest
+                .files
+                .values()
+                .find(|state| state.document == Some(id))?
+                .last_save
+                .clone(),
+            _ => None,
+        }
+    }
+
+    /// Whether shared document `id`'s text is the text in the host's file. A host knows; a
+    /// guest compares its own text with the revision the host last announced, and while out of
+    /// touch knows nothing (`Unknown`), whatever it was told before.
+    #[must_use]
+    pub fn shared_save_state(&self, id: DocumentId) -> Option<SharedSaveState> {
+        if let Some(state) = self.host_save_state(id) {
+            return Some(state);
+        }
+        let Some(Side::Guest(guest)) = self.collab_session.as_ref().map(|session| &session.side)
+        else {
+            return None;
+        };
+        let state = guest
+            .files
+            .values()
+            .find(|state| state.document == Some(id))?;
+        if !guest.connected || state.waiting || state.resuming {
+            return Some(SharedSaveState::Unknown);
+        }
+        if state.conflict {
+            return Some(SharedSaveState::Conflict);
+        }
+        let text = self.document(id)?.text_string();
+        Some(match &state.saved {
+            Some(revision) if *revision == revision_of(&text) => SharedSaveState::Saved {
+                revision: revision.clone(),
+            },
+            _ => SharedSaveState::Unsaved,
+        })
+    }
+
     /// Due at once while events wait or one of the session's documents has changes to send:
     /// only those its flush sends, so nothing else is due for ever.
     pub(crate) fn due_session(&self) -> Option<std::time::Instant> {
@@ -598,7 +693,17 @@ impl Engine {
                 .get(id)
                 .is_some_and(crate::collab::SharedDocument::has_outbox)
         });
-        (session.backlog || outgoing).then(|| self.clock.now())
+        // A file saved, or changed on disk, since the peers were told.
+        let unannounced = match &session.side {
+            Side::Host(host) => host.offered.values().any(|offered| {
+                offered.document.is_some_and(|id| {
+                    self.shared.contains_key(&id)
+                        && offered.announced.as_ref() != Some(&self.file_state(id))
+                })
+            }),
+            Side::Guest(_) => false,
+        };
+        (session.backlog || outgoing || unannounced).then(|| self.clock.now())
     }
 
     /// Handles what the link brought, at most [`SESSION_EVENTS_PER_PUMP`] events, and sends
@@ -927,6 +1032,16 @@ impl Engine {
                     update,
                 },
             );
+            let (saved, conflict) = self.file_state(id);
+            let _ = session.link.send(
+                peer,
+                Message::FileState {
+                    file,
+                    epoch,
+                    saved,
+                    conflict,
+                },
+            );
         }
         if moved {
             self.host_epoch_moved(session, file, Some(peer));
@@ -971,10 +1086,22 @@ impl Engine {
         if !opened {
             return Err("a file the peer has not opened".to_owned());
         }
-        if self
-            .host_ensure_shared(session, file)
-            .map_err(|error| error.to_string())?
-        {
+        let reshared = match self.host_ensure_shared(session, file) {
+            Ok(reshared) => reshared,
+            Err(error) => {
+                // The host closed the file and it cannot be opened again (gone, or now leading
+                // outside the folder): the peer did nothing wrong.
+                let _ = session.link.send(
+                    peer,
+                    Message::Error {
+                        code: ErrorCode::Stale,
+                        message: format!("the file cannot be opened: {error}"),
+                    },
+                );
+                return Ok(());
+            }
+        };
+        if reshared {
             // The host closed the file and it was shared anew: everyone starts from its text,
             // and this update, of the old epoch, is spent.
             self.host_epoch_moved(session, file, None);
@@ -1136,7 +1263,10 @@ impl Engine {
         Ok(())
     }
 
-    /// A guest's request to save `file`: only an Editor may, and only the host writes.
+    /// A guest's request to save `file`: only an Editor may, only for the file's current epoch,
+    /// and only the host writes, through its ordinary save and its conflict check. A request for
+    /// a file already saved writes nothing and names the revision on disk. The save is made at
+    /// once and waited for, as the host's own Save is.
     fn host_save(
         &mut self,
         session: &mut Session,
@@ -1158,18 +1288,24 @@ impl Engine {
             .map(|(_, epoch, _)| epoch);
         let outcome = match id {
             _ if !editor => SaveOutcome::PermissionDenied,
-            Some(id) if current == Some(epoch) => match self.save(id) {
-                Ok(()) => SaveOutcome::Saved {
-                    revision: String::new(),
-                },
-                Err(EngineError::SaveConflict { .. }) => SaveOutcome::Conflict,
-                Err(error) => SaveOutcome::Failed {
-                    reason: error.to_string(),
+            Some(id) if current == Some(epoch) => match self.host_save_state(id) {
+                Some(SharedSaveState::Saved { revision }) => SaveOutcome::Saved { revision },
+                Some(SharedSaveState::Conflict) => SaveOutcome::Conflict,
+                // The revision is the one written: the snapshot the save took.
+                _ => match self.save(id) {
+                    Ok(()) => self.shared_saved_revision(id).map_or_else(
+                        || SaveOutcome::Failed {
+                            reason: "the save named no revision".to_owned(),
+                        },
+                        |revision| SaveOutcome::Saved { revision },
+                    ),
+                    Err(EngineError::SaveConflict { .. }) => SaveOutcome::Conflict,
+                    Err(error) => SaveOutcome::Failed {
+                        reason: error.to_string(),
+                    },
                 },
             },
-            _ => SaveOutcome::Failed {
-                reason: "the file has changed epoch".to_owned(),
-            },
+            _ => SaveOutcome::Stale,
         };
         let _ = session
             .link
@@ -1214,6 +1350,52 @@ impl Engine {
                 }
                 self.host_epoch_moved(session, file, None);
             }
+            self.host_announce(session, file, id);
+        }
+    }
+
+    /// The saved revision (while the shared text is it) and the conflict of document `id`.
+    fn file_state(&self, id: DocumentId) -> (Option<String>, bool) {
+        match self.host_save_state(id) {
+            Some(SharedSaveState::Saved { revision }) => (Some(revision), false),
+            Some(SharedSaveState::Conflict) => (None, true),
+            _ => (None, false),
+        }
+    }
+
+    /// Tells every live peer with `file` open how its file stands, when that changed since it
+    /// was last told.
+    fn host_announce(&mut self, session: &mut Session, file: u64, id: DocumentId) {
+        let state = self.file_state(id);
+        let Side::Host(host) = &mut session.side else {
+            return;
+        };
+        let Some(offered) = host.offered.get_mut(&file) else {
+            return;
+        };
+        if offered.announced.as_ref() == Some(&state) {
+            return;
+        }
+        offered.announced = Some(state.clone());
+        let targets: Vec<(PeerId, u32)> = host
+            .peers
+            .iter()
+            .filter(|(_, entry)| entry.connected)
+            .filter_map(|(peer, entry)| {
+                let open = entry.files.get(&file).filter(|open| open.live)?;
+                Some((*peer, open.epoch))
+            })
+            .collect();
+        for (peer, epoch) in targets {
+            let _ = session.link.send(
+                peer,
+                Message::FileState {
+                    file,
+                    epoch,
+                    saved: state.0.clone(),
+                    conflict: state.1,
+                },
+            );
         }
     }
 
@@ -1311,6 +1493,32 @@ impl Engine {
                 }
                 false
             }
+            Message::FileState {
+                file,
+                epoch,
+                saved,
+                conflict,
+            } => {
+                let Some(state) = guest
+                    .files
+                    .get_mut(&file)
+                    .filter(|state| state.epoch == epoch)
+                else {
+                    return false;
+                };
+                state.saved = saved;
+                state.conflict = conflict;
+                true
+            }
+            Message::SaveResult { request, outcome } => {
+                let Some(file) = guest.requests.remove(&request) else {
+                    return false;
+                };
+                if let Some(state) = guest.files.get_mut(&file) {
+                    state.last_save = Some((request, outcome));
+                }
+                true
+            }
             Message::RoleChanged { peer, role } => {
                 if let Some((me, current)) = &mut guest.me {
                     if *me == peer {
@@ -1368,6 +1576,8 @@ impl Engine {
             Ok(id) => {
                 state.document = Some(id);
                 state.epoch = epoch;
+                state.saved = None;
+                state.conflict = false;
                 state.next_in = 1;
                 state.next_out = 1;
                 state.unacked.clear();

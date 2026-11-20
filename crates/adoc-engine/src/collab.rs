@@ -49,6 +49,42 @@ pub enum SharedReceipt {
     Rebuilt { epoch: u32 },
 }
 
+/// Whether a shared document's text is the text on disk (COLLAB 5/8).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SharedSaveState {
+    /// The file holds this text: `revision` is its SHA-256 ([`revision_of`]).
+    Saved { revision: String },
+    /// Changes made since the last save are in the shared text only.
+    Unsaved,
+    /// The file was changed or removed outside the session, under the shared text: nothing is
+    /// saved until the host keeps the shared text or takes the file's
+    /// ([`Engine::resolve_disk_conflict`]).
+    Conflict,
+    /// A guest out of touch with the host: whether anything is saved is not known.
+    Unknown,
+}
+
+/// How the host settles a change made on disk to a shared file.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiskResolution {
+    /// The shared text stays; the next save writes it over what is on disk.
+    KeepShared,
+    /// The file's text replaces the shared text in a new epoch: every participant starts again
+    /// from it.
+    ReloadDisk,
+}
+
+/// A saved text's revision: its SHA-256, in hexadecimal. A guest computes the same from its own
+/// text to tell whether it is the saved one.
+#[must_use]
+pub fn revision_of(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 /// A document shared in a session.
 pub(crate) struct SharedDocument {
     replica: Replica,
@@ -61,12 +97,37 @@ pub(crate) struct SharedDocument {
     typing: Option<Typing>,
     /// The group of the last local change, so one command's several edits are one undo step.
     group: Option<UndoGroup>,
+    /// The revisions of saves being written, by the document version each snapshot was.
+    saving: std::collections::BTreeMap<u64, String>,
+    /// The revision the file holds, as last written or read here.
+    saved: Option<String>,
+    /// The file changed or went outside the session: no save until the host resolves it.
+    conflict: bool,
 }
 
 impl SharedDocument {
     /// Whether local changes wait to be sent.
     pub(crate) fn has_outbox(&self) -> bool {
         !self.outbox.is_empty()
+    }
+
+    pub(crate) fn saved_revision(&self) -> Option<&str> {
+        self.saved.as_deref()
+    }
+
+    fn new(replica: Replica, role: SharedRole, file: SharedFileId, epoch: u32) -> Self {
+        Self {
+            replica,
+            role,
+            file,
+            epoch,
+            outbox: Vec::new(),
+            typing: None,
+            group: None,
+            saving: std::collections::BTreeMap::new(),
+            saved: None,
+            conflict: false,
+        }
     }
 }
 
@@ -133,19 +194,11 @@ impl Engine {
         }
         let replica =
             Replica::new(&document.text.to_string(), host).map_err(|error| collab_error(&error))?;
+        let saved = (!document.dirty).then(|| revision_of(&document.text.to_string()));
         self.drop_undo_history(id);
-        self.shared.insert(
-            id,
-            SharedDocument {
-                replica,
-                role: SharedRole::Host,
-                file,
-                epoch,
-                outbox: Vec::new(),
-                typing: None,
-                group: None,
-            },
-        );
+        let mut shared = SharedDocument::new(replica, SharedRole::Host, file, epoch);
+        shared.saved = saved;
+        self.shared.insert(id, shared);
         Ok(())
     }
 
@@ -165,15 +218,7 @@ impl Engine {
         let id = self.insert_document(std::path::PathBuf::from(name), &replica.text(), true);
         self.shared.insert(
             id,
-            SharedDocument {
-                replica,
-                role: SharedRole::Guest { can_edit },
-                file,
-                epoch,
-                outbox: Vec::new(),
-                typing: None,
-                group: None,
-            },
+            SharedDocument::new(replica, SharedRole::Guest { can_edit }, file, epoch),
         );
         self.emit(EngineEvent::DocumentOpened(id));
         Ok(id)
@@ -466,6 +511,196 @@ impl Engine {
             return Err(refused("the shared document had to be rebuilt"));
         }
         self.emit(EngineEvent::SharedUpdates(id));
+        Ok(())
+    }
+
+    /// A host's save of shared document `id` is starting with the text of document `version`:
+    /// refused while a change on disk waits to be resolved, unless `overwrite`, the host's own
+    /// choice to write over it.
+    pub(crate) fn shared_save_starting(
+        &mut self,
+        id: DocumentId,
+        version: u64,
+        text: &str,
+        overwrite: bool,
+    ) -> Result<(), EngineError> {
+        let Some(shared) = self.shared.get_mut(&id) else {
+            return Ok(());
+        };
+        if shared.conflict && !overwrite {
+            let path = self
+                .documents
+                .get(&id)
+                .map(|document| document.path.clone())
+                .unwrap_or_default();
+            return Err(EngineError::SaveConflict { path });
+        }
+        shared.saving.insert(version, revision_of(text));
+        Ok(())
+    }
+
+    /// A save of shared document `id`, of document `version`, finished: written (the file holds
+    /// that snapshot's revision, whatever was typed since) or refused as changed on disk.
+    pub(crate) fn shared_save_finished(
+        &mut self,
+        id: DocumentId,
+        version: u64,
+        written: bool,
+        conflict: bool,
+    ) {
+        let Some(shared) = self.shared.get_mut(&id) else {
+            return;
+        };
+        let revision = shared.saving.remove(&version);
+        if written {
+            if revision.is_some() {
+                shared.saved = revision;
+            }
+            shared.conflict = false;
+        } else if conflict {
+            shared.conflict = true;
+        }
+    }
+
+    /// The file of host-shared document `id` changed on disk to `on_disk` (`None`: removed),
+    /// unlike what was last saved or read. It never flows in as an edit: the document enters a
+    /// conflict the host resolves. Returns whether it is a host's shared document, which the
+    /// caller then leaves alone.
+    pub(crate) fn shared_changed_on_disk(&mut self, id: DocumentId, on_disk: Option<&str>) -> bool {
+        let Some(shared) = self.shared.get_mut(&id) else {
+            return false;
+        };
+        if shared.role != SharedRole::Host {
+            return true;
+        }
+        let saved = self
+            .states
+            .get(&id)
+            .zip(on_disk)
+            .is_some_and(|(state, text)| {
+                text.len() == state.saved_len
+                    && crate::document::hash_text(text) == state.saved_hash
+            });
+        if saved {
+            // Back to what was saved: nothing to resolve.
+            if std::mem::take(&mut shared.conflict) {
+                self.auto_save_settled(id);
+                self.emit(EngineEvent::SessionChanged);
+            }
+            return true;
+        }
+        if !shared.conflict {
+            shared.conflict = true;
+            if let Some(state) = self.states.get_mut(&id) {
+                state.changed_on_disk = true;
+            }
+            self.emit(EngineEvent::DocumentChangedOnDisk(id));
+            self.emit(EngineEvent::SessionChanged);
+        }
+        true
+    }
+
+    /// The revision host-shared document `id`'s file holds, as last written or read.
+    pub(crate) fn shared_saved_revision(&self, id: DocumentId) -> Option<String> {
+        self.shared.get(&id)?.saved_revision().map(str::to_owned)
+    }
+
+    /// Whether shared document `id`'s text is the text on disk, as this participant knows it.
+    /// For a guest the session decides (`Engine::shared_save_state`).
+    pub(crate) fn host_save_state(&self, id: DocumentId) -> Option<SharedSaveState> {
+        let shared = self.shared.get(&id)?;
+        if shared.role != SharedRole::Host {
+            return None;
+        }
+        if shared.conflict {
+            return Some(SharedSaveState::Conflict);
+        }
+        let dirty = self
+            .documents
+            .get(&id)
+            .is_none_or(|document| document.dirty);
+        Some(match (&shared.saved, dirty) {
+            (Some(revision), false) => SharedSaveState::Saved {
+                revision: revision.clone(),
+            },
+            _ => SharedSaveState::Unsaved,
+        })
+    }
+
+    /// Settles a change made on disk to host-shared document `id` ([`DiskResolution`]).
+    pub fn resolve_disk_conflict(
+        &mut self,
+        id: DocumentId,
+        resolution: DiskResolution,
+    ) -> Result<(), EngineError> {
+        let shared = self.shared.get(&id).ok_or_else(|| refused("not shared"))?;
+        if shared.role != SharedRole::Host {
+            return Err(refused("only the host resolves its files"));
+        }
+        if !shared.conflict {
+            return Err(refused("the file has not changed on disk"));
+        }
+        let path = self
+            .documents
+            .get(&id)
+            .ok_or(EngineError::UnknownDocument(id))?
+            .path
+            .clone();
+        let on_disk = match std::fs::read_to_string(&path) {
+            Ok(text) => Some(text),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(EngineError::io(&path, error)),
+        };
+        match resolution {
+            DiskResolution::KeepShared => {
+                // What is on disk becomes the base the next save expects, so a further change
+                // there conflicts again; the shared text stays, unsaved.
+                if let Some(state) = self.states.get_mut(&id) {
+                    match &on_disk {
+                        Some(text) => state.mark_saved(text),
+                        None => state.mark_saved(""),
+                    }
+                    state.changed_on_disk = false;
+                }
+                if let Some(shared) = self.shared.get_mut(&id) {
+                    shared.conflict = false;
+                    shared.saved = None;
+                }
+                if let Some(document) = self.documents.get_mut(&id) {
+                    document.dirty = true;
+                }
+                self.auto_save_settled(id);
+                self.auto_save_edited(id);
+            }
+            DiskResolution::ReloadDisk => {
+                let text = on_disk.ok_or_else(|| refused("the file is no longer there"))?;
+                if text.len() > MAX_SHARED_FILE {
+                    return Err(refused("the file is now too large to share"));
+                }
+                let replica = Replica::new(&text, ReplicaId::random())
+                    .map_err(|error| collab_error(&error))?;
+                let current = self
+                    .documents
+                    .get(&id)
+                    .map(|document| document.text.to_string())
+                    .unwrap_or_default();
+                if let Some(edit) = edit::minimal(&current, &text) {
+                    self.edit_document(id, vec![edit], false, EditOrigin::Local)?;
+                }
+                if let Some(shared) = self.shared.get_mut(&id) {
+                    shared.replica = replica;
+                    shared.epoch += 1;
+                    shared.outbox.clear();
+                    shared.typing = None;
+                    shared.group = None;
+                    shared.saving.clear();
+                    shared.conflict = false;
+                    shared.saved = Some(revision_of(&text));
+                }
+                self.mark_saved(id, &text);
+            }
+        }
+        self.emit(EngineEvent::SessionChanged);
         Ok(())
     }
 

@@ -1132,6 +1132,13 @@ impl Engine {
         if self.states.get(&id).is_some_and(|state| state.client_owned) {
             return; // The client's buffer, which only the client changes.
         }
+        // A host's shared document's text is the session's: a change on disk, or the file going,
+        // never flows in as an edit every participant would receive; it is a conflict the host
+        // resolves (COLLAB 5/8).
+        #[cfg(feature = "collab")]
+        if self.shared_changed_on_disk(id, on_disk.as_deref()) {
+            return;
+        }
         let Some(document) = self.documents.get(&id) else {
             return;
         };
@@ -1148,13 +1155,7 @@ impl Engine {
         if text.len() == state.saved_len && crate::document::hash_text(&text) == state.saved_hash {
             return;
         }
-        // A shared document's text is the session's: a change on disk never flows in as an
-        // edit every participant would receive (COLLAB 5/8 makes it a conflict to resolve).
-        #[cfg(feature = "collab")]
-        let shared = self.shared.contains_key(&id);
-        #[cfg(not(feature = "collab"))]
-        let shared = false;
-        if document.dirty || shared {
+        if document.dirty {
             if !state.changed_on_disk {
                 state.changed_on_disk = true;
                 self.emit(EngineEvent::DocumentChangedOnDisk(id));

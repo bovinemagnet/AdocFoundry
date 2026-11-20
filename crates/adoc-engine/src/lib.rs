@@ -119,7 +119,9 @@ pub use attribute_inspection::{
 pub use auto_save::AUTO_SAVE_DELAY;
 pub use clock::{Clock, ManualClock, SystemClock};
 #[cfg(feature = "collab")]
-pub use collab::{SharedFileId, SharedReceipt, SharedRole};
+pub use collab::{
+    revision_of, DiskResolution, SharedFileId, SharedReceipt, SharedRole, SharedSaveState,
+};
 #[cfg(feature = "collab")]
 pub use collab_session::{Participant, PeerSelection, SESSION_EVENTS_PER_PUMP};
 pub use command::{

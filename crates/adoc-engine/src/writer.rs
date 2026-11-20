@@ -202,6 +202,12 @@ impl Engine {
             document.path.clone(),
             document.text.clone(),
         );
+        // A shared document records the revision it is writing, and writes nothing while a
+        // change on disk waits to be resolved.
+        #[cfg(feature = "collab")]
+        if self.shared.contains_key(&id) {
+            self.shared_save_starting(id, version, &text.to_string(), overwrite)?;
+        }
         let expected = if overwrite {
             None
         } else {
@@ -299,6 +305,13 @@ impl Engine {
                 self.writer.saving.remove(&id);
             }
         }
+        #[cfg(feature = "collab")]
+        self.shared_save_finished(
+            id,
+            version,
+            result.is_ok(),
+            matches!(result, Err(SaveFailure::Conflict)),
+        );
         let Some(document) = self.documents.get_mut(&id) else {
             return Ok(()); // Closed while it was written.
         };

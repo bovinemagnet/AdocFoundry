@@ -163,11 +163,17 @@ pub enum Credential {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum SaveOutcome {
-    Saved { revision: String },
+    Saved {
+        revision: String,
+    },
     Queued,
     Conflict,
     PermissionDenied,
-    Failed { reason: String },
+    /// The request named an epoch the file has moved on from.
+    Stale,
+    Failed {
+        reason: String,
+    },
 }
 
 /// Why a message was refused or a connection closed. Stable: front ends show them.
@@ -261,6 +267,16 @@ pub enum Message {
     SaveResult {
         request: u64,
         outcome: SaveOutcome,
+    },
+    /// The host's file as it stands: the revision on disk if the shared text is that text
+    /// (`None` while unsaved changes are in it), and whether a change made outside the session
+    /// waits for the host to resolve it. A revision is the SHA-256 of the saved text, in
+    /// hexadecimal, so a guest can tell whether its own text is the saved one.
+    FileState {
+        file: u64,
+        epoch: u32,
+        saved: Option<String>,
+        conflict: bool,
     },
     RoleChanged {
         peer: PeerId,
@@ -406,6 +422,15 @@ struct SaveResultControl {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct FileStateControl {
+    file: u64,
+    epoch: u32,
+    saved: Option<String>,
+    conflict: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RoleControl {
     peer: PeerId,
     role: Role,
@@ -453,6 +478,7 @@ mod kind {
     pub const LEAVE: u8 = 15;
     pub const ERROR: u8 = 16;
     pub const HEARTBEAT: u8 = 17;
+    pub const FILE_STATE: u8 = 18;
 }
 
 impl Message {
@@ -588,6 +614,21 @@ impl Message {
                 })?,
                 Vec::new(),
             ),
+            Self::FileState {
+                file,
+                epoch,
+                saved,
+                conflict,
+            } => (
+                kind::FILE_STATE,
+                json(&FileStateControl {
+                    file: *file,
+                    epoch: *epoch,
+                    saved: saved.clone(),
+                    conflict: *conflict,
+                })?,
+                Vec::new(),
+            ),
             Self::RoleChanged { peer, role } => (
                 kind::ROLE_CHANGED,
                 json(&RoleControl {
@@ -678,6 +719,20 @@ impl Message {
                 outcome: SaveOutcome::Saved { revision: reason } | SaveOutcome::Failed { reason },
                 ..
             } => text(reason, MAX_TEXT, "reason"),
+            Self::FileState {
+                saved: Some(revision),
+                ..
+            } => {
+                if revision.len() == 64
+                    && revision
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                {
+                    Ok(())
+                } else {
+                    Err(FrameError::Invalid("revision"))
+                }
+            }
             Self::RoleChanged { role, .. } => {
                 if *role == Role::Owner {
                     return Err(FrameError::Invalid("role"));
@@ -692,6 +747,7 @@ impl Message {
             | Self::UpdateAck { .. }
             | Self::SaveRequest { .. }
             | Self::SaveResult { .. }
+            | Self::FileState { .. }
             | Self::Heartbeat => Ok(()),
         }
     }
@@ -815,6 +871,20 @@ pub fn decode(frame: &[u8]) -> Result<Message, FrameError> {
         kind::SAVE_RESULT => {
             let SaveResultControl { request, outcome } = read(control)?;
             no_payload(Message::SaveResult { request, outcome })?
+        }
+        kind::FILE_STATE => {
+            let FileStateControl {
+                file,
+                epoch,
+                saved,
+                conflict,
+            } = read(control)?;
+            no_payload(Message::FileState {
+                file,
+                epoch,
+                saved,
+                conflict,
+            })?
         }
         kind::ROLE_CHANGED => {
             let RoleControl { peer, role } = read(control)?;
