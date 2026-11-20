@@ -80,3 +80,28 @@ fn presence_is_paced() {
     assert_eq!(throttle.due(), None, "one message for the two that waited");
     assert!(throttle.offer(start + Duration::from_millis(120)));
 }
+
+#[test]
+fn a_selection_naming_a_participant_wider_than_53_bits_is_refused() {
+    // Found by the `collab_update` fuzz target: decoding such an end trips a `debug_assert!` in
+    // `yrs`. Read inside the guard, it is refused in a build with debug assertions; without
+    // them `yrs` masks the id, and a selection it reads still never resolves past the text.
+    let anchor = [
+        0x00, 0x9e, 0xdc, 0xdc, 0x86, 0xf8, 0xff, 0xff, 0xff, 0xff, 0xff, 0x3d,
+    ];
+    let head = [
+        0x7e, 0x9e, 0xff, 0xff, 0xff, 0xff, 0xff, 0xdc, 0xdc, 0x86, 0xf8, 0x24,
+    ];
+    let peer = Peer::host("= Page\n", 1);
+    match RelativeSelection::from_wire(anchor.to_vec(), head.to_vec()) {
+        Err(error) => assert!(matches!(error, CollabError::MalformedUpdate(_)), "{error}"),
+        Ok(selection) => {
+            if let Some((start, end)) = peer.replica.resolve(&selection) {
+                assert!(start <= peer.rope.len() && end <= peer.rope.len());
+            }
+        }
+    }
+    if cfg!(debug_assertions) {
+        assert!(RelativeSelection::from_wire(anchor.to_vec(), head.to_vec()).is_err());
+    }
+}

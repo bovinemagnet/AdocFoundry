@@ -542,9 +542,14 @@ impl Replica {
         StateVectorBytes(self.doc.transact().state_vector().encode_v1())
     }
 
-    /// Everything this replica holds that a replica whose state vector is `remote` lacks.
+    /// Everything this replica holds that a replica whose state vector is `remote` lacks. A
+    /// replica holding a pending update encodes nothing ([`CollabError::Pending`]), and the
+    /// encoding runs inside the panic guard.
     pub fn missing_since(&self, remote: &StateVectorBytes) -> Result<EncodedUpdate, CollabError> {
         self.usable()?;
+        if self.has_pending() {
+            return Err(CollabError::Pending);
+        }
         if remote.0.len() > MAX_UPDATE {
             return Err(CollabError::TooLarge(remote.0.len()));
         }
@@ -552,14 +557,36 @@ impl Replica {
         let remote = catch_unwind(|| StateVector::decode_v1(&remote.0))
             .map_err(|_| CollabError::MalformedUpdate("unreadable".to_owned()))?
             .map_err(|error| CollabError::MalformedUpdate(error.to_string()))?;
-        Ok(EncodedUpdate(
-            self.doc.transact().encode_state_as_update_v1(&remote),
-        ))
+        catch_unwind(AssertUnwindSafe(|| {
+            self.doc.transact().encode_state_as_update_v1(&remote)
+        }))
+        .map(EncodedUpdate)
+        .map_err(|_| CollabError::ProjectionMismatch)
     }
 
-    /// The whole state, which a new replica starts from ([`Replica::from_snapshot`]).
+    /// The whole state, which a new replica starts from ([`Replica::from_snapshot`]), checked by
+    /// doing just that: a snapshot that would rebuild another text is refused with
+    /// [`CollabError::ProjectionMismatch`], and the caller rebuilds the replica from its own text
+    /// (the host) before anyone joins from it.
+    ///
+    /// The check is not idle: an update a modified participant made, accepted and applied with
+    /// every check passing, can leave `yrs` holding a state whose encoding rebuilds a different
+    /// text (found by the `collab_update` fuzz target). Every participant already connected
+    /// agrees; anyone joining or resynchronising from the snapshot would not. It costs a replica
+    /// built from the snapshot, about a millisecond for 1 MiB, once a join or resynchronisation.
     pub fn snapshot(&self) -> Result<EncodedUpdate, CollabError> {
-        self.missing_since(&StateVectorBytes(StateVector::default().encode_v1()))
+        let snapshot = self.missing_since(&StateVectorBytes(StateVector::default().encode_v1()))?;
+        let check = if self.id.get() == ReplicaId::MAX {
+            ReplicaId::MAX - 1
+        } else {
+            ReplicaId::MAX
+        };
+        let copy = Replica::from_snapshot(&snapshot, ReplicaId(check))
+            .map_err(|_| CollabError::ProjectionMismatch)?;
+        if copy.text() != self.text() {
+            return Err(CollabError::ProjectionMismatch);
+        }
+        Ok(snapshot)
     }
 
     pub(crate) fn doc(&self) -> &Doc {

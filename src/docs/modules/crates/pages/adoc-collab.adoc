@@ -63,7 +63,9 @@ An offset inside a character is refused by the caller, which is the engine check
 
 * `state_vector` says what a replica holds from each participant.
 * `missing_since(&StateVectorBytes)` encodes what another replica lacks.
-* `snapshot` encodes the whole text and its history, for a new guest.
+* `snapshot` encodes the whole text and its history for a new guest, and checks itself by building a replica from what it encoded.
+When the texts differ it is refused with `CollabError::ProjectionMismatch`, and the host rebuilds its replica from its own text.
+The `collab_update` fuzz target found an altered update that passes every other check and applies consistently, yet leaves a state whose encoding rebuilds a different text, so a later joiner would diverge.
 * `authors(update)` names the replicas an update creates items for.
 It reads the update without applying it, so the host can refuse an update that forges another participant's authorship before it reaches a replica.
 
@@ -142,10 +144,14 @@ Other errors leave the replica as it was.
 |Something over its limit.
 
 |`ProjectionMismatch`
-|The replica is poisoned.
+|Applying a change (local, remote, undo or redo) gave a text other than the one expected, and the replica is poisoned.
+From `snapshot` it poisons nothing, since a snapshot only reads the replica: the snapshot is refused and the host rebuilds its replica from its own text.
 
 |`Poisoned`
 |The replica failed earlier.
+
+|`Pending`
+|The replica holds an update it cannot integrate yet, so it encodes nothing (no `snapshot` or `missing_since`) until it is resynchronised or rebuilt, because `yrs` can panic or write clocks never used when encoding such a document.
 |===
 
 == Limits

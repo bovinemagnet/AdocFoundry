@@ -122,6 +122,9 @@ fn collab_pending_update_asks_for_resync() {
     let change = guest.receive(&depends);
     assert!(change.pending, "the guest is told it waits");
     assert!(change.edits.is_empty());
+    // Nothing is encoded from a replica that waits: `yrs` could panic or write clocks never
+    // used (y-crdt/y-crdt#720, #744).
+    assert_eq!(guest.replica.snapshot().unwrap_err(), CollabError::Pending);
     // A guest resynchronises from a replica holding everything, and nothing waits any more.
     host.host = false;
     host.receive(
@@ -255,4 +258,36 @@ fn an_update_splitting_a_character_poisons_the_replica() {
     // The host's own text, which its engine holds, is what the file's replica is rebuilt from.
     let rebuilt = Peer::host(&guest.rope, 4);
     assert_eq!(rebuilt.rope, "= Page\n\nUn café 👋\r\nMore.\n");
+}
+
+#[test]
+fn a_snapshot_that_would_rebuild_another_text_is_refused() {
+    // Found by the `collab_update` fuzz target: an honest update with one byte changed passes
+    // the grammar, admission and the whole-text check, and is applied consistently, but the
+    // receiver's own snapshot then rebuilds a different text. Whoever joined from it would
+    // diverge, so a snapshot is checked by rebuilding it, and refused when it differs; the host
+    // then rebuilds its replica from its own text.
+    let host = Peer::host("= Page\n\nUn café 👋\r\nMore.\n", 1);
+    let snapshot = host.replica.snapshot().unwrap();
+    let mut author = Replica::from_snapshot(&snapshot, id(2)).unwrap();
+    let mut update = author
+        .apply_local(&[ByteEdit::new(8, 17, "Thé 🇬🇧")])
+        .unwrap()
+        .outbound
+        .unwrap();
+    let len = update.0.len();
+    update.0[8 % len] = 0x01;
+    for sender in [Sender::Guest(id(2)), Sender::Host] {
+        let mut receiver = Replica::from_snapshot(&snapshot, id(3)).unwrap();
+        if receiver.apply_remote(&update, sender).is_err() {
+            continue;
+        }
+        match receiver.snapshot() {
+            Ok(snapshot) => {
+                let copy = Replica::from_snapshot(&snapshot, id(4)).unwrap();
+                assert_eq!(copy.text(), receiver.text(), "{sender:?}");
+            }
+            Err(error) => assert_eq!(error, CollabError::ProjectionMismatch, "{sender:?}"),
+        }
+    }
 }

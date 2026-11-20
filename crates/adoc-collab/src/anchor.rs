@@ -1,7 +1,10 @@
 //! Carets and selections that follow their text, sent as presence (awareness): ephemeral, never
 //! part of the shared document, and throttled.
 
-use std::time::{Duration, Instant};
+use std::{
+    panic::{catch_unwind, AssertUnwindSafe},
+    time::{Duration, Instant},
+};
 
 use yrs::{
     updates::{decoder::Decode, encoder::Encode},
@@ -35,7 +38,8 @@ impl RelativeSelection {
             if end.len() > MAX_ANCHOR {
                 return Err(CollabError::TooLarge(end.len()));
             }
-            StickyIndex::decode_v1(end)
+            catch_unwind(|| StickyIndex::decode_v1(end))
+                .map_err(|_| CollabError::MalformedUpdate("unreadable".to_owned()))?
                 .map_err(|error| CollabError::MalformedUpdate(error.to_string()))?;
         }
         Ok(Self { anchor, head })
@@ -52,37 +56,49 @@ impl Replica {
         affinity: Affinity,
     ) -> Result<RelativeSelection, CollabError> {
         let len = self.len();
-        let txn = self.doc().transact();
         let assoc = match affinity {
             Affinity::Before => Assoc::Before,
             Affinity::After => Assoc::After,
         };
-        let mut ends = [anchor, head].into_iter().map(|offset| {
+        let encode = |offset: usize| {
             if offset > len {
                 return Err(CollabError::InvalidBoundary(offset));
             }
-            self.text_ref()
-                .sticky_index(&txn, offset as u32, assoc)
-                .map(|index| index.encode_v1())
-                .ok_or(CollabError::InvalidBoundary(offset))
-        });
-        let anchor = ends.next().unwrap_or(Err(CollabError::Unordered))?;
-        let head = ends.next().unwrap_or(Err(CollabError::Unordered))?;
-        Ok(RelativeSelection { anchor, head })
+            catch_unwind(AssertUnwindSafe(|| {
+                let txn = self.doc().transact();
+                self.text_ref()
+                    .sticky_index(&txn, offset as u32, assoc)
+                    .map(|index| index.encode_v1())
+            }))
+            .map_err(|_| CollabError::ProjectionMismatch)?
+            .ok_or(CollabError::InvalidBoundary(offset))
+        };
+        Ok(RelativeSelection {
+            anchor: encode(anchor)?,
+            head: encode(head)?,
+        })
     }
 
     /// Where `selection`'s ends are now in this replica's text, as byte offsets; `None` if
-    /// either end belongs to text this replica does not hold.
+    /// either end is too long, unreadable, belongs to text this replica does not hold, or falls
+    /// past the end. A selection comes from another participant, so it is read inside the panic
+    /// guard; the caller checks the offsets against its rope before drawing anything there.
     #[must_use]
     pub fn resolve(&self, selection: &RelativeSelection) -> Option<(usize, usize)> {
-        let txn = self.doc().transact();
-        let mut ends = [&selection.anchor, &selection.head].into_iter().map(|end| {
-            StickyIndex::decode_v1(end)
-                .ok()?
-                .get_offset(&txn)
-                .map(|offset| offset.index as usize)
-        });
-        Some((ends.next()??, ends.next()??))
+        let len = self.len();
+        let end = |bytes: &Vec<u8>| -> Option<usize> {
+            if bytes.len() > MAX_ANCHOR {
+                return None;
+            }
+            let offset = catch_unwind(AssertUnwindSafe(|| {
+                let index = StickyIndex::decode_v1(bytes).ok()?;
+                let txn = self.doc().transact();
+                index.get_offset(&txn).map(|offset| offset.index as usize)
+            }))
+            .ok()??;
+            (offset <= len).then_some(offset)
+        };
+        Some((end(&selection.anchor)?, end(&selection.head)?))
     }
 }
 

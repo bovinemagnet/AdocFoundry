@@ -61,6 +61,10 @@ pub enum CollabError {
     ProjectionMismatch,
     /// The replica failed earlier and must be rebuilt in a new epoch.
     Poisoned,
+    /// The replica holds an update it cannot integrate yet, so it encodes nothing until it is
+    /// resynchronised or rebuilt: `yrs` can panic, or write items at clocks never used, encoding
+    /// a document with something pending (y-crdt/y-crdt#720, #744).
+    Pending,
     /// An update from a participant that is not what that participant could honestly send now:
     /// items under another participant's id, or not starting where the receiver's copy of the
     /// sender's work ends ([`Replica::apply_from`]).
@@ -84,6 +88,7 @@ impl std::fmt::Display for CollabError {
             }
             Self::Poisoned => formatter.write_str("the shared text must be rebuilt"),
             Self::NotAdmitted(reason) => write!(formatter, "update not admitted: {reason}"),
+            Self::Pending => formatter.write_str("the shared text waits for an update"),
         }
     }
 }

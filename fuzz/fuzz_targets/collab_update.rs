@@ -17,7 +17,9 @@
 
 use std::sync::Once;
 
-use adoc_collab::{apply_edits, authors, ByteEdit, EncodedUpdate, Replica, ReplicaId, Sender};
+use adoc_collab::{
+    apply_edits, authors, ByteEdit, EncodedUpdate, RelativeSelection, Replica, ReplicaId, Sender,
+};
 use libfuzzer_sys::fuzz_target;
 
 static GUARDED_PANICS: Once = Once::new();
@@ -30,6 +32,9 @@ fn let_yrs_panics_unwind() {
             let in_yrs = info
                 .location()
                 .is_some_and(|location| location.file().contains("/yrs-"));
+            // A panic in `yrs` the replica guards is let unwind to its guard. One that escapes
+            // it aborts in libFuzzer's entry ("panic in a function that cannot unwind"); to
+            // find it, print `info` and `std::backtrace::Backtrace::force_capture()` here.
             if !in_yrs {
                 fatal(info);
             }
@@ -71,6 +76,14 @@ fuzz_target!(|data: &[u8]| {
         }
         mutated
     };
+    // Another participant's selection, from the same bytes: read without a panic, and never
+    // past the end of the text.
+    let (anchor, head) = rest.split_at(rest.len() / 2);
+    if let Ok(selection) = RelativeSelection::from_wire(anchor.to_vec(), head.to_vec()) {
+        if let Some((start, end)) = host.resolve(&selection) {
+            assert!(start <= host.len() && end <= host.len());
+        }
+    }
     let update = EncodedUpdate(input);
     let _ = authors(&update);
 
@@ -85,6 +98,21 @@ fuzz_target!(|data: &[u8]| {
                 let mut rope = before;
                 apply_edits(&mut rope, &change.edits);
                 assert_eq!(rope, receiver.text());
+                // Whatever was accepted is passed on whole only as a snapshot that rebuilds the
+                // same text.
+                match receiver.snapshot() {
+                    Ok(snapshot) => {
+                        let copy =
+                            Replica::from_snapshot(&snapshot, id(4)).expect("its own snapshot");
+                        assert_eq!(copy.text(), receiver.text());
+                    }
+                    // Refused: waiting for something, or a state whose encoding would
+                    // rebuild another text, which the host then rebuilds from its own.
+                    Err(error) => assert!(
+                        change.pending || error == adoc_collab::CollabError::ProjectionMismatch,
+                        "{error}"
+                    ),
+                }
             }
             Err(_) if !receiver.is_poisoned() => {
                 assert_eq!(receiver.text(), before);

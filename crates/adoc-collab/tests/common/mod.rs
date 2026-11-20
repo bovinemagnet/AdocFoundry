@@ -206,6 +206,11 @@ impl Star {
 
     pub fn edit(&mut self, who: usize, edit: ByteEdit) {
         let update = self.peers[who].edit(&[edit]);
+        self.send(who, update);
+    }
+
+    /// Sends `who`'s update on its way: the host's to every guest, a guest's to the host.
+    pub fn send(&mut self, who: usize, update: EncodedUpdate) {
         if who == 0 {
             for guest in 1..self.peers.len() {
                 self.down[guest].push_back(update.clone());

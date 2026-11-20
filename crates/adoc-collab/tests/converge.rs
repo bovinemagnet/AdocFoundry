@@ -147,3 +147,47 @@ fn a_guest_never_bootstraps_twice() {
     ));
     assert_eq!(guest.replica.text(), host.rope);
 }
+
+#[test]
+fn a_guest_joins_after_a_long_session_with_deletions_and_undo() {
+    // A host and two guests edit, delete, undo and redo for a while; a third guest then joins
+    // from the host's snapshot, and from a guest's, through the same grammar and admission as
+    // any update, and goes on receiving.
+    for seed in 1..=100u64 {
+        let mut rng = Rng::seeded(seed);
+        let mut star = Star::new("= Shared\n\nText to start with.\n", 2);
+        for _ in 0..80 {
+            if rng.below(3) == 0 && star.step(&mut rng) {
+                continue;
+            }
+            let who = rng.below(3);
+            match rng.below(5) {
+                0 | 1 => {
+                    let peer = &mut star.peers[who];
+                    let change = if rng.below(2) == 0 {
+                        peer.replica.undo_local().unwrap()
+                    } else {
+                        peer.replica.redo_local().unwrap()
+                    };
+                    if let Some(change) = change {
+                        peer.apply(&change);
+                        star.send(who, change.outbound.unwrap());
+                    }
+                }
+                _ => {
+                    star.peers[who].replica.end_group();
+                    let edit = random_edit(&mut rng, &star.peers[who].rope);
+                    star.edit(who, edit);
+                }
+            }
+        }
+        while star.step(&mut rng) {}
+        assert_converged(&star.peers, seed);
+        let mut joined = Peer::join(&star.peers[0], 50);
+        let from_guest = Peer::join(&star.peers[1], 51);
+        assert_eq!(from_guest.rope, star.peers[0].rope, "seed {seed}");
+        let more = star.peers[0].edit(&[ByteEdit::new(0, 0, "// later\n")]);
+        joined.receive(&more);
+        assert_eq!(joined.rope, star.peers[0].rope, "seed {seed}");
+    }
+}
