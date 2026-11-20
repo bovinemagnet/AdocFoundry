@@ -299,6 +299,14 @@ impl Engine {
             self.set_active(id);
             return Ok(id);
         }
+        // Another shared page, followed from a link in one: the host sends it.
+        #[cfg(feature = "collab")]
+        if shared_page_path(&path) {
+            self.open_shared_path(&path)?;
+            return Err(EngineError::Refused(
+                "the host is sending the shared page; it opens when it arrives".to_owned(),
+            ));
+        }
         let text = self.read_text(&path)?;
         let id = self.insert_document(path, &text, false);
         self.set_active(id);
@@ -322,6 +330,13 @@ impl Engine {
     /// and at most [`MAX_TEXT_FILE`] bytes of it, however it grows while being read.
     pub(crate) fn read_text(&self, path: &Path) -> Result<String, EngineError> {
         use std::io::Read as _;
+
+        // A guest's shared page is the host's: whatever is at its path here is never read.
+        if shared_page_path(path) {
+            return Err(EngineError::Refused(
+                "a shared page is the host's and is not read from this computer".to_owned(),
+            ));
+        }
 
         let not_text = || {
             EngineError::Refused(format!(
@@ -1343,5 +1358,39 @@ mod tests {
         write_replacing(&written, "= Again\n").unwrap();
         assert_eq!(mode(&written), 0o640);
         assert_eq!(fs::read_to_string(&written).unwrap(), "= Again\n");
+    }
+}
+
+/// Whether `path` is a guest's shared page's, under a session's virtual folder: never read
+/// from this computer's disk.
+pub(crate) fn shared_page_path(path: &Path) -> bool {
+    #[cfg(feature = "collab")]
+    return crate::collab_session::is_shared_path(path);
+    #[cfg(not(feature = "collab"))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+impl Engine {
+    /// Whether the page at `path` is shared in a session, the host's or a guest's.
+    pub(crate) fn is_shared_page(&self, path: &Path) -> bool {
+        #[cfg(feature = "collab")]
+        return shared_page_path(path)
+            || self
+                .document_for_path(path)
+                .is_some_and(|id| self.shared.contains_key(&id));
+        #[cfg(not(feature = "collab"))]
+        {
+            let _ = path;
+            false
+        }
+    }
+
+    /// Without collaboration every page resolves in this computer's workspace.
+    #[cfg(not(feature = "collab"))]
+    pub(crate) fn workspace_for(&self, _: &Path) -> &adoc_lang::WorkspaceState {
+        &self.workspace
     }
 }

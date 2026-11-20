@@ -398,6 +398,21 @@ Presence and remote carets. Where it departs from #693 or the design:
 - **Compositions kept.** A change from elsewhere that leaves an input method's composition's place alone keeps it: the widget's text without the provisional composition is compared with the engine's, the change applied around it, and the composition marked again where the change moved it. A change reaching across its place ends it, the engine's text winning. The widget reports a committed composition as a replacement of its whole text, which is narrowed to what changed; an edit that changes nothing is not sent, since on a shared page it would still travel as a deletion and an insertion.
 - **Not done here:** the manual checks with two instances of the app (carets during fast typing, input methods on each platform) wait for the maintainer, with C6a's.
 
+### C7 (COLLAB 7/8, #694)
+
+Several files, Antora scope and previews. Where it departs from #694 or the design:
+
+- **Nothing of the host's paths is sent.** Every reason the host gives a guest is a fixed text (`CANNOT_OPEN`, a failed save's "the host could not write the file"); the test harness checks every frame and reason sent for the host's folder (`assert_no_host_paths`).
+- **Structural commands are refused before they start.** While hosting, rename, move, delete, New Page, New Module, New Project, navigation rewrites, workspace replace, placing images and opening another folder are refused (`REFUSED_WHILE_HOSTING`); on a guest's shared page, rename, delete, local history and every export are (`REFUSED_ON_GUEST_PAGES`). `every_command_is_decided_for_a_session` fails until a new command is in one of those lists or in `ALLOWED_WHILE_HOSTING`.
+- **The host's tabs stay its own.** A file opened for a guest stays in the host's background, out of its tabs; closing a shared tab hides it, and the panel's *Show* brings it back (`EngineEvent::TabHidden`). When sharing stops, a background page with unsaved changes becomes a tab and the rest close.
+- **Names and versions only.** After the manifest the host sends `Components` (kind 20): for each Antora component version the offered files belong to, its folder from the shared root, its name and its version, each a word the protocol checks, never its attributes, navigation, title or start page. A component the protocol cannot carry is left out, and its pages resolve as plain files.
+- **The guest's shared workspace.** A guest opens each shared page under a folder of its own session in the system's temporary folder (`adocfoundry-shared-<session>`), which is never read from disk (`read_text` refuses it, `open` asks the host for a shared file there and refuses anything else). Its catalog is built with `discover_antora_files` from the manifest's paths and a descriptor written from each component, its index from the shared pages open, and every resolution for a shared page (`Engine::workspace_for`: definitions, hovers, completions, includes, xrefs and the preview) goes through it, never through the guest's own workspace, so a guest's own clone of the same project is never mixed in. Shared pages stay out of the live index, search, quick open, the recent files and the graph.
+- **Includes come from open shared pages only.** A shared page's include is read from the shared pages open here (`SnapshotIncludes::disk` is false), and its preview is built again when one arrives; a partial not yet opened shows as unresolved.
+- **Media.** A guest's preview resolves no picture (its alt text is shown), since media are not shared; no diagram program runs on a shared page, the host's or a guest's, only the cache and Mermaid in process, as DocBook export does.
+- **Following a link** to another shared page, from the definition or the preview, asks the host for it (`open_shared_path`) and shows it when it arrives, never as a preview tab.
+- **Diagnostics** on a guest's shared page are the parser's own, never the workspace's.
+- **Not done here:** navigation for guests, shared media and the manual checks with two instances.
+
 ## 15. References
 
 - Epic #686.

@@ -36,13 +36,23 @@ impl Engine {
     #[must_use]
     pub fn definition(&self, id: DocumentId, offset: usize) -> Option<DefinitionTarget> {
         let document = self.document(id)?;
-        adoc_lang::definition_in(&self.workspace, &document.path, document.parsed(), offset)
+        adoc_lang::definition_in(
+            self.workspace_for(&document.path),
+            &document.path,
+            document.parsed(),
+            offset,
+        )
     }
 
     #[must_use]
     pub fn hover(&self, id: DocumentId, offset: usize) -> Option<Hover> {
         let document = self.document(id)?;
-        adoc_lang::hover_in(&self.workspace, &document.path, document.parsed(), offset)
+        adoc_lang::hover_in(
+            self.workspace_for(&document.path),
+            &document.path,
+            document.parsed(),
+            offset,
+        )
     }
 
     /// Whether typing `typed` at `offset` in document `id` puts the caret inside something
@@ -75,7 +85,12 @@ impl Engine {
         let Some(document) = self.document(id) else {
             return Vec::new();
         };
-        adoc_lang::completion_in(&self.workspace, &document.path, document.parsed(), offset)
+        adoc_lang::completion_in(
+            self.workspace_for(&document.path),
+            &document.path,
+            document.parsed(),
+            offset,
+        )
     }
 
     /// The references to what is at `offset` in document `id`: to the anchor there, or to the

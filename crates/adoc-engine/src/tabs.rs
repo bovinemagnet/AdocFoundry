@@ -146,7 +146,10 @@ impl Engine {
         disposition: OpenDisposition,
     ) -> Result<DocumentId, EngineError> {
         let path = normalize_path(path);
-        let browsing = disposition == OpenDisposition::Preview && self.preview_tabs_on();
+        // A guest's shared page is never a preview tab: it is asked of the host (`open`).
+        let browsing = disposition == OpenDisposition::Preview
+            && self.preview_tabs_on()
+            && !crate::engine::shared_page_path(&path);
         if !browsing || self.document_for_path(&path).is_some() {
             let id = self.open(&path)?;
             if disposition == OpenDisposition::Persistent {

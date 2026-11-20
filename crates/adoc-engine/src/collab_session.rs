@@ -24,8 +24,8 @@ use std::{
 use adoc_collab::{
     protocol::{
         display_path, ErrorCode, FileKind, ManifestFile, Member, Message, PeerId, Role,
-        SaveOutcome, MANIFEST_PART, MAX_MANIFEST_FILES, MAX_OPEN_FILES, MAX_PARTICIPANTS,
-        MAX_QUEUED_FRAMES,
+        SaveOutcome, SharedComponent, MANIFEST_PART, MAX_MANIFEST_FILES, MAX_OPEN_FILES,
+        MAX_PARTICIPANTS, MAX_QUEUED_FRAMES,
     },
     EncodedUpdate, Link, LinkEvent, RelativeSelection, ReplicaId, Sender, MAX_SHARED_FILE,
 };
@@ -97,6 +97,8 @@ struct Host {
     /// The host's name, and the shared folder's, as guests are shown them.
     name: String,
     workspace: String,
+    /// The Antora component versions the offered files belong to, sent after the manifest.
+    components: Vec<SharedComponent>,
     access: FileAccess,
     /// The offered files, by their session number.
     offered: BTreeMap<u64, Offered>,
@@ -159,6 +161,15 @@ struct Guest {
     /// The shared folder's name and who is in the session, as the host last said.
     workspace: Option<String>,
     roster: Vec<Member>,
+    /// Where the shared files' pages are opened: a folder of this session's that is never on
+    /// disk (`is_shared_path`), so nothing is read there.
+    virtual_root: Option<PathBuf>,
+    /// The component versions the host named, and the workspace the shared pages resolve in:
+    /// a catalog of the manifest's files under the virtual root and an index of those open,
+    /// apart from this computer's own workspace.
+    components: Vec<SharedComponent>,
+    shared: adoc_lang::WorkspaceState,
+    indexed: BTreeMap<DocumentId, u64>,
 }
 
 #[derive(Default)]
@@ -183,6 +194,8 @@ struct GuestFile {
     last_save: Option<(u64, SaveOutcome)>,
     /// The document version last hashed for its save state, and the hash.
     hashed: std::cell::RefCell<Option<(u64, String)>>,
+    /// Shown when it arrives: it was opened by following a link to it.
+    show: bool,
 }
 
 fn refused(message: &str) -> EngineError {
@@ -293,6 +306,7 @@ impl Engine {
             link,
             side: Side::Host(Host {
                 name: name.to_owned(),
+                components: self.shared_components(&root, &offered),
                 workspace: root
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
@@ -327,6 +341,10 @@ impl Engine {
                 requests: BTreeMap::new(),
                 workspace: None,
                 roster: Vec::new(),
+                virtual_root: None,
+                components: Vec::new(),
+                shared: adoc_lang::WorkspaceState::default(),
+                indexed: BTreeMap::new(),
             }),
             backlog: false,
             presence: BTreeMap::new(),
@@ -607,6 +625,12 @@ impl Engine {
                 },
             );
         }
+        let _ = session.link.send(
+            peer,
+            Message::Components {
+                components: host.components.clone(),
+            },
+        );
         self.emit(EngineEvent::SessionChanged);
         Ok(())
     }
@@ -1752,7 +1776,19 @@ impl Engine {
             return false;
         };
         match message {
-            Message::Join { peer, role, .. } => {
+            Message::Join {
+                peer,
+                role,
+                session: id,
+                ..
+            } => {
+                if guest.virtual_root.is_none() {
+                    let name: String = id.0.iter().map(|byte| format!("{byte:02x}")).collect();
+                    guest.virtual_root = Some(normalize_path(
+                        &std::env::temp_dir().join(format!("{SHARED_PREFIX}{name}")),
+                    ));
+                    guest.rebuild();
+                }
                 guest.me = Some((peer, role));
                 guest.connected = true;
                 self.guest_refresh_editing(session);
@@ -1768,6 +1804,9 @@ impl Engine {
                     }
                 }
                 guest.manifest_done = !more;
+                if !more {
+                    guest.rebuild();
+                }
                 !more
             }
             Message::Snapshot {
@@ -1812,6 +1851,11 @@ impl Engine {
                         self.emit(EngineEvent::PresenceChanged(id));
                     }
                 }
+                false
+            }
+            Message::Components { components } => {
+                guest.components = components;
+                guest.rebuild();
                 false
             }
             Message::Roster { workspace, members } => {
@@ -1881,7 +1925,8 @@ impl Engine {
             .manifest
             .iter()
             .find(|entry| entry.file == file)
-            .map(|entry| entry.path.clone())
+            .and_then(|entry| guest.path_of(&entry.path))
+            .map(|path| path.to_string_lossy().into_owned())
         else {
             return;
         };
@@ -1900,6 +1945,15 @@ impl Engine {
         };
         match result {
             Ok(id) => {
+                if std::mem::take(&mut state.show) {
+                    self.set_active(id);
+                }
+                let Side::Guest(guest) = &mut session.side else {
+                    return;
+                };
+                let Some(state) = guest.files.get_mut(&file) else {
+                    return;
+                };
                 state.document = Some(id);
                 state.epoch = epoch;
                 state.selections.clear();
@@ -2027,6 +2081,24 @@ impl Engine {
         let Side::Guest(guest) = &mut session.side else {
             return;
         };
+        // The shared workspace's index follows the shared pages open here.
+        for state in guest.files.values() {
+            let Some(id) = state.document else {
+                continue;
+            };
+            let Some(document) = self.documents.get(&id) else {
+                continue;
+            };
+            if guest.indexed.get(&id) != Some(&document.version) {
+                let parsed = adoc_parser::parse(
+                    &crate::document::uri_for(&document.path),
+                    &document.text.to_string(),
+                )
+                .document;
+                guest.shared.index.replace(document.path.clone(), parsed);
+                guest.indexed.insert(id, document.version);
+            }
+        }
         // A remote tab closed here: the host stops sending it, and it may be opened again.
         let closed: Vec<u64> = guest
             .files
@@ -2456,5 +2528,153 @@ impl Engine {
             REFUSED_ON_GUEST_PAGES.contains(&command) || command.as_str().starts_with("export.");
         (guest_page && refused)
             .then(|| "a shared page is the host's: only the host can do that".to_owned())
+    }
+}
+
+/// How the folder of a session's shared pages begins, in the system's temporary folder.
+const SHARED_PREFIX: &str = "adocfoundry-shared-";
+
+/// Whether `path` is a shared page's, under a session's virtual folder: never read from disk,
+/// during a session or after it, whatever is there.
+pub(crate) fn is_shared_path(path: &Path) -> bool {
+    let temp = normalize_path(&std::env::temp_dir());
+    path.strip_prefix(&temp).is_ok_and(|rest| {
+        rest.components().next().is_some_and(|first| {
+            first
+                .as_os_str()
+                .to_string_lossy()
+                .starts_with(SHARED_PREFIX)
+        })
+    })
+}
+
+impl Guest {
+    /// The path of a shared file in this session's virtual folder.
+    fn path_of(&self, display: &str) -> Option<PathBuf> {
+        let mut path = self.virtual_root.clone()?;
+        for part in display.split('/').filter(|part| !part.is_empty()) {
+            path.push(part);
+        }
+        Some(path)
+    }
+
+    /// Builds the shared workspace again from the manifest and the components: what each
+    /// shared page's references resolve among.
+    fn rebuild(&mut self) {
+        let Some(root) = self.virtual_root.clone() else {
+            return;
+        };
+        let mut files = BTreeMap::new();
+        for entry in &self.manifest {
+            if let Some(path) = self.path_of(&entry.path) {
+                files.insert(path, String::new());
+            }
+        }
+        for component in &self.components {
+            let Some(dir) = self.path_of(&component.dir) else {
+                continue;
+            };
+            // Names and versions are words (the protocol holds them to it): quoted, they are
+            // read back as written.
+            let descriptor = format!(
+                "name: '{}'\nversion: {}\n",
+                component.name,
+                component
+                    .version
+                    .as_deref()
+                    .map_or("~".to_owned(), |version| format!("'{version}'"))
+            );
+            files.insert(dir.join("antora.yml"), descriptor);
+        }
+        let ignore: [&str; 0] = [];
+        let discovered = adoc_antora::discover_antora_files(&[root], &files, &ignore);
+        self.shared = adoc_lang::WorkspaceState {
+            antora: discovered.catalog,
+            descriptor_issues: discovered.issues,
+            ..adoc_lang::WorkspaceState::default()
+        };
+        self.indexed.clear();
+    }
+}
+
+impl Engine {
+    /// The workspace a page resolves its references in: a guest's shared page in the session's
+    /// shared workspace, everything else in this computer's own.
+    pub(crate) fn workspace_for(&self, path: &Path) -> &adoc_lang::WorkspaceState {
+        if let Some(Side::Guest(guest)) = self.collab_session.as_ref().map(|session| &session.side)
+        {
+            if guest
+                .virtual_root
+                .as_ref()
+                .is_some_and(|root| path.starts_with(root))
+            {
+                return &guest.shared;
+            }
+        }
+        &self.workspace
+    }
+
+    /// Asks the host for the shared file at `path`, a guest's virtual path, to be shown when it
+    /// arrives.
+    pub(crate) fn open_shared_path(&mut self, path: &Path) -> Result<(), EngineError> {
+        let Some(Side::Guest(guest)) = self.collab_session.as_ref().map(|session| &session.side)
+        else {
+            return Err(refused("that shared page is from a session that has ended"));
+        };
+        let file = guest
+            .manifest
+            .iter()
+            .find(|entry| guest.path_of(&entry.path).as_deref() == Some(path))
+            .map(|entry| entry.file)
+            .ok_or_else(|| refused("the host does not share that page"))?;
+        self.open_session_file(file)?;
+        if let Some(Side::Guest(guest)) = self
+            .collab_session
+            .as_mut()
+            .map(|session| &mut session.side)
+        {
+            if let Some(state) = guest.files.get_mut(&file) {
+                state.show = true;
+            }
+        }
+        Ok(())
+    }
+
+    /// The Antora component versions the offered files belong to, inside the shared folder,
+    /// by name and version only.
+    fn shared_components(
+        &self,
+        root: &Path,
+        offered: &BTreeMap<u64, Offered>,
+    ) -> Vec<SharedComponent> {
+        let mut components = Vec::new();
+        for descriptor in self.workspace.antora.components() {
+            let Ok(relative) = descriptor.root.strip_prefix(root) else {
+                continue;
+            };
+            if !offered
+                .values()
+                .any(|offered| offered.path.starts_with(&descriptor.root))
+            {
+                continue;
+            }
+            let dir: Vec<String> = relative
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                .collect();
+            let component = SharedComponent {
+                dir: dir.join("/"),
+                name: descriptor.name.clone(),
+                version: descriptor.version.clone(),
+            };
+            // One the protocol cannot carry is left out: its pages resolve as plain files.
+            let checked = Message::Components {
+                components: vec![component.clone()],
+            };
+            if checked.encode().is_ok() && !components.contains(&component) {
+                components.push(component);
+            }
+        }
+        components
     }
 }

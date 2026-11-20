@@ -28,6 +28,8 @@ pub const MAX_PARTICIPANTS: usize = 8;
 pub const MAX_QUEUED_FRAMES: usize = 1024;
 /// The most bytes waiting to be sent to one peer.
 pub const MAX_QUEUED_BYTES: usize = 16 << 20;
+/// The most component versions a session's files may belong to.
+pub const MAX_COMPONENTS: usize = 256;
 /// The most files a manifest lists.
 pub const MAX_MANIFEST_FILES: usize = 100_000;
 /// The most files one `Manifest` message lists, so its control part stays within
@@ -160,6 +162,18 @@ pub struct Member {
     pub connected: bool,
 }
 
+/// An Antora component version the shared files belong to, as much as a guest needs to resolve
+/// resource ids among them: never its attributes, navigation or anything else in `antora.yml`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SharedComponent {
+    /// The folder holding its `antora.yml`, from the shared root with `/`; empty for the root.
+    pub dir: String,
+    pub name: String,
+    /// `None` for a versionless component.
+    pub version: Option<String>,
+}
+
 /// How a credential proves who is connecting.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
@@ -278,6 +292,10 @@ pub enum Message {
     SaveResult {
         request: u64,
         outcome: SaveOutcome,
+    },
+    /// The Antora component versions the manifest's files belong to; sent after the manifest.
+    Components {
+        components: Vec<SharedComponent>,
     },
     /// Who is in the session, the host first, and the name of the folder shared; sent after
     /// `Join` and whenever it changes. Names are for showing only.
@@ -439,6 +457,12 @@ struct SaveResultControl {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ComponentsControl {
+    components: Vec<SharedComponent>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RosterControl {
     workspace: String,
     members: Vec<Member>,
@@ -504,6 +528,7 @@ mod kind {
     pub const HEARTBEAT: u8 = 17;
     pub const FILE_STATE: u8 = 18;
     pub const ROSTER: u8 = 19;
+    pub const COMPONENTS: u8 = 20;
 }
 
 impl Message {
@@ -639,6 +664,13 @@ impl Message {
                 })?,
                 Vec::new(),
             ),
+            Self::Components { components } => (
+                kind::COMPONENTS,
+                json(&ComponentsControl {
+                    components: components.clone(),
+                })?,
+                Vec::new(),
+            ),
             Self::Roster { workspace, members } => (
                 kind::ROSTER,
                 json(&RosterControl {
@@ -752,6 +784,18 @@ impl Message {
                 outcome: SaveOutcome::Saved { revision: reason } | SaveOutcome::Failed { reason },
                 ..
             } => text(reason, MAX_TEXT, "reason"),
+            Self::Components { components } => {
+                if components.len() > MAX_COMPONENTS {
+                    return Err(FrameError::TooLarge(components.len()));
+                }
+                components.iter().try_for_each(|component| {
+                    if !component.dir.is_empty() {
+                        display_path(&component.dir)?;
+                    }
+                    component_word(&component.name)?;
+                    component.version.as_deref().map_or(Ok(()), component_word)
+                })
+            }
             Self::Roster { workspace, members } => {
                 text(workspace, MAX_TEXT, "workspace")?;
                 if members.len() > MAX_PARTICIPANTS {
@@ -914,6 +958,10 @@ pub fn decode(frame: &[u8]) -> Result<Message, FrameError> {
             let SaveResultControl { request, outcome } = read(control)?;
             no_payload(Message::SaveResult { request, outcome })?
         }
+        kind::COMPONENTS => {
+            let ComponentsControl { components } = read(control)?;
+            no_payload(Message::Components { components })?
+        }
         kind::ROSTER => {
             let RosterControl { workspace, members } = read(control)?;
             no_payload(Message::Roster { workspace, members })?
@@ -995,6 +1043,22 @@ fn text(value: &str, limit: usize, field: &'static str) -> Result<(), FrameError
         return Err(FrameError::Invalid(field));
     }
     Ok(())
+}
+
+/// An Antora component's name or version as `antora.yml` may hold it: a word of letters,
+/// digits, `.`, `_` and `-`, at most [`MAX_NAME`] bytes, so a guest can write it into a
+/// descriptor of its own without quoting.
+fn component_word(word: &str) -> Result<(), FrameError> {
+    let ok = !word.is_empty()
+        && word.len() <= MAX_NAME
+        && word
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if ok {
+        Ok(())
+    } else {
+        Err(FrameError::Invalid("component"))
+    }
 }
 
 /// A display name: one line of printable text, not empty, at most [`MAX_NAME`] bytes.

@@ -95,6 +95,20 @@ fn every_message() -> Vec<Message> {
             peer: PeerId(1),
             role: Role::Editor,
         },
+        Message::Components {
+            components: vec![
+                adoc_collab::protocol::SharedComponent {
+                    dir: "docs".to_owned(),
+                    name: "guide".to_owned(),
+                    version: Some("2.0".to_owned()),
+                },
+                adoc_collab::protocol::SharedComponent {
+                    dir: String::new(),
+                    name: "notes".to_owned(),
+                    version: None,
+                },
+            ],
+        },
         Message::Roster {
             workspace: "docs".to_owned(),
             members: vec![
@@ -333,6 +347,25 @@ fn fields_outside_their_limits_are_refused() {
             state.encode(),
             Err(FrameError::Invalid("revision")),
             "{revision}"
+        );
+    }
+    for (name, version) in [
+        ("a b", None),
+        ("x: y", None),
+        ("guide", Some("1\n2")),
+        ("", None),
+    ] {
+        let bad = Message::Components {
+            components: vec![adoc_collab::protocol::SharedComponent {
+                dir: String::new(),
+                name: name.to_owned(),
+                version: version.map(str::to_owned),
+            }],
+        };
+        assert_eq!(
+            bad.encode(),
+            Err(FrameError::Invalid("component")),
+            "{name:?}"
         );
     }
     let unnamed = Message::Roster {

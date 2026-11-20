@@ -274,6 +274,9 @@ pub(crate) struct SnapshotIncludes {
     /// Open buffers, shared rather than copied: a rope's clone is cheap.
     buffers: HashMap<PathBuf, Rope>,
     access: FileAccess,
+    /// Whether a file that is not open may be read from disk: not for a guest's shared page,
+    /// whose includes are the shared pages open here.
+    disk: bool,
     read: Mutex<BTreeSet<PathBuf>>,
 }
 
@@ -286,7 +289,8 @@ impl IncludeResolver for SnapshotIncludes {
         }
         let text = match self.buffers.get(&path) {
             Some(text) => text.to_string(),
-            None => fs::read_to_string(&path).ok()?,
+            None if self.disk => fs::read_to_string(&path).ok()?,
+            None => return None,
         };
         if let Ok(mut read) = self.read.lock() {
             read.insert(path.clone());
@@ -629,7 +633,7 @@ impl Engine {
     /// The attributes a page is parsed with before its own header: the playbook's, its
     /// component version's and Antora's page attributes.
     pub(crate) fn antora_attributes_for(&self, path: &Path) -> Vec<(String, String)> {
-        let antora = &self.workspace.antora;
+        let antora = &self.workspace_for(path).antora;
         let mut attributes: Vec<(String, String)> = antora
             .playbook()
             .map(|playbook| {
@@ -657,16 +661,17 @@ impl Engine {
         parsed: &adoc_core::Document,
     ) -> OwnedInput {
         let attributes = self.antora_attributes_for(path);
-        let map = adoc_lang::includes::include_map(
-            &self.workspace.index,
-            &self.workspace.antora,
-            path,
-            parsed,
-        );
+        let workspace = self.workspace_for(path);
+        let map =
+            adoc_lang::includes::include_map(&workspace.index, &workspace.antora, path, parsed);
+        // A guest's shared page reads its includes from the shared pages open here, never from
+        // this computer's files or its own pages.
+        let shared = crate::engine::shared_page_path(path);
         let buffers = self
             .documents
             .values()
             .filter(|open| open.path != path)
+            .filter(|open| !shared || crate::engine::shared_page_path(&open.path))
             .map(|open| (open.path.clone(), open.text.clone()))
             .collect();
         OwnedInput {
@@ -678,6 +683,7 @@ impl Engine {
                 map,
                 buffers,
                 access: self.file_access.clone(),
+                disk: !shared,
                 read: Mutex::default(),
             },
         }
@@ -788,12 +794,17 @@ impl Engine {
         programs: bool,
     ) -> (ViewTree, BTreeSet<String>, BTreeSet<PathBuf>) {
         let diagrams = self.diagrams();
+        // A shared page's text may be another participant's: no diagram program runs on it
+        // (Graphviz, PlantUML and D2 read files and more of their own), only the cache and
+        // Mermaid in process; and a guest's has no pictures, which only the host has.
+        let shared = self.is_shared_page(path);
         let resolver = EngineResolver {
-            workspace: &self.workspace,
+            workspace: self.workspace_for(path),
             diagrams: &diagrams,
             failed: &self.rendered.failed,
             formulas,
-            programs,
+            programs: programs && !shared,
+            media: !crate::engine::shared_page_path(path),
             measures: &self.rendered.formulas,
             wanted: RefCell::default(),
             inputs: RefCell::default(),
@@ -1030,6 +1041,8 @@ impl Engine {
 /// Resolves the view's references, images and diagrams against the workspace.
 struct EngineResolver<'e> {
     workspace: &'e WorkspaceState,
+    /// Whether pictures resolve: not for a guest's shared page.
+    media: bool,
     diagrams: &'e Diagrams,
     failed: &'e FailedDiagrams,
     /// Whether formulas are rendered as images for this view.
@@ -1098,6 +1111,9 @@ impl ViewResolver for EngineResolver<'_> {
     }
 
     fn image(&self, from: &Path, target: &str, imagesdir: Option<&str>) -> Option<PathBuf> {
+        if !self.media {
+            return None;
+        }
         let antora = &self.workspace.antora;
         if let Some(context) = antora.context_for_path(from) {
             let mut id = adoc_lang::images::antora_image_id(target).ok()??;

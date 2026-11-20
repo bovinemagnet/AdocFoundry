@@ -219,7 +219,10 @@ impl Engine {
         can_edit: bool,
     ) -> Result<DocumentId, EngineError> {
         let replica = Replica::from_snapshot(snapshot, me).map_err(|error| collab_error(&error))?;
-        let id = self.insert_document(std::path::PathBuf::from(name), &replica.text(), true);
+        let path = std::path::PathBuf::from(name);
+        let id = self.insert_document(path.clone(), &replica.text(), true);
+        // A shared page another includes: its preview reads it now.
+        self.preview_source_changed(&path);
         self.shared.insert(
             id,
             SharedDocument::new(replica, SharedRole::Guest { can_edit }, file, epoch),
