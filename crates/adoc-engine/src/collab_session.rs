@@ -36,6 +36,10 @@ use crate::{
     normalize_path, DocumentId, Engine, EngineError, EngineEvent,
 };
 
+/// Why a guest cannot have a file: said without the reason the host's engine gives, which names
+/// the host's own paths.
+const CANNOT_OPEN: &str = "the host cannot open the file just now";
+
 /// The most link events one `pump` handles; any more are due at the next.
 pub const SESSION_EVENTS_PER_PUMP: usize = 64;
 
@@ -1166,7 +1170,7 @@ impl Engine {
                 peer,
                 Message::Error {
                     code: ErrorCode::Stale,
-                    message: format!("the file cannot be opened: {error}"),
+                    message: CANNOT_OPEN.to_owned(),
                 },
             );
             return Ok(());
@@ -1352,7 +1356,7 @@ impl Engine {
                     peer,
                     Message::Error {
                         code: ErrorCode::Stale,
-                        message: format!("the file cannot be opened: {error}"),
+                        message: CANNOT_OPEN.to_owned(),
                     },
                 );
                 return Ok(());
@@ -1559,8 +1563,9 @@ impl Engine {
                         |revision| SaveOutcome::Saved { revision },
                     ),
                     Err(EngineError::SaveConflict { .. }) => SaveOutcome::Conflict,
-                    Err(error) => SaveOutcome::Failed {
-                        reason: error.to_string(),
+                    // Never the engine's error, which names the host's paths.
+                    Err(_) => SaveOutcome::Failed {
+                        reason: "the host could not write the file".to_owned(),
                     },
                 },
             },

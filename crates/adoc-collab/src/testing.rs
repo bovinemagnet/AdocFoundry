@@ -20,6 +20,8 @@ pub struct Net {
     /// Every message the host sent each peer, in order.
     pub sent: BTreeMap<PeerId, Vec<Message>>,
     pub removed: Vec<(PeerId, ErrorCode)>,
+    /// The reason given with each removal, which the transport sends the peer.
+    pub reasons: Vec<String>,
     pub admitted: Vec<PeerId>,
     /// While set, the host reads nothing: what guests send stays in flight.
     pub hold_host: bool,
@@ -65,9 +67,10 @@ impl Link for HostLink {
         Ok(())
     }
 
-    fn remove(&mut self, peer: PeerId, code: ErrorCode, _: &str) {
+    fn remove(&mut self, peer: PeerId, code: ErrorCode, reason: &str) {
         let mut net = self.0.lock().unwrap();
         net.removed.push((peer, code));
+        net.reasons.push(reason.to_owned());
         net.to_guest
             .entry(peer)
             .or_default()

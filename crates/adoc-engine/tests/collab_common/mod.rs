@@ -129,10 +129,36 @@ impl Session {
                     .next_due()
                     .is_none_or(|due| due > std::time::Instant::now())
             {
+                self.assert_no_host_paths();
                 return;
             }
         }
         panic!("the session never settled");
+    }
+
+    /// Nothing the host sent any guest names a folder of the host's: not the shared folder,
+    /// nor any path above it (design §6, `collab_scope_never_leaks`).
+    pub fn assert_no_host_paths(&self) {
+        let root = self.directory.path().to_string_lossy().into_owned();
+        let real = std::fs::canonicalize(self.directory.path())
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| root.clone());
+        let net = self.net.lock().unwrap();
+        for reason in &net.reasons {
+            assert!(
+                !reason.contains(&root) && !reason.contains(&real),
+                "the host gave a path of its own as a reason: {reason}"
+            );
+        }
+        for (peer, messages) in &net.sent {
+            for message in messages {
+                let shown = format!("{message:?}");
+                assert!(
+                    !shown.contains(&root) && !shown.contains(&real),
+                    "the host sent {peer:?} a path of its own: {shown}"
+                );
+            }
+        }
     }
 
     pub fn host_doc(&self) -> DocumentId {
