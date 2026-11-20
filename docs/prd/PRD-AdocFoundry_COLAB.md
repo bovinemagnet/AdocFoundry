@@ -326,7 +326,7 @@ The spike is `spikes/collab/`, recorded in `docs/qa/spike-collab.md`. The contra
 - **Duplicates and reordering.** #689 asked for replicas that converge "regardless of order and duplicates". Over ordered links neither happens honestly, and admitting them is what let overlapping blocks reach `yrs`, so a duplicate or reordered update is refused unread, changing nothing. Convergence is tested over the star a session is.
 - **Character boundaries are the caller's to check.** #689 asked that an edit inside a character change nothing. The replica cannot see character boundaries without copying the text, so the engine checks them against its rope, as `TextEdit::validate` already does. If a caller skips that, `yrs` moves the edit and the replica's projection check fails closed (poisoned, rebuilt in a new epoch).
 - **`MAX_UPDATE` is 16 MiB, not 4 MiB.** No snapshot of a file between 4 and 8 MiB fitted the old limit.
-- **To report upstream,** with the C1 finding: the reservations, the split characters and the use-after-free.
+- **Reported upstream** on 2026-11-20: the split characters as y-crdt/y-crdt#778 and C1's stuck pending update as y-crdt/y-crdt#779; the use-after-free and the memory blow-up privately, as security reports.
 
 ## 15. References
 

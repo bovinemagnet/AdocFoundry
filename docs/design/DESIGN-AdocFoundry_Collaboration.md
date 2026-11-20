@@ -232,4 +232,4 @@ The PRD's §10 names the tests; this adds those the spike's findings call for.
 
 - **Platforms (C8):** the firewall prompts and interface lists on Windows, macOS and Linux, and whether a signed app is needed to listen without repeated prompts on macOS.
 - **Media for guests (C7 or later):** sharing images read-only, individually authorised.
-- **Upstream:** reporting the pending-update finding to `yrs`, with a reduced reproduction.
+- **Upstream:** reported on 2026-11-20 (y-crdt/y-crdt#778, #779, and two private security reports). When `yrs` fixes them, the checks in `adoc-collab` stay: they are the shape of what a session sends, not only workarounds.
