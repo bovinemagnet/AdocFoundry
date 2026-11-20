@@ -722,3 +722,55 @@ fn the_share_plan_offers_what_hosting_would() {
         .unwrap();
     assert_eq!(manifest.len(), 2);
 }
+
+#[test]
+fn collaboration_is_offered_only_once_turned_on() {
+    use adoc_engine::Settings;
+
+    let mut settings = Settings::load(None, None).unwrap();
+    settings.git.enabled = false;
+    assert!(!settings.collaboration.enabled, "off by default");
+    let directory = tempfile::tempdir().unwrap();
+    let mut engine = adoc_engine::Engine::new(settings.clone());
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    for id in [ids::COLLAB_SHARE, ids::COLLAB_JOIN, ids::COLLAB_STOP] {
+        assert!(!engine.command_available(id), "{id:?} is offered while off");
+    }
+    assert!(matches!(
+        engine.invoke(ids::COLLAB_SHARE, CommandArgs::None),
+        Err(adoc_engine::EngineError::Refused(reason)) if reason.contains("[collaboration] enabled")
+    ));
+    assert!(engine.invoke(ids::COLLAB_JOIN, CommandArgs::None).is_err());
+
+    // As the app reads it: from the user settings file, which opening a folder reads again.
+    let user = directory.path().join("settings.toml");
+    fs::write(
+        &user,
+        "[collaboration]\nenabled = true\n[git]\nenabled = false\n",
+    )
+    .unwrap();
+    let _ = settings;
+    let mut engine = adoc_engine::Engine::new(Settings::load(Some(&user), None).unwrap());
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.command_available(ids::COLLAB_SHARE));
+    assert_eq!(
+        engine.invoke(ids::COLLAB_JOIN, CommandArgs::None).unwrap(),
+        adoc_engine::CommandOutcome::Collaboration(adoc_engine::CollaborationStep::Join)
+    );
+}
+
+#[test]
+fn a_running_session_can_be_ended_whatever_the_setting() {
+    let mut session = Session::new(&[("page.adoc", "= Page\n")]);
+    assert!(!session.host.settings().collaboration.enabled);
+    assert!(session.host.command_available(ids::COLLAB_STOP));
+    session
+        .host
+        .invoke(ids::COLLAB_STOP, CommandArgs::None)
+        .unwrap();
+    assert!(!session.host.command_available(ids::COLLAB_STOP));
+}

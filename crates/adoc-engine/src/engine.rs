@@ -760,6 +760,7 @@ impl Engine {
             CommandContext::Deletion => self.active_item().is_some() && self.can_delete_files(),
             CommandContext::DeletedFile => self.last_deleted().is_some(),
             CommandContext::KeptDeletions => !self.roots.is_empty() && self.can_delete_files(),
+            CommandContext::Collaboration => self.collaboration_offered(),
         }
     }
 

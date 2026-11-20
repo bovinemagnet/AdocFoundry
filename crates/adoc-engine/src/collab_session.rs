@@ -1963,6 +1963,16 @@ impl Engine {
     }
 }
 
+/// Why Share and Join refuse while collaboration is off.
+const OFF: &str = "collaboration is off: set `[collaboration] enabled = true` in the user settings";
+
+impl Engine {
+    /// Whether the collaboration commands are offered: collaboration is on, or a session runs.
+    pub(crate) fn collaboration_offered(&self) -> bool {
+        self.settings.collaboration.enabled || self.in_session()
+    }
+}
+
 /// The collaboration commands (COLLAB 6/8). Those that listen, connect or copy an invitation
 /// hand their step to the front end, which holds the transport; the others act on the session
 /// here, and refuse when there is none.
@@ -2001,7 +2011,18 @@ pub(crate) fn register_collaboration(registry: &mut crate::CommandRegistry) {
             })
     }
 
+    // Offered only while collaboration is on, or a session runs (so it can always be ended).
     let simple = |id, title| {
+        spec(
+            id,
+            title,
+            CommandCategory::Workspace,
+            None,
+            CommandContext::Collaboration,
+        )
+    };
+    // The Session panel's, shown only during a session.
+    let panel = |id, title| {
         spec(
             id,
             title,
@@ -2014,6 +2035,9 @@ pub(crate) fn register_collaboration(registry: &mut crate::CommandRegistry) {
         registry,
         simple(ids::COLLAB_SHARE, "Share Workspace…"),
         |engine, _| {
+            if !engine.settings().collaboration.enabled {
+                return Err(refused(OFF));
+            }
             if engine.in_session() {
                 return Err(refused("a session is already running"));
             }
@@ -2027,6 +2051,9 @@ pub(crate) fn register_collaboration(registry: &mut crate::CommandRegistry) {
         registry,
         simple(ids::COLLAB_JOIN, "Join Session…"),
         |engine, _| {
+            if !engine.settings().collaboration.enabled {
+                return Err(refused(OFF));
+            }
             if engine.in_session() {
                 return Err(refused("a session is already running"));
             }
@@ -2067,7 +2094,7 @@ pub(crate) fn register_collaboration(registry: &mut crate::CommandRegistry) {
     );
     register(
         registry,
-        simple(ids::COLLAB_ADMIT, "Admit Participant"),
+        panel(ids::COLLAB_ADMIT, "Admit Participant"),
         |engine, args| {
             engine
                 .admit_peer(peer(ids::COLLAB_ADMIT, &args)?)
@@ -2076,7 +2103,7 @@ pub(crate) fn register_collaboration(registry: &mut crate::CommandRegistry) {
     );
     register(
         registry,
-        simple(ids::COLLAB_DENY, "Turn Participant Away"),
+        panel(ids::COLLAB_DENY, "Turn Participant Away"),
         |engine, args| {
             let peer = peer(ids::COLLAB_DENY, &args)?;
             if !engine
@@ -2092,7 +2119,7 @@ pub(crate) fn register_collaboration(registry: &mut crate::CommandRegistry) {
     );
     register(
         registry,
-        simple(ids::COLLAB_GRANT_EDIT, "Let Participant Edit"),
+        panel(ids::COLLAB_GRANT_EDIT, "Let Participant Edit"),
         |engine, args| {
             engine
                 .set_peer_role(peer(ids::COLLAB_GRANT_EDIT, &args)?, Role::Editor)
@@ -2101,7 +2128,7 @@ pub(crate) fn register_collaboration(registry: &mut crate::CommandRegistry) {
     );
     register(
         registry,
-        simple(ids::COLLAB_REVOKE_EDIT, "Make Participant a Viewer"),
+        panel(ids::COLLAB_REVOKE_EDIT, "Make Participant a Viewer"),
         |engine, args| {
             engine
                 .set_peer_role(peer(ids::COLLAB_REVOKE_EDIT, &args)?, Role::Viewer)
@@ -2110,7 +2137,7 @@ pub(crate) fn register_collaboration(registry: &mut crate::CommandRegistry) {
     );
     register(
         registry,
-        simple(ids::COLLAB_REMOVE, "Remove Participant"),
+        panel(ids::COLLAB_REMOVE, "Remove Participant"),
         |engine, args| {
             let peer = peer(ids::COLLAB_REMOVE, &args)?;
             if !engine
@@ -2126,7 +2153,7 @@ pub(crate) fn register_collaboration(registry: &mut crate::CommandRegistry) {
     );
     register(
         registry,
-        simple(ids::COLLAB_OPEN_FILE, "Open Shared File"),
+        panel(ids::COLLAB_OPEN_FILE, "Open Shared File"),
         |engine, args| {
             let file = number(ids::COLLAB_OPEN_FILE, &args, "file")?;
             if let Some(id) = engine.session_document(file) {

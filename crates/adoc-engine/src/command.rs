@@ -59,6 +59,9 @@ pub enum CommandContext {
     /// A workspace is open and deleted files are kept (there is a state folder), so one kept
     /// from this session or an earlier one can be restored.
     KeptDeletions,
+    /// Collaboration is turned on (`[collaboration] enabled`), or a session is running. Front
+    /// ends hide such a command, rather than disable it, while it is unavailable.
+    Collaboration,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -359,6 +359,14 @@ impl Default for PdfSettings {
     }
 }
 
+/// The `[collaboration]` table, user settings only: whether Share Workspace…, Join Session… and
+/// the other collaboration commands are offered. Off by default: until it is on, nothing about
+/// collaboration shows in the menus or the palette, and nothing listens or connects.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CollaborationSettings {
+    pub enabled: bool,
+}
+
 /// The `[quality]` table: whether the documentation quality audit is kept current, and the
 /// policy it is judged by (`fail_on`, `require_complete`, `[quality.rules]`,
 /// `[[quality.exclusions]]` and the optional `providers`). Both layers may set it: a rule's
@@ -480,6 +488,7 @@ pub struct Settings {
     pub spelling: SpellingSettings,
     pub graph: GraphSettings,
     pub quality: QualitySettings,
+    pub collaboration: CollaborationSettings,
     pub templates: TemplateSettings,
     /// Problems found while loading, such as unknown keys. Shown once by the front end.
     pub warnings: Vec<String>,
@@ -1208,6 +1217,7 @@ impl Settings {
                 };
             }
             ("quality", "enabled") => self.quality.enabled = boolean(value)?,
+            ("collaboration", "enabled") => self.collaboration.enabled = boolean(value)?,
             ("quality", "fail_on") => {
                 self.quality.policy.fail_on = value
                     .as_str()
@@ -1431,6 +1441,7 @@ fn is_known(section: &str, key: &str) -> bool {
                 "theme" | "themes_dir" | "fonts_dir" | "site_url" | "standards"
             )
             | ("updates", "check")
+            | ("collaboration", "enabled")
             | (
                 "quality",
                 "enabled" | "fail_on" | "require_complete" | "rules" | "exclusions" | "providers"
@@ -1523,6 +1534,29 @@ fn read_table(path: &Path) -> Result<Option<toml::Table>, EngineError> {
 
 #[cfg(test)]
 mod tests {
+
+    /// `[collaboration] enabled` is off by default and the user's alone to turn on: a workspace
+    /// file someone else wrote cannot offer sharing.
+    #[test]
+    fn collaboration_is_turned_on_by_the_user_only() {
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("settings.toml");
+        fs::write(&user, "[collaboration]\nenabled = true\n").unwrap();
+        let settings = Settings::load(Some(&user), None).unwrap();
+        assert!(settings.collaboration.enabled);
+        assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
+
+        fs::write(&user, "").unwrap();
+        fs::write(
+            directory.path().join(WORKSPACE_SETTINGS_FILE),
+            "[collaboration]\nenabled = true\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), Some(directory.path())).unwrap();
+        assert!(!settings.collaboration.enabled);
+        assert!(settings.warnings[0].contains("can only be set in the user settings file"));
+    }
+
     use super::*;
 
     #[test]

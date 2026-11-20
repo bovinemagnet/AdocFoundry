@@ -11971,7 +11971,11 @@ fn collab_share_needs_confirmation(cx: &mut TestAppContext) {
     let directory = tempfile::tempdir().unwrap();
     let root = adoc_index::normalize_path(directory.path());
     std::fs::write(root.join("page.adoc"), "= Page\n").unwrap();
-    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    // As the app reads it: from the user settings file, which opening a folder reads again.
+    let user = directory.path().join("settings.toml");
+    std::fs::write(&user, "[collaboration]\nenabled = true\n").unwrap();
+    let settings = Settings::load(Some(&user), None).unwrap().with_git_opt_in();
+    let mut engine = Engine::new(settings);
     engine.open_workspace(vec![root.clone()]).unwrap();
     assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
     let app = app_with(engine, cx);
