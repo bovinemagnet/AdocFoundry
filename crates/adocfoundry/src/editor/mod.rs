@@ -19,9 +19,9 @@ use adoc_engine::{
     commands::ids, CommandArgs, CommandId, CommandOutcome, DocumentId, EngineEvent, ImageSource,
 };
 use gpui::{
-    div, prelude::FluentBuilder as _, relative, AppContext as _, Context, Entity,
-    EntityInputHandler as _, FocusHandle, Focusable, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, Styled as _, Subscription, Window,
+    div, prelude::FluentBuilder as _, relative, AppContext as _, Context, Entity, FocusHandle,
+    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _,
+    Subscription, Window,
 };
 use gpui_component::{
     highlighter::{Diagnostic, DiagnosticSeverity as WidgetSeverity},
@@ -146,8 +146,6 @@ pub struct SourceEditorView {
     readonly: bool,
     /// Read-only because the page is shared and this participant may not edit it now.
     shared_readonly: bool,
-    /// A change from elsewhere waits for an input method's composition to end.
-    deferred: bool,
     caret: Option<usize>,
     /// The widget's scroll offset as last drawn, which the change markers follow.
     scroll: Option<gpui::Point<gpui::Pixels>>,
@@ -303,41 +301,29 @@ impl SourceEditorView {
             }
         }));
 
-        subscriptions.push(
-            cx.observe_in(&state, window, |this: &mut Self, state, window, cx| {
-                // A change from elsewhere held back during a composition goes in once it ends.
-                if this.deferred
-                    && state
-                        .update(cx, |state, cx| state.marked_text_range(window, cx))
-                        .is_none()
-                {
-                    this.deferred = false;
-                    this.reconcile(window, cx);
-                }
-                let (caret, scroll) = {
-                    let state = state.read(cx);
-                    (state.cursor(), state.scroll_offset())
-                };
-                let moved = this.caret != Some(caret);
-                if moved {
-                    this.caret = Some(caret);
-                    cx.emit(SourceEditorEvent::CaretMoved(caret));
-                }
-                // The change markers follow the editor's scrolling; nothing else here changes with
-                // the widget's state, which redraws itself.
-                if moved || this.scroll != Some(scroll) {
-                    this.scroll = Some(scroll);
-                    cx.notify();
-                }
-            }),
-        );
+        subscriptions.push(cx.observe(&state, |this: &mut Self, state, cx| {
+            let (caret, scroll) = {
+                let state = state.read(cx);
+                (state.cursor(), state.scroll_offset())
+            };
+            let moved = this.caret != Some(caret);
+            if moved {
+                this.caret = Some(caret);
+                cx.emit(SourceEditorEvent::CaretMoved(caret));
+            }
+            // The change markers follow the editor's scrolling; nothing else here changes with
+            // the widget's state, which redraws itself.
+            if moved || this.scroll != Some(scroll) {
+                this.scroll = Some(scroll);
+                cx.notify();
+            }
+        }));
 
         let mut view = Self {
             app,
             document,
             readonly,
             shared_readonly: false,
-            deferred: false,
             caret: None,
             scroll: None,
             own_versions: std::collections::BTreeSet::new(),
@@ -623,15 +609,6 @@ impl SourceEditorView {
     /// Applies the engine's text to the widget when they differ, as one replacement, keeping
     /// the selection on the text it was on.
     fn reconcile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Replacing text ends an input method's composition: wait for it to end instead.
-        if self
-            .state
-            .update(cx, |state, cx| state.marked_text_range(window, cx))
-            .is_some()
-        {
-            self.deferred = true;
-            return;
-        }
         let Some(engine_text) = self
             .app
             .read(cx)
