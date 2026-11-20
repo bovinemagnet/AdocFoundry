@@ -101,6 +101,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "collab_frame"
+path = "fuzz_targets/collab_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "collab_update"
 path = "fuzz_targets/collab_update.rs"
 test = false

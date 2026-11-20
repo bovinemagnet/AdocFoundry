@@ -1,0 +1,930 @@
+//! The session protocol, version 1 (design §8): the messages host and guests exchange, their
+//! frames, and the limits each is held to. No network: the transport reads and writes frames,
+//! and the engine reads and writes messages.
+//!
+//! A frame is a 4-byte big-endian length (at most [`MAX_FRAME`]), then a 1-byte kind, a 2-byte
+//! big-endian length of the control part and the control part as JSON, then any binary payload
+//! (an update, a state vector or a selection). Everything read is untrusted: [`decode`] refuses an
+//! unknown kind, malformed or unexpected JSON, a field outside its limit and a payload where none
+//! belongs, and the transport closes the connection on any of them.
+
+use std::{fmt, time::Duration};
+
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+
+use crate::{EncodedUpdate, RelativeSelection, StateVectorBytes, MAX_ANCHOR, MAX_UPDATE};
+
+/// The one protocol version this build speaks.
+pub const PROTOCOL_VERSION: u16 = 1;
+/// The largest control part: its length is two bytes.
+pub const MAX_CONTROL: usize = u16::MAX as usize;
+/// The largest frame after its length prefix: room for [`MAX_UPDATE`] and a control part.
+pub const MAX_FRAME: usize = MAX_UPDATE + (64 << 10);
+/// The most files one guest may have open.
+pub const MAX_OPEN_FILES: usize = 64;
+/// The most participants in a session, the host included. Version 1 admits one guest.
+pub const MAX_PARTICIPANTS: usize = 8;
+/// The most frames waiting to be sent to one peer.
+pub const MAX_QUEUED_FRAMES: usize = 1024;
+/// The most bytes waiting to be sent to one peer.
+pub const MAX_QUEUED_BYTES: usize = 16 << 20;
+/// The most files a manifest lists.
+pub const MAX_MANIFEST_FILES: usize = 100_000;
+/// The most files one `Manifest` message lists, so its control part stays within
+/// [`MAX_CONTROL`] whatever the paths, each escaped at worst to twice its length: a long
+/// manifest is sent in parts.
+pub const MANIFEST_PART: usize = 24;
+/// The longest display path, in bytes.
+pub const MAX_PATH: usize = 1024;
+/// The longest display name, in bytes.
+pub const MAX_NAME: usize = 64;
+/// The longest free text: a reason, a message or the application's version.
+pub const MAX_TEXT: usize = 512;
+/// How long an invitation stays valid.
+pub const INVITE_LIFETIME: Duration = Duration::from_secs(10 * 60);
+/// How long a connection may take from accepting it to its `Authenticate`.
+pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// How often a quiet link sends a heartbeat.
+pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
+/// How long a link may stay silent before it is down.
+pub const LINK_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// A random 256-bit value: an invitation's secret or a resume token. Its `Debug` hides it, so
+/// it is never logged by accident.
+#[derive(Clone, Eq, PartialEq)]
+pub struct Secret(pub [u8; 32]);
+
+impl fmt::Debug for Secret {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("Secret(..)")
+    }
+}
+
+impl Secret {
+    /// The secret as 64 lowercase hexadecimal digits.
+    #[must_use]
+    pub fn to_hex(&self) -> String {
+        hex(&self.0)
+    }
+
+    /// The secret written as 64 hexadecimal digits.
+    #[must_use]
+    pub fn from_hex(text: &str) -> Option<Self> {
+        unhex::<32>(text).map(Self)
+    }
+}
+
+impl Serialize for Secret {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> Deserialize<'de> for Secret {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Self::from_hex(&text).ok_or_else(|| serde::de::Error::custom("not a secret"))
+    }
+}
+
+/// A session's identity: 128 random bits, per Share.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SessionId(pub [u8; 16]);
+
+impl Serialize for SessionId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&hex(&self.0))
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        unhex::<16>(&text)
+            .map(Self)
+            .ok_or_else(|| serde::de::Error::custom("not a session id"))
+    }
+}
+
+/// A participant in a session. The host is 0; the host numbers guests from 1 and never reuses
+/// a number in a session.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PeerId(pub u32);
+
+impl PeerId {
+    pub const HOST: Self = Self(0);
+}
+
+/// What a participant may do.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    /// The host.
+    Owner,
+    /// A guest who may edit and ask for saves.
+    Editor,
+    /// A guest who may only read. Every guest joins as one.
+    Viewer,
+}
+
+/// What a shared file is.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileKind {
+    Page,
+    Partial,
+}
+
+/// One file a manifest offers.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestFile {
+    /// The host's opaque number for the file in this session.
+    pub file: u64,
+    /// The path from the shared root, with `/`; for showing only, never for finding a file.
+    pub path: String,
+    pub kind: FileKind,
+    /// The text's length in bytes when the manifest was made.
+    pub size: u64,
+}
+
+/// How a credential proves who is connecting.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum Credential {
+    /// An invitation's secret, used once.
+    Invitation(Secret),
+    /// The resume token of an earlier connection in the same session.
+    Resume(Secret),
+}
+
+/// What became of a guest's save request.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum SaveOutcome {
+    Saved { revision: String },
+    Queued,
+    Conflict,
+    PermissionDenied,
+    Failed { reason: String },
+}
+
+/// Why a message was refused or a connection closed. Stable: front ends show them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    /// No protocol version in common.
+    Incompatible,
+    /// The credential was wrong, used or expired, or the host chose Deny.
+    Denied,
+    /// A message out of place, malformed or over a limit.
+    Protocol,
+    /// The peer did not keep up with what was sent to it.
+    Slow,
+    /// The peer's role does not allow the request.
+    Unauthorised,
+    /// The file's epoch has moved on: open it again.
+    Stale,
+    /// The host stopped sharing, or removed the peer.
+    Closed,
+    /// The link was silent for too long, or the handshake took too long.
+    TimedOut,
+}
+
+/// A protocol message (design §8).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Message {
+    /// The versions the sender speaks; the host's answer names the one chosen.
+    Hello {
+        min: u16,
+        max: u16,
+        app: String,
+    },
+    /// A guest's credential and display name.
+    Authenticate {
+        credential: Credential,
+        name: String,
+    },
+    /// The host's welcome after Admit: who the guest is, its role, the session, and the token
+    /// that resumes the connection if it drops.
+    Join {
+        peer: PeerId,
+        role: Role,
+        session: SessionId,
+        resume: Secret,
+    },
+    /// Part of the files offered; `more` until the last part.
+    Manifest {
+        files: Vec<ManifestFile>,
+        more: bool,
+    },
+    OpenFile {
+        file: u64,
+    },
+    CloseFile {
+        file: u64,
+    },
+    /// A file's whole state for its epoch, and the client id the receiver writes with in it.
+    Snapshot {
+        file: u64,
+        epoch: u32,
+        client: u64,
+        update: EncodedUpdate,
+    },
+    /// A change to a file; `seq` grows by one per sender, file and epoch on a connection.
+    Update {
+        file: u64,
+        epoch: u32,
+        seq: u64,
+        update: EncodedUpdate,
+    },
+    /// The host applied the guest's updates to `file` up to `seq`.
+    UpdateAck {
+        file: u64,
+        epoch: u32,
+        seq: u64,
+    },
+    /// The sender's selection in a file.
+    Awareness {
+        file: u64,
+        epoch: u32,
+        selection: RelativeSelection,
+    },
+    SaveRequest {
+        file: u64,
+        epoch: u32,
+        request: u64,
+    },
+    SaveResult {
+        request: u64,
+        outcome: SaveOutcome,
+    },
+    RoleChanged {
+        peer: PeerId,
+        role: Role,
+    },
+    /// The sender's state vector for a file: answered with what it lacks.
+    Resync {
+        file: u64,
+        epoch: u32,
+        state: StateVectorBytes,
+    },
+    Leave {
+        reason: String,
+    },
+    Error {
+        code: ErrorCode,
+        message: String,
+    },
+    Heartbeat,
+}
+
+/// Why bytes are not a frame of this protocol.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FrameError {
+    /// A frame, control part or field over its limit: the size given.
+    TooLarge(usize),
+    /// Too short for what it says it holds.
+    Truncated,
+    UnknownKind(u8),
+    /// The control part is not the JSON its kind expects.
+    Control(String),
+    /// A field outside what the protocol allows.
+    Invalid(&'static str),
+    /// A payload where its kind has none, or none where it needs one.
+    Payload,
+}
+
+impl fmt::Display for FrameError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooLarge(size) => write!(formatter, "{size} bytes is over the limit"),
+            Self::Truncated => formatter.write_str("the frame is truncated"),
+            Self::UnknownKind(kind) => write!(formatter, "unknown message kind {kind}"),
+            Self::Control(reason) => write!(formatter, "malformed control part: {reason}"),
+            Self::Invalid(field) => write!(formatter, "{field} is not allowed"),
+            Self::Payload => formatter.write_str("the payload does not fit the message"),
+        }
+    }
+}
+
+impl std::error::Error for FrameError {}
+
+/// The length a frame's 4-byte prefix announces, refused before anything is allocated when it
+/// is over [`MAX_FRAME`] or too short for a kind and a control length.
+pub fn frame_length(prefix: [u8; 4]) -> Result<usize, FrameError> {
+    let length = u32::from_be_bytes(prefix) as usize;
+    if length > MAX_FRAME {
+        return Err(FrameError::TooLarge(length));
+    }
+    if length < 3 {
+        return Err(FrameError::Truncated);
+    }
+    Ok(length)
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HelloControl {
+    min: u16,
+    max: u16,
+    app: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthenticateControl {
+    credential: Credential,
+    name: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JoinControl {
+    peer: PeerId,
+    role: Role,
+    session: SessionId,
+    resume: Secret,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestControl {
+    files: Vec<ManifestFile>,
+    more: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileControl {
+    file: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SnapshotControl {
+    file: u64,
+    epoch: u32,
+    client: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SequenceControl {
+    file: u64,
+    epoch: u32,
+    seq: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AwarenessControl {
+    file: u64,
+    epoch: u32,
+    /// The length of the anchor's encoding; the head's follows it in the payload.
+    anchor: u16,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SaveRequestControl {
+    file: u64,
+    epoch: u32,
+    request: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SaveResultControl {
+    request: u64,
+    outcome: SaveOutcome,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoleControl {
+    peer: PeerId,
+    role: Role,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EpochControl {
+    file: u64,
+    epoch: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeaveControl {
+    reason: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ErrorControl {
+    code: ErrorCode,
+    message: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmptyControl {}
+
+mod kind {
+    pub const HELLO: u8 = 1;
+    pub const AUTHENTICATE: u8 = 2;
+    pub const JOIN: u8 = 3;
+    pub const MANIFEST: u8 = 4;
+    pub const OPEN_FILE: u8 = 5;
+    pub const CLOSE_FILE: u8 = 6;
+    pub const SNAPSHOT: u8 = 7;
+    pub const UPDATE: u8 = 8;
+    pub const UPDATE_ACK: u8 = 9;
+    pub const AWARENESS: u8 = 10;
+    pub const SAVE_REQUEST: u8 = 11;
+    pub const SAVE_RESULT: u8 = 12;
+    pub const ROLE_CHANGED: u8 = 13;
+    pub const RESYNC: u8 = 14;
+    pub const LEAVE: u8 = 15;
+    pub const ERROR: u8 = 16;
+    pub const HEARTBEAT: u8 = 17;
+}
+
+impl Message {
+    /// The message as one frame, its length prefix first. Refuses what [`decode`] would refuse,
+    /// so nothing this side sends is closed on at the other.
+    pub fn encode(&self) -> Result<Vec<u8>, FrameError> {
+        self.check()?;
+        let (kind, control, payload): (u8, Vec<u8>, Vec<u8>) = match self {
+            Self::Hello { min, max, app } => (
+                kind::HELLO,
+                json(&HelloControl {
+                    min: *min,
+                    max: *max,
+                    app: app.clone(),
+                })?,
+                Vec::new(),
+            ),
+            Self::Authenticate { credential, name } => (
+                kind::AUTHENTICATE,
+                json(&AuthenticateControl {
+                    credential: credential.clone(),
+                    name: name.clone(),
+                })?,
+                Vec::new(),
+            ),
+            Self::Join {
+                peer,
+                role,
+                session,
+                resume,
+            } => (
+                kind::JOIN,
+                json(&JoinControl {
+                    peer: *peer,
+                    role: *role,
+                    session: *session,
+                    resume: resume.clone(),
+                })?,
+                Vec::new(),
+            ),
+            Self::Manifest { files, more } => (
+                kind::MANIFEST,
+                json(&ManifestControl {
+                    files: files.clone(),
+                    more: *more,
+                })?,
+                Vec::new(),
+            ),
+            Self::OpenFile { file } => (
+                kind::OPEN_FILE,
+                json(&FileControl { file: *file })?,
+                Vec::new(),
+            ),
+            Self::CloseFile { file } => (
+                kind::CLOSE_FILE,
+                json(&FileControl { file: *file })?,
+                Vec::new(),
+            ),
+            Self::Snapshot {
+                file,
+                epoch,
+                client,
+                update,
+            } => (
+                kind::SNAPSHOT,
+                json(&SnapshotControl {
+                    file: *file,
+                    epoch: *epoch,
+                    client: *client,
+                })?,
+                update.0.clone(),
+            ),
+            Self::Update {
+                file,
+                epoch,
+                seq,
+                update,
+            } => (
+                kind::UPDATE,
+                json(&SequenceControl {
+                    file: *file,
+                    epoch: *epoch,
+                    seq: *seq,
+                })?,
+                update.0.clone(),
+            ),
+            Self::UpdateAck { file, epoch, seq } => (
+                kind::UPDATE_ACK,
+                json(&SequenceControl {
+                    file: *file,
+                    epoch: *epoch,
+                    seq: *seq,
+                })?,
+                Vec::new(),
+            ),
+            Self::Awareness {
+                file,
+                epoch,
+                selection,
+            } => {
+                let mut payload = selection.anchor.clone();
+                payload.extend_from_slice(&selection.head);
+                (
+                    kind::AWARENESS,
+                    json(&AwarenessControl {
+                        file: *file,
+                        epoch: *epoch,
+                        anchor: selection.anchor.len() as u16,
+                    })?,
+                    payload,
+                )
+            }
+            Self::SaveRequest {
+                file,
+                epoch,
+                request,
+            } => (
+                kind::SAVE_REQUEST,
+                json(&SaveRequestControl {
+                    file: *file,
+                    epoch: *epoch,
+                    request: *request,
+                })?,
+                Vec::new(),
+            ),
+            Self::SaveResult { request, outcome } => (
+                kind::SAVE_RESULT,
+                json(&SaveResultControl {
+                    request: *request,
+                    outcome: outcome.clone(),
+                })?,
+                Vec::new(),
+            ),
+            Self::RoleChanged { peer, role } => (
+                kind::ROLE_CHANGED,
+                json(&RoleControl {
+                    peer: *peer,
+                    role: *role,
+                })?,
+                Vec::new(),
+            ),
+            Self::Resync { file, epoch, state } => (
+                kind::RESYNC,
+                json(&EpochControl {
+                    file: *file,
+                    epoch: *epoch,
+                })?,
+                state.0.clone(),
+            ),
+            Self::Leave { reason } => (
+                kind::LEAVE,
+                json(&LeaveControl {
+                    reason: reason.clone(),
+                })?,
+                Vec::new(),
+            ),
+            Self::Error { code, message } => (
+                kind::ERROR,
+                json(&ErrorControl {
+                    code: *code,
+                    message: message.clone(),
+                })?,
+                Vec::new(),
+            ),
+            Self::Heartbeat => (kind::HEARTBEAT, json(&EmptyControl {})?, Vec::new()),
+        };
+        if control.len() > MAX_CONTROL {
+            return Err(FrameError::TooLarge(control.len()));
+        }
+        let length = 3 + control.len() + payload.len();
+        if length > MAX_FRAME {
+            return Err(FrameError::TooLarge(length));
+        }
+        let mut frame = Vec::with_capacity(4 + length);
+        frame.extend_from_slice(&(length as u32).to_be_bytes());
+        frame.push(kind);
+        frame.extend_from_slice(&(control.len() as u16).to_be_bytes());
+        frame.extend_from_slice(&control);
+        frame.extend_from_slice(&payload);
+        Ok(frame)
+    }
+
+    /// Holds every field to its limit.
+    fn check(&self) -> Result<(), FrameError> {
+        match self {
+            Self::Hello { min, max, app } => {
+                if min > max || *min == 0 {
+                    return Err(FrameError::Invalid("versions"));
+                }
+                text(app, MAX_TEXT, "app")
+            }
+            Self::Authenticate { name, .. } => display_name(name),
+            Self::Join { peer, role, .. } => {
+                if *peer == PeerId::HOST || *role == Role::Owner {
+                    return Err(FrameError::Invalid("peer"));
+                }
+                Ok(())
+            }
+            Self::Manifest { files, .. } => {
+                if files.len() > MANIFEST_PART {
+                    return Err(FrameError::TooLarge(files.len()));
+                }
+                files.iter().try_for_each(|entry| display_path(&entry.path))
+            }
+            Self::Snapshot { client, update, .. } => {
+                if crate::ReplicaId::new(*client).is_none() {
+                    return Err(FrameError::Invalid("client"));
+                }
+                payload(&update.0, MAX_UPDATE)
+            }
+            Self::Update { update, .. } => payload(&update.0, MAX_UPDATE),
+            Self::Awareness { selection, .. } => {
+                if selection.anchor.len() > MAX_ANCHOR || selection.head.len() > MAX_ANCHOR {
+                    return Err(FrameError::TooLarge(
+                        selection.anchor.len().max(selection.head.len()),
+                    ));
+                }
+                Ok(())
+            }
+            Self::SaveResult {
+                outcome: SaveOutcome::Saved { revision: reason } | SaveOutcome::Failed { reason },
+                ..
+            } => text(reason, MAX_TEXT, "reason"),
+            Self::RoleChanged { role, .. } => {
+                if *role == Role::Owner {
+                    return Err(FrameError::Invalid("role"));
+                }
+                Ok(())
+            }
+            Self::Resync { state, .. } => payload(&state.0, MAX_UPDATE),
+            Self::Leave { reason } => text(reason, MAX_TEXT, "reason"),
+            Self::Error { message, .. } => text(message, MAX_TEXT, "message"),
+            Self::OpenFile { .. }
+            | Self::CloseFile { .. }
+            | Self::UpdateAck { .. }
+            | Self::SaveRequest { .. }
+            | Self::SaveResult { .. }
+            | Self::Heartbeat => Ok(()),
+        }
+    }
+}
+
+/// The message in one frame's bytes, after its length prefix ([`frame_length`]).
+pub fn decode(frame: &[u8]) -> Result<Message, FrameError> {
+    if frame.len() > MAX_FRAME {
+        return Err(FrameError::TooLarge(frame.len()));
+    }
+    let [kind, high, low, rest @ ..] = frame else {
+        return Err(FrameError::Truncated);
+    };
+    let control_len = u16::from_be_bytes([*high, *low]) as usize;
+    if rest.len() < control_len {
+        return Err(FrameError::Truncated);
+    }
+    let (control, payload) = rest.split_at(control_len);
+    let no_payload = |message: Message| {
+        if payload.is_empty() {
+            Ok(message)
+        } else {
+            Err(FrameError::Payload)
+        }
+    };
+    let message = match *kind {
+        kind::HELLO => {
+            let HelloControl { min, max, app } = read(control)?;
+            no_payload(Message::Hello { min, max, app })?
+        }
+        kind::AUTHENTICATE => {
+            let AuthenticateControl { credential, name } = read(control)?;
+            no_payload(Message::Authenticate { credential, name })?
+        }
+        kind::JOIN => {
+            let JoinControl {
+                peer,
+                role,
+                session,
+                resume,
+            } = read(control)?;
+            no_payload(Message::Join {
+                peer,
+                role,
+                session,
+                resume,
+            })?
+        }
+        kind::MANIFEST => {
+            let ManifestControl { files, more } = read(control)?;
+            no_payload(Message::Manifest { files, more })?
+        }
+        kind::OPEN_FILE => {
+            let FileControl { file } = read(control)?;
+            no_payload(Message::OpenFile { file })?
+        }
+        kind::CLOSE_FILE => {
+            let FileControl { file } = read(control)?;
+            no_payload(Message::CloseFile { file })?
+        }
+        kind::SNAPSHOT => {
+            let SnapshotControl {
+                file,
+                epoch,
+                client,
+            } = read(control)?;
+            Message::Snapshot {
+                file,
+                epoch,
+                client,
+                update: EncodedUpdate(needed(payload)?),
+            }
+        }
+        kind::UPDATE => {
+            let SequenceControl { file, epoch, seq } = read(control)?;
+            Message::Update {
+                file,
+                epoch,
+                seq,
+                update: EncodedUpdate(needed(payload)?),
+            }
+        }
+        kind::UPDATE_ACK => {
+            let SequenceControl { file, epoch, seq } = read(control)?;
+            no_payload(Message::UpdateAck { file, epoch, seq })?
+        }
+        kind::AWARENESS => {
+            let AwarenessControl {
+                file,
+                epoch,
+                anchor,
+            } = read(control)?;
+            let anchor = anchor as usize;
+            if anchor > payload.len() {
+                return Err(FrameError::Payload);
+            }
+            let (anchor, head) = payload.split_at(anchor);
+            Message::Awareness {
+                file,
+                epoch,
+                selection: RelativeSelection {
+                    anchor: anchor.to_vec(),
+                    head: head.to_vec(),
+                },
+            }
+        }
+        kind::SAVE_REQUEST => {
+            let SaveRequestControl {
+                file,
+                epoch,
+                request,
+            } = read(control)?;
+            no_payload(Message::SaveRequest {
+                file,
+                epoch,
+                request,
+            })?
+        }
+        kind::SAVE_RESULT => {
+            let SaveResultControl { request, outcome } = read(control)?;
+            no_payload(Message::SaveResult { request, outcome })?
+        }
+        kind::ROLE_CHANGED => {
+            let RoleControl { peer, role } = read(control)?;
+            no_payload(Message::RoleChanged { peer, role })?
+        }
+        kind::RESYNC => {
+            let EpochControl { file, epoch } = read(control)?;
+            Message::Resync {
+                file,
+                epoch,
+                state: StateVectorBytes(needed(payload)?),
+            }
+        }
+        kind::LEAVE => {
+            let LeaveControl { reason } = read(control)?;
+            no_payload(Message::Leave { reason })?
+        }
+        kind::ERROR => {
+            let ErrorControl { code, message } = read(control)?;
+            no_payload(Message::Error { code, message })?
+        }
+        kind::HEARTBEAT => {
+            let EmptyControl {} = read(control)?;
+            no_payload(Message::Heartbeat)?
+        }
+        other => return Err(FrameError::UnknownKind(other)),
+    };
+    message.check()?;
+    Ok(message)
+}
+
+fn json<T: Serialize>(control: &T) -> Result<Vec<u8>, FrameError> {
+    serde_json::to_vec(control).map_err(|error| FrameError::Control(error.to_string()))
+}
+
+fn read<T: DeserializeOwned>(control: &[u8]) -> Result<T, FrameError> {
+    serde_json::from_slice(control).map_err(|error| FrameError::Control(error.to_string()))
+}
+
+fn needed(payload: &[u8]) -> Result<Vec<u8>, FrameError> {
+    if payload.is_empty() {
+        return Err(FrameError::Payload);
+    }
+    Ok(payload.to_vec())
+}
+
+fn payload(bytes: &[u8], limit: usize) -> Result<(), FrameError> {
+    if bytes.is_empty() {
+        return Err(FrameError::Payload);
+    }
+    if bytes.len() > limit {
+        return Err(FrameError::TooLarge(bytes.len()));
+    }
+    Ok(())
+}
+
+fn text(value: &str, limit: usize, field: &'static str) -> Result<(), FrameError> {
+    if value.len() > limit {
+        return Err(FrameError::TooLarge(value.len()));
+    }
+    if value.chars().any(|c| c.is_control() && c != '\n') {
+        return Err(FrameError::Invalid(field));
+    }
+    Ok(())
+}
+
+/// A display name: one line of printable text, not empty, at most [`MAX_NAME`] bytes.
+fn display_name(name: &str) -> Result<(), FrameError> {
+    if name.trim().is_empty() || name.len() > MAX_NAME || name.chars().any(char::is_control) {
+        return Err(FrameError::Invalid("name"));
+    }
+    Ok(())
+}
+
+/// A display path: relative, `/`-separated, no empty, `.` or `..` part, no backslash, colon or
+/// control character, no part starting with a dot. A guest never finds a file by it; it is held
+/// to this so it can only be shown as what it says.
+pub fn display_path(path: &str) -> Result<(), FrameError> {
+    if path.is_empty() || path.len() > MAX_PATH {
+        return Err(FrameError::Invalid("path"));
+    }
+    let bad = path
+        .chars()
+        .any(|c| c.is_control() || c == '\\' || c == ':');
+    if bad
+        || path
+            .split('/')
+            .any(|part| part.is_empty() || part.starts_with('.'))
+    {
+        return Err(FrameError::Invalid("path"));
+    }
+    Ok(())
+}
+
+fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        text.push(DIGITS[(byte >> 4) as usize] as char);
+        text.push(DIGITS[(byte & 15) as usize] as char);
+    }
+    text
+}
+
+fn unhex<const N: usize>(text: &str) -> Option<[u8; N]> {
+    let digits = text.as_bytes();
+    if digits.len() != N * 2 {
+        return None;
+    }
+    let value = |digit: u8| match digit {
+        b'0'..=b'9' => Some(digit - b'0'),
+        b'a'..=b'f' => Some(digit - b'a' + 10),
+        _ => None,
+    };
+    let mut bytes = [0; N];
+    for (byte, pair) in bytes.iter_mut().zip(digits.as_chunks::<2>().0) {
+        *byte = (value(pair[0])? << 4) | value(pair[1])?;
+    }
+    Some(bytes)
+}

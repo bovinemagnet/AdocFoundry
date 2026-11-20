@@ -74,6 +74,8 @@ name = "adoc-collab"
 version = "0.13.0"
 dependencies = [
  "adoc-core",
+ "serde",
+ "serde_json",
  "yrs",
 ]
 

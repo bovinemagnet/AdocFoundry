@@ -22,6 +22,8 @@
 
 mod anchor;
 mod edit;
+mod link;
+pub mod protocol;
 mod replica;
 mod wire;
 
@@ -29,6 +31,7 @@ use std::time::Duration;
 
 pub use anchor::{Affinity, AwarenessThrottle, RelativeSelection};
 pub use edit::{apply_edits, check_boundaries, check_order, length_after, normalise, ByteEdit};
+pub use link::{Link, LinkError, LinkEvent};
 pub use replica::{
     authors, AppliedChange, ChangeOrigin, EncodedUpdate, Replica, ReplicaId, Sender,
     StateVectorBytes,
