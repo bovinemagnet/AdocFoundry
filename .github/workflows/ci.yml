@@ -87,6 +87,13 @@ jobs:
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
           df -h /
+      # The macOS runner fills up the same way once the collaboration crates' tests are added
+      # (ld: write() failed, errno=28): its Android SDK, .NET and CodeQL go first too.
+      - name: Free disk space
+        if: runner.os == 'macOS'
+        run: |
+          sudo rm -rf "$HOME/Library/Android" "$HOME/.dotnet" /usr/local/share/dotnet "$HOME/.ghcup" "$RUNNER_TOOL_CACHE/CodeQL"
+          df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -131,7 +138,7 @@ jobs:
       - run: cargo build -p adoc-ls
       - run: cargo build -p adoc-ls --all-features
       - name: Disk space left
-        if: always() && runner.os == 'Linux'
+        if: always() && runner.os != 'Windows'
         run: df -h /
 
   bench:
