@@ -75,6 +75,11 @@ Each action invokes a `collaboration.*` command; a command that needs the transp
 * A shared tab's name ends in "(shared)" for a guest, and the status bar shows the shared state of the active page.
 * A source editor follows `sync_readonly`, which makes the widget read only while the page is shared and this participant may not edit it.
 The engine refuses such edits whatever the widget does, so an edit the widget made anyway is reconciled at once, putting the engine's text back.
+* Other participants' carets are drawn by `show_presence` in `src/editor/mod.rs` from `Engine::peer_carets`, through the editor widget's decoration collections: a range collection holds a fill for each selection and a frame round the character at each caret, and a gutter collection holds a mark on each caret's line, each in the participant's colour.
+`share_selection` sends the editor's own selection to the engine, which paces it.
+`peer_colour` in `src/collaboration.rs` takes the colour from the theme's chart colours by peer number, the host's being the first, and the Session panel uses it too (`swatch`), with `caret_place` giving "page.adoc, line N", so colour is never the only cue.
+* `reconcile` keeps an input method's composition in progress through a change from elsewhere that leaves its place alone, and marks it again where the change moved it; a change inside the composition ends it, the engine's text winning.
+`send_widget_edit` does not send an edit that changes nothing, such as a composition marked again in place, and narrows a commit that reaches past the engine's text.
 
 See xref:developer:engine.adoc#collaborative-session[the session] for the commands, and xref:ROOT:collaboration.adoc[Working together] for the user's view.
 

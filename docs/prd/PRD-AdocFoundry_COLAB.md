@@ -388,6 +388,16 @@ Share, Join and the Session panel in the app; presence and remote carets are par
   - **Suggested changes** (#763). Edits held aside until accepted or rejected, which would give Viewers a use beyond reading; this needs a model of pending changes over the shared text, with undo and overlapping suggestions settled.
 - **Not done here:** the manual checks with two instances of the app on one or two computers (Share, Join, roles, a drop and Reconnect, Stop Sharing) wait for the maintainer.
 
+### C6b (COLLAB 6/8 part b, #693)
+
+Presence and remote carets. Where it departs from #693 or the design:
+
+- **Presence is paced in the engine.** `Engine::share_selection` takes every change of the local selection and sends at most one `Awareness` per `AWARENESS_INTERVAL` for each file, the latest winning (`AwarenessThrottle`, its deadline in `next_due`); the host sends its own to every guest with the file open and forwards each guest's. `Engine::peer_carets` resolves the others' selections in the current text, with their names.
+- **Drawn with the widget's decorations.** gpui-component's editor keeps range and gutter decoration collections that follow its own edits: a participant's selection is a fill, the character at their caret is framed and their caret's line marked in the gutter, all in their colour (the theme's chart colours, `peer_colour`). Text labels with names are not drawn in the text; the Session panel names each participant beside their colour and says which page and line their caret is on, so colour is never the only cue.
+- **Source editor only.** The visual editor shows no remote carets yet.
+- **Compositions kept.** A change from elsewhere that leaves an input method's composition's place alone keeps it: the widget's text without the provisional composition is compared with the engine's, the change applied around it, and the composition marked again where the change moved it. A change reaching across its place ends it, the engine's text winning. The widget reports a committed composition as a replacement of its whole text, which is narrowed to what changed; an edit that changes nothing is not sent, since on a shared page it would still travel as a deletion and an insertion.
+- **Not done here:** the manual checks with two instances of the app (carets during fast typing, input methods on each platform) wait for the maintainer, with C6a's.
+
 ## 15. References
 
 - Epic #686.

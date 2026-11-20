@@ -156,6 +156,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Collaboration is off until `[collaboration] enabled = true` is in the user settings file; until then nothing about it shows in the menus or the palette, and nothing listens or connects.
 - File › Share Workspace… shares the first workspace folder's AsciiDoc pages and partials with people on your network, editing the same pages at once; the app is the server, with no account and no cloud. It shows what it would share and where it would listen (this computer only, or its local network address), and nothing listens until you choose. Copy Invitation puts a single-use invitation, valid for ten minutes, on the clipboard to send by a channel you trust. Whoever uses it compares a safety code with yours and waits for you to admit them, as a Viewer; the Session panel lets them edit, makes them a Viewer again, removes them, or stops sharing. Only you save the files; nothing about the workspace is sent before you admit someone.
 - File › Join Session… takes an invitation, checks that the host is the one it names before sending anything, and shows the safety code to compare. The host's pages open from the Session panel in tabs marked "(shared)": they are the host's files, never saved on your computer, and Save asks the host. The status bar says whether you may edit and whether the page is saved; if the connection drops you cannot edit until Reconnect brings it back.
+- In a shared page each participant's caret and selection show in the source editor in their own colour, with a mark in the gutter, following the text as anyone types; the Session panel names each one beside their colour and says which page and line their caret is on. An input method's composition carries on when someone else edits elsewhere in the page.
 
 **The link graph**
 
@@ -465,7 +466,7 @@ With `--http 127.0.0.1:8765` (any other loopback address, or port 0 for a free o
 - Editing included content in place, plugins.
 - Merging, rebasing, conflicts and history: use a Git client.
 - Accessible labels for the graph's nodes: GPUI has no accessibility tree yet.
-- In collaboration: other participants' carets and selections, keeping an input method's composition through a participant's edit, images for guests, and sharing beyond a local network or VPN.
+- In collaboration: other participants' carets in the visual editor, images for guests, and sharing beyond a local network or VPN.
 - Verified IME composition and frame timing on every platform, the packages on macOS and Windows, and the preview and the graph checked by hand on each platform: see [`docs/qa/phase7.md`](docs/qa/phase7.md), [`docs/qa/phase1.md`](docs/qa/phase1.md), [`docs/qa/phase2.md`](docs/qa/phase2.md), [`docs/qa/phase3.md`](docs/qa/phase3.md), [`docs/qa/phase4.md`](docs/qa/phase4.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).
 
 ## Developing

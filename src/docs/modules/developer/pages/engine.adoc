@@ -924,6 +924,20 @@ A guest keeps it, and `participants`, `session_workspace` and `session_me` read 
 `EngineEvent::PresenceChanged(DocumentId)` follows a change to the selections others have in a shared document (`peer_selections`), so a view can redraw them.
 `EngineEvent::SessionChanged` still follows changes to who is in and what they may do.
 
+==== Presence
+
+`share_selection(id, anchor, head)` shows this participant's selection in a shared document to the others.
+The offsets are bytes, and the engine turns them into a `RelativeSelection`, which follows the text through edits.
+Messages are paced by an `AwarenessThrottle` per shared file: one is sent at once, or when `AWARENESS_INTERVAL` (50 ms) has passed since the last, and a selection that has to wait is replaced by any later one, so the latest wins.
+`next_due` includes the deadline of a waiting selection, and `pump` sends it then.
+
+The host sends its own presence to each live guest that has the file open, and forwards each guest's selection to the others, with the guest's own peer id.
+A guest sends its selection to the host only.
+
+`peer_carets(id)` gives a `PeerCaret` (`peer`, `name`, `anchor`, `head`) for each other participant, resolved in the document's current text through `shared_resolve`, so it is correct after any edit.
+The name comes from the roster.
+`EngineEvent::PresenceChanged(id)` follows a change to the selections, and a view redraws from `peer_carets`.
+
 ==== What the host offers
 
 `host_session` checks every file before it offers any, and one that may not be offered refuses the whole call, so the host is never left sharing less than it chose without knowing.

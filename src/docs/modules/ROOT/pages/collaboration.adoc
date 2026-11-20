@@ -169,6 +169,26 @@ When you share on the local network, your operating system may ask whether to al
 Allow it for the network you are on, or guests cannot connect.
 Sharing on *This computer only* never needs this.
 
+== Seeing each other
+
+In a shared page, the source editor shows where the other participants are.
+Each person has a colour, the same in every view.
+
+* A selection is filled in the person's colour.
+* Their caret is a frame round the character it is on.
+* A mark in the gutter, in their colour, shows the line their caret is on.
+
+Colour is never the only sign of who is who.
+The *Session* panel names each participant, shows their colour and says where their caret is, for example "page.adoc, line 12".
+
+Carets follow the text.
+When anyone edits, the carets and selections after the edit move with the words they were on, so they stay in the right place.
+Your own caret and selection are sent to the others at most every 50 milliseconds, the latest one winning, so typing and moving about are never held up.
+When someone leaves, or their connection drops, their caret and selection disappear.
+
+If you are using an input method to compose text, such as Japanese or Chinese, or accents, your composition carries on when someone else edits elsewhere in the page.
+It is marked again where their edit moved it.
+
 == Sharing a session or sharing a repository
 
 There are two ways for people to work on the same documentation.
@@ -234,7 +254,7 @@ The others then pull.
 
 == What is not there yet
 
-* Other participants' carets and selections are not drawn. They are planned for the next part of the collaboration work.
+* Other participants' carets and selections are drawn in the source editor only, not yet in the visual editor.
 * Images and other media are not shared. A guest sees only the pages and partials the host offers.
 * There is no relay server, so sharing works across a local network or a VPN, not across the internet through a network you do not control.
 
