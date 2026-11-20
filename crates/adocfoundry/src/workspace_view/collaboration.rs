@@ -32,6 +32,35 @@ fn role_name(role: Role) -> &'static str {
     }
 }
 
+/// A participant's colour, as their caret is drawn in, beside their name.
+fn swatch(peer: PeerId, cx: &App) -> gpui::Div {
+    div()
+        .size_2()
+        .rounded_full()
+        .flex_none()
+        .bg(crate::collaboration::peer_colour(peer, cx))
+}
+
+/// Where `peer`'s caret is, said in words (` · page.adoc, line 12`), so their colour is never
+/// all that tells their caret apart; empty when it is in no open shared file.
+fn caret_place(engine: &adoc_engine::Engine, peer: PeerId) -> String {
+    engine
+        .session_manifest()
+        .iter()
+        .find_map(|entry| {
+            let id = engine.session_document(entry.file)?;
+            let caret = engine
+                .peer_carets(id)
+                .into_iter()
+                .find(|caret| caret.peer == peer)?;
+            let text = &engine.document(id)?.text;
+            let line =
+                text.byte_to_line_idx(caret.head.min(text.len()), ropey::LineType::LF_CR) + 1;
+            Some(format!(" · {}, line {line}", entry.path))
+        })
+        .unwrap_or_default()
+}
+
 /// How a shared file stands, said briefly, for the panel and the status bar.
 pub(super) fn save_state_label(state: &SharedSaveState) -> &'static str {
     match state {
@@ -558,10 +587,12 @@ impl WorkspaceView {
                     h_flex()
                         .gap_2()
                         .debug_selector(move || format!("session-participant-{}", peer.0))
+                        .child(swatch(peer, cx))
                         .child(div().flex_1().child(format!(
-                            "{} · {} · {status}",
+                            "{} · {} · {status}{}",
                             participant.name,
-                            role_name(participant.role)
+                            role_name(participant.role),
+                            caret_place(engine, peer)
                         )))
                         .child(action(
                             format!("session-role-{}", peer.0),
@@ -667,17 +698,30 @@ impl WorkspaceView {
                 );
                 for participant in participants {
                     let you = me.is_some_and(|(peer, _)| peer == participant.peer);
-                    panel = panel.child(div().text_xs().child(format!(
-                        "{}{} · {}{}",
-                        participant.name,
-                        if you { " (you)" } else { "" },
-                        role_name(participant.role),
-                        if participant.connected {
-                            ""
-                        } else {
-                            " · away"
-                        }
-                    )));
+                    let peer = participant.peer;
+                    panel = panel.child(
+                        h_flex()
+                            .gap_2()
+                            .text_xs()
+                            .debug_selector(move || format!("session-member-{}", peer.0))
+                            .when(!you, |row| row.child(swatch(peer, cx)))
+                            .child(format!(
+                                "{}{} · {}{}{}",
+                                participant.name,
+                                if you { " (you)" } else { "" },
+                                role_name(participant.role),
+                                if participant.connected {
+                                    ""
+                                } else {
+                                    " · away"
+                                },
+                                if you {
+                                    String::new()
+                                } else {
+                                    caret_place(engine, peer)
+                                }
+                            )),
+                    );
                 }
             }
             let manifest = engine.session_manifest();

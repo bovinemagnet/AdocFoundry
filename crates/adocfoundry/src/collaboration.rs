@@ -220,3 +220,18 @@ pub(crate) fn minutes_left(at: Instant) -> String {
         format!("valid for {} min more", left.as_secs().div_ceil(60))
     }
 }
+
+/// A participant's colour, from the theme's chart colours, the same in every view; the host's
+/// is the first. Never the only sign of who someone is: the Session panel names them.
+pub(crate) fn peer_colour(peer: adoc_engine::protocol::PeerId, cx: &gpui::App) -> gpui::Hsla {
+    use gpui_component::ActiveTheme as _;
+    let theme = cx.theme();
+    let colours = [
+        theme.chart_1,
+        theme.chart_2,
+        theme.chart_3,
+        theme.chart_4,
+        theme.chart_5,
+    ];
+    colours[peer.0 as usize % colours.len()]
+}

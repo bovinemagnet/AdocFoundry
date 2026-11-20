@@ -19,13 +19,17 @@ use adoc_engine::{
     commands::ids, CommandArgs, CommandId, CommandOutcome, DocumentId, EngineEvent, ImageSource,
 };
 use gpui::{
-    div, prelude::FluentBuilder as _, relative, AppContext as _, Context, Entity, FocusHandle,
-    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _,
-    Subscription, Window,
+    div, prelude::FluentBuilder as _, relative, AppContext as _, Context, Entity,
+    EntityInputHandler as _, FocusHandle, Focusable, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, Styled as _, Subscription, Window,
 };
 use gpui_component::{
     highlighter::{Diagnostic, DiagnosticSeverity as WidgetSeverity},
-    input::{Editor, EditorState, InputEdit, InputEditsEvent, RopeExt as _, TabSize},
+    input::{
+        Editor, EditorState, GutterDecoration, GutterDecorationCollection, InputEdit,
+        InputEditsEvent, RangeDecoration, RangeDecorationCollection, RangeDecorationStyle,
+        RopeExt as _, TabSize,
+    },
     native_menu::NativeMenu,
     ActiveTheme as _, WindowExt as _,
 };
@@ -81,8 +85,25 @@ fn send_widget_edit(
         return Ok(None);
     };
     let whole = open.text.len();
-    if edit.start_byte == 0 && edit.old_end_byte == whole && whole > 0 {
+    // A replacement of the whole text, or one reaching past the engine's (a composition
+    // committed: the widget held its provisional text, the engine did not), is narrowed to
+    // what changed.
+    if (edit.start_byte == 0 && edit.old_end_byte == whole && whole > 0)
+        || edit.old_end_byte > whole
+    {
         return Ok(sync_widget_to_engine(app, document, after, cx));
+    }
+    let replacement = after.slice(edit.start_byte..edit.new_end_byte).to_string();
+    // An edit that changes nothing (a composition marked again in place) is not sent: on a
+    // shared page it would still be sent to everyone as a deletion and an insertion.
+    let open = app.engine.document(document).map(|open| &open.text);
+    if open.is_some_and(|text| {
+        edit.old_end_byte <= text.len()
+            && text.is_char_boundary(edit.start_byte)
+            && text.is_char_boundary(edit.old_end_byte)
+            && text.slice(edit.start_byte..edit.old_end_byte) == replacement.as_str()
+    }) {
+        return Ok(None);
     }
     let command = if edit.old_end_byte == edit.start_byte {
         ids::EDIT_INSERT_TEXT
@@ -92,7 +113,7 @@ fn send_widget_edit(
     let args = CommandArgs::Text {
         id: document,
         range: SourceRange::new(edit.start_byte, edit.old_end_byte),
-        text: after.slice(edit.start_byte..edit.new_end_byte).to_string(),
+        text: replacement,
     };
     if let Err(error) = app.invoke(command, args, cx) {
         // Refused (a shared page this participant may not edit just now, or an edit the
@@ -146,6 +167,12 @@ pub struct SourceEditorView {
     readonly: bool,
     /// Read-only because the page is shared and this participant may not edit it now.
     shared_readonly: bool,
+    /// The other participants' carets and selections as drawn on a shared page, and this
+    /// participant's own as last shared.
+    presence: Option<Presence>,
+    /// The carets last drawn.
+    shown_carets: Vec<adoc_engine::PeerCaret>,
+    shared_selection: Option<(usize, usize)>,
     caret: Option<usize>,
     /// The widget's scroll offset as last drawn, which the change markers follow.
     scroll: Option<gpui::Point<gpui::Pixels>>,
@@ -166,6 +193,38 @@ pub struct SourceEditorView {
     _hover: Option<gpui::Task<()>>,
     _diagnostics: Option<gpui::Task<()>>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// Puts `replacement` in place of `range` of the widget's text, keeping the selection on the
+/// text it was on.
+fn apply_change(
+    state: &mut EditorState,
+    range: &std::ops::Range<usize>,
+    replacement: String,
+    window: &mut Window,
+    cx: &mut Context<EditorState>,
+) {
+    let selection = state.selected_range();
+    let inserted = replacement.len();
+    state.set_selected_range(range.clone(), cx);
+    state.replace(replacement, window, cx);
+    let mapped = |offset| sync::map_offset(offset, range, inserted);
+    state.set_selected_range(mapped(selection.start)..mapped(selection.end), cx);
+}
+
+/// Where the other participants' carets are drawn: decoration collections the widget keeps.
+#[derive(Clone)]
+struct Presence {
+    ranges: RangeDecorationCollection,
+    gutter: GutterDecorationCollection,
+}
+
+/// The end of the character at `offset`, so a gutter mark covers the caret's line however it
+/// stands; `offset` itself at the end of the text.
+fn around_end(text: &ropey::Rope, offset: usize) -> usize {
+    (offset + 1..=text.len())
+        .find(|end| text.is_char_boundary(*end))
+        .unwrap_or(offset)
 }
 
 /// Diagnostics are redrawn once typing pauses for this long, not on every keystroke.
@@ -277,8 +336,16 @@ impl SourceEditorView {
                         this.reconcile(window, cx);
                     }
                     this.sync_readonly(cx);
+                    // The others' carets moved with the text.
+                    this.show_presence(cx);
                 }
-                EngineEvent::SessionChanged => this.sync_readonly(cx),
+                EngineEvent::SessionChanged => {
+                    this.sync_readonly(cx);
+                    this.show_presence(cx);
+                }
+                EngineEvent::PresenceChanged(id) if *id == this.document => {
+                    this.show_presence(cx);
+                }
                 EngineEvent::GitHunksChanged(id) | EngineEvent::GitBlameChanged(id)
                     if *id == this.document =>
                 {
@@ -311,6 +378,7 @@ impl SourceEditorView {
                 this.caret = Some(caret);
                 cx.emit(SourceEditorEvent::CaretMoved(caret));
             }
+            this.share_selection(cx);
             // The change markers follow the editor's scrolling; nothing else here changes with
             // the widget's state, which redraws itself.
             if moved || this.scroll != Some(scroll) {
@@ -324,6 +392,9 @@ impl SourceEditorView {
             document,
             readonly,
             shared_readonly: false,
+            presence: None,
+            shown_carets: Vec::new(),
+            shared_selection: None,
             caret: None,
             scroll: None,
             own_versions: std::collections::BTreeSet::new(),
@@ -341,6 +412,90 @@ impl SourceEditorView {
         view.show_diagnostics(cx);
         view.sync_readonly(cx);
         view
+    }
+
+    /// Shows this participant's selection to the others on a shared page, when it changed: the
+    /// engine paces what it sends.
+    fn share_selection(&mut self, cx: &mut Context<Self>) {
+        let (range, caret) = {
+            let state = self.state.read(cx);
+            (state.selected_range(), state.cursor())
+        };
+        // The anchor is the end the caret is not at.
+        let anchor = if caret == range.start {
+            range.end
+        } else {
+            range.start
+        };
+        let selection = (anchor, caret);
+        if self.shared_selection == Some(selection) {
+            return;
+        }
+        let document = self.document;
+        if self.app.read(cx).engine.shared_file(document).is_none() {
+            return;
+        }
+        self.shared_selection = Some(selection);
+        self.app.update(cx, |app, _| {
+            app.engine.share_selection(document, anchor, caret);
+        });
+    }
+
+    /// Draws the other participants' carets and selections on a shared page, each in their own
+    /// colour: the selection filled, a frame round the character at the caret, and a mark in
+    /// the gutter. Their names are in the Session panel, so colour is never all that says who.
+    fn show_presence(&mut self, cx: &mut Context<Self>) {
+        let carets = self.app.read(cx).engine.peer_carets(self.document);
+        if carets.is_empty() && self.presence.is_none() {
+            return;
+        }
+        let presence = match &self.presence {
+            Some(presence) => presence.clone(),
+            None => {
+                let presence = self.state.update(cx, |state, cx| Presence {
+                    ranges: state.create_range_decorations_collection(Vec::new(), cx),
+                    gutter: state.create_gutter_decorations_collection(Vec::new(), cx),
+                });
+                self.presence = Some(presence.clone());
+                presence
+            }
+        };
+        let text = self.state.read(cx).text().clone();
+        let len = text.len();
+        let mut ranges = Vec::new();
+        let mut gutter = Vec::new();
+        for caret in &carets {
+            let colour = crate::collaboration::peer_colour(caret.peer, cx);
+            let (start, end) = (caret.anchor.min(caret.head), caret.anchor.max(caret.head));
+            if start < end && end <= len {
+                ranges.push(
+                    RangeDecoration::new(start..end)
+                        .with_style(RangeDecorationStyle::Fill)
+                        .with_color(colour.opacity(0.25)),
+                );
+            }
+            // The caret: the character after it, or before it at the end of the page.
+            let head = caret.head.min(len);
+            let next = (head + 1..=len)
+                .find(|offset| text.is_char_boundary(*offset))
+                .filter(|_| head < len);
+            let around = match next {
+                Some(next) => head..next,
+                None => (0..head)
+                    .rev()
+                    .find(|offset| text.is_char_boundary(*offset))
+                    .map_or(head..head, |previous| previous..head),
+            };
+            if !around.is_empty() {
+                ranges.push(RangeDecoration::new(around).with_color(colour));
+            }
+            gutter.push(
+                GutterDecoration::new(head..head.max(around_end(&text, head))).with_color(colour),
+            );
+        }
+        presence.ranges.set(ranges, cx);
+        presence.gutter.set(gutter, cx);
+        self.shown_carets = carets;
     }
 
     /// Makes the widget read-only while the page is shared and this participant may not edit
@@ -597,6 +752,12 @@ impl SourceEditorView {
         });
     }
 
+    /// The other participants' carets as last drawn, for tests.
+    #[cfg(test)]
+    pub fn shown_carets(&self) -> &[adoc_engine::PeerCaret] {
+        &self.shown_carets
+    }
+
     /// The first source line shown, for tests of scroll sync.
     #[cfg(test)]
     pub fn top_line(&self, cx: &gpui::App) -> Option<usize> {
@@ -621,17 +782,66 @@ impl SourceEditorView {
         // Whatever the widget made before is settled now.
         self.own_versions.clear();
         self.state.update(cx, |state, cx| {
-            if let Some((range, replacement)) = sync::diff(state.text(), &engine_text) {
-                adoc_core::probe::hit(adoc_core::probe::Probe::Reconcile);
-                let selection = state.selected_range();
-                let inserted = replacement.len();
-                state.set_selected_range(range.clone(), cx);
-                state.replace(replacement, window, cx);
-                let mapped = |offset| sync::map_offset(offset, &range, inserted);
-                state.set_selected_range(mapped(selection.start)..mapped(selection.end), cx);
-                // The widget reports this edit too, and the engine has it already.
-                self.synced.replace(Some(engine_text));
+            // An input method's composition in progress: provisional text the widget holds and
+            // the engine does not, until it is committed.
+            let composing = state.marked_text_range(window, cx).map(|utf16| {
+                let text = state.text();
+                let marked = text.offset_utf16_to_offset(utf16.start)
+                    ..text.offset_utf16_to_offset(utf16.end);
+                let composed = text.slice(marked.clone()).to_string();
+                (marked, composed)
+            });
+            match composing {
+                None => {
+                    let Some((range, replacement)) = sync::diff(state.text(), &engine_text) else {
+                        return;
+                    };
+                    adoc_core::probe::hit(adoc_core::probe::Probe::Reconcile);
+                    apply_change(state, &range, replacement, window, cx);
+                }
+                Some((marked, composed)) => {
+                    // The widget's text as the engine should have it: without the composition.
+                    let mut base = state.text().clone();
+                    base.remove(marked.clone());
+                    let Some((range, replacement)) = sync::diff(&base, &engine_text) else {
+                        return;
+                    };
+                    adoc_core::probe::hit(adoc_core::probe::Probe::Reconcile);
+                    // A replacement goes to the composition rather than the selection while it
+                    // lasts: end it, apply the change, and mark it again where the change moved
+                    // it, so the input method goes on. A change reaching across the
+                    // composition's place ends it, the engine's text winning.
+                    state.unmark_text(window, cx);
+                    let around = range.end <= marked.start || range.start >= marked.start;
+                    if around {
+                        let shift = if range.start >= marked.start {
+                            composed.len()
+                        } else {
+                            0
+                        };
+                        let range = range.start + shift..range.end + shift;
+                        let inserted = replacement.len();
+                        apply_change(state, &range, replacement, window, cx);
+                        let start = sync::map_offset(marked.start, &range, inserted);
+                        let text = state.text();
+                        let utf16 = text.offset_to_offset_utf16(start)
+                            ..text.offset_to_offset_utf16(start + composed.len());
+                        state.replace_and_mark_text_in_range(
+                            Some(utf16),
+                            &composed,
+                            None,
+                            window,
+                            cx,
+                        );
+                    } else if let Some((range, replacement)) =
+                        sync::diff(state.text(), &engine_text)
+                    {
+                        apply_change(state, &range, replacement, window, cx);
+                    }
+                }
             }
+            // The widget reports the change too, and the engine has it already.
+            self.synced.replace(Some(state.text().clone()));
         });
     }
 

@@ -12156,3 +12156,127 @@ fn collab_viewer_cannot_edit(cx: &mut TestAppContext) {
     assert_eq!(widget_text(&editor, &mut setup.cx), "// = Page\nok");
     assert!(setup.net.lock().unwrap().removed.is_empty());
 }
+
+/// The host's caret and selection are drawn in the guest's editor and follow the host's edits
+/// (PRD §10 `collab_remote_carets_follow_edits`); the guest's own selection reaches the host.
+#[gpui::test]
+fn collab_remote_carets_follow_edits(cx: &mut TestAppContext) {
+    let mut setup = guest_setup(cx);
+    let editor = setup.editor.clone();
+    let id = setup.host.session_document(1).unwrap();
+    setup.host.share_selection(id, 2, 6);
+    pump_both(&mut setup);
+    let shown = setup.cx.update(|_, cx| {
+        editor
+            .read(cx)
+            .shown_carets()
+            .iter()
+            .map(|caret| (caret.name.clone(), caret.anchor, caret.head))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(shown, [("Host".to_owned(), 2, 6)]);
+
+    // The host types before them: the selection moves with its text.
+    setup
+        .host
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(0, 0),
+                text: "// ".to_owned(),
+            },
+        )
+        .unwrap();
+    pump_both(&mut setup);
+    let shown = setup.cx.update(|_, cx| {
+        editor
+            .read(cx)
+            .shown_carets()
+            .first()
+            .map(|caret| (caret.anchor, caret.head))
+    });
+    assert_eq!(shown, Some((5, 9)));
+
+    // The guest's own caret reaches the host.
+    setup.cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(3, 3), window, cx)
+        });
+    });
+    setup.cx.run_until_parked();
+    pump_both(&mut setup);
+    let carets = setup.host.peer_carets(id);
+    assert_eq!(carets.len(), 1);
+    assert_eq!((carets[0].name.as_str(), carets[0].head), ("Ada", 3));
+}
+
+/// An input method's composition goes on through another participant's edit before it, marked
+/// again where the edit moved it, and commits to the right place for both.
+#[gpui::test]
+fn a_composition_survives_a_remote_edit_before_it(cx: &mut TestAppContext) {
+    use gpui::EntityInputHandler as _;
+
+    let mut setup = guest_setup(cx);
+    setup
+        .host
+        .set_peer_role(
+            adoc_engine::protocol::PeerId(1),
+            adoc_engine::protocol::Role::Editor,
+        )
+        .unwrap();
+    pump_both(&mut setup);
+    let editor = setup.editor.clone();
+    let state = setup
+        .cx
+        .update(|_, cx| editor.read(cx).state_for_test().clone());
+    // Ada starts composing at the end of the page.
+    setup.cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.set_selected_range(7..7, cx);
+            for stage in ["に", "にほ"] {
+                let marked = state.marked_text_range(window, cx);
+                state.replace_and_mark_text_in_range(marked, stage, None, window, cx);
+            }
+        });
+    });
+    setup.cx.run_until_parked();
+    pump_both(&mut setup);
+
+    // The host types at the start meanwhile.
+    let id = setup.host.session_document(1).unwrap();
+    setup
+        .host
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(0, 0),
+                text: "// ".to_owned(),
+            },
+        )
+        .unwrap();
+    pump_both(&mut setup);
+    assert_eq!(widget_text(&editor, &mut setup.cx), "// = Page\nにほ");
+    let marked = setup
+        .cx
+        .update(|window, cx| state.update(cx, |state, cx| state.marked_text_range(window, cx)));
+    assert_eq!(
+        marked,
+        Some(10..12),
+        "still composing, moved by the host's edit"
+    );
+
+    // Committed, the composition lands where it is, for both.
+    setup.cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            let marked = state.marked_text_range(window, cx);
+            state.replace_text_in_range(marked, "日本", window, cx);
+        });
+    });
+    setup.cx.run_until_parked();
+    pump_both(&mut setup);
+    assert_eq!(widget_text(&editor, &mut setup.cx), "// = Page\n日本");
+    assert_eq!(guest_text(&mut setup), "// = Page\n日本");
+    assert_eq!(host_text(&setup), "// = Page\n日本");
+}
