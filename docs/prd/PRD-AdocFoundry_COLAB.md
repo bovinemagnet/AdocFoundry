@@ -414,6 +414,32 @@ Several files, Antora scope and previews. Where it departs from #694 or the desi
 - **Diagnostics** on a guest's shared page are the parser's own, never the workspace's.
 - **Not done here:** navigation for guests, shared media and the manual checks with two instances.
 
+### C8 (COLLAB 8/8, #695)
+
+Convergence, security, performance and release QA. The record is `docs/qa/collab.md` (the coverage matrix, the security review, what runs across two processes, the manual checks) and `docs/qa/collab-performance.md`. Where it departs from #695 or the design:
+
+- **The simulation found six faults, all fixed with a regression test each** (`collab_simulation_converges`, `crates/adoc-engine/tests/collab_simulation.rs`):
+  - **Resuming across an epoch.** A guest away while the host reloaded a page never caught up: the host recorded the new epoch for a guest it could not send it to (`a_guest_away_through_a_new_epoch_catches_up`).
+  - **Edits waiting at a drop.** A guest's edit not yet sent when its link dropped was flushed after its resynchronisation request, so the host applied it after the snapshot that answered, and the guest lost it (`an_edit_waiting_when_the_link_drops_is_kept`).
+  - **Updates crossing a snapshot.** An update made before a snapshot in the same epoch could be applied after it, since numbers start again with each snapshot and a deletion names no author. `Message::Update` now carries `base`, the `client` of the snapshot it was made on (`a_duplicate_after_a_snapshot_is_discarded`).
+  - **An edit crossing a reload** was treated as a breach and its guest removed (`an_edit_crossing_a_reload_is_spent`).
+  - **A snapshot racing a resume.** A snapshot sent before the host had read the guest's return left the host waiting for a resynchronisation the guest never asked for (`a_snapshot_racing_a_resume_is_followed_by_a_resync`).
+  - **An update sent again after a reconnection,** its acknowledgement crossing it, removed the guest; one numbered below what the host expects is now discarded (`an_update_sent_again_after_a_reconnection_is_discarded`).
+- **The simulation's faults:**
+  - The schedule is generated before it runs, its positions fractions of the text, so a failing one is shrunk to the fewest steps that still fail.
+  - The in-memory link loses what either side sends while a guest's link is down, as a closed connection does (`Net::down`).
+  - A duplicated update may be refused, removing the guest, or discarded as stale. Either is right; convergence must hold.
+- **Undo is checked, redo is not.** An undo never takes away another participant's text. A redo may delete it again, as its author did.
+- **Two processes.** The guest is the test binary run again on an ignored test, since no shipped binary but the app carries collaboration (`collab_two_process_release_suite` in `adoc-share`). The rest of the matrix is held in process; `docs/qa/collab.md` names the tests.
+- **Performance.**
+  - Every budget is met but one: a remote update on a 1 MiB page takes about 5 ms against 50 µs, nearly all of it the replica's whole-text check after each remote update.
+  - Whether to keep or narrow that check is open.
+  - Bytes per edit are held on every run (`collab_update_sizes_stay_small`); CI times nothing.
+- **Packaging.**
+  - The macOS bundle says why it reaches the local network (`NSLocalNetworkUsageDescription`, `packaging/test_bundle.py`).
+  - The Flatpak manifest has no network permission, so collaboration is unavailable there until decided.
+- **Not done here:** the manual checks on three platforms; the two open decisions in `docs/qa/collab.md`.
+
 ## 15. References
 
 - Epic #686.

@@ -212,11 +212,50 @@ Your shared tabs stay open, but they are no longer shared and are not saved on y
 
 If the host stops sharing, the session ends in the same way.
 
+Edits you made just before the connection dropped, which had not yet reached the host, are sent again when you reconnect.
+Nothing you typed is lost by a short drop.
+
+There is one exception.
+If the host reloaded the page from disk, or started it again, while you were away, you start again from the host's new text.
+Edits of yours that had not reached the host are gone.
+The *Session* panel and the status bar show the host's text and save state as they are.
+
+The host having your edit is not the same as it being saved.
+"Saved" in the status bar means the host's file on disk holds the text.
+Until the host saves, edits are only in the shared text.
+
+== If something goes wrong
+
+The host's file on disk is the reference.
+A guest's tabs are never saved on the guest's computer.
+
+If a page looks wrong on a guest's side, for example it does not match what the host sees:
+
+. Copy anything you want to keep.
+. Choose *Leave Session*.
+. Join again with a new invitation.
+
+Your pages start again from the host's text.
+
+If the host's page looks wrong, the host can save it, stop sharing and check it as usual.
+After *Stop Sharing*, pages with unsaved changes stay open in tabs so they can be saved.
+Local history keeps earlier saves.
+
+If a file was changed on disk during a session, the status bar says "Changed on disk", and the host chooses which text to keep.
+See <<_what_the_status_bar_says,what the status bar says>>.
+
 == Firewalls
 
 When you share on the local network, your operating system may ask whether to allow AdocFoundry to accept incoming connections.
 Allow it for the network you are on, or guests cannot connect.
 Sharing on *This computer only* never needs this.
+
+The host listens on a port the operating system chooses each time you share.
+The invitation names it.
+Nothing listens while you are not sharing.
+
+On macOS, the first time you share on the local network, or join someone on it, macOS may ask whether AdocFoundry may find devices on your local network.
+Allow it, or the connection cannot be made.
 
 == Seeing each other
 
@@ -306,6 +345,7 @@ The others then pull.
 * Other participants' carets and selections are drawn in the source editor only, not yet in the visual editor.
 * Images and other media are not shared, and guests have no navigation (the trees of navigation files) for shared components.
 * There is no relay server, so sharing works across a local network or a VPN, not across the internet through a network you do not control.
+* The Flatpak package for Linux cannot share or join a session yet, because it has no network permission. Use another Linux package to collaborate.
 
 == Related
 

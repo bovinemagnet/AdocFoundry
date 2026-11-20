@@ -783,6 +783,101 @@ It is not evidence that a real input method works.
 Never add a test to `crates/adocfoundry` that needs a display when the behaviour can be tested in `adoc-engine`.
 In CI the application crate is built, and its tests are run only where the platform allows.
 
+== Collaboration tests
+
+Collaborative editing is tested at three levels: an in-memory session, a simulation, and two processes over TLS.
+
+=== The in-memory session
+
+`crates/adoc-engine/tests/collab_common/` runs a host and a guest engine over `adoc_collab::testing`'s `Net`.
+Every message goes between them as an encoded frame.
+
+* `drop_link` drops a link.
+It loses what was in flight, and everything either side sends until the guest resumes, as on a closed connection.
+* `hold_host` holds the host's deliveries.
+* `assert_no_host_paths` checks every frame and reason sent for the host's folder, on every settle.
+
+=== The simulation
+
+`crates/adoc-engine/tests/collab_simulation.rs` holds `collab_simulation_converges`.
+A host and two guests, each a whole engine, edit two pages from schedules generated from checked-in seeds.
+
+The operations are:
+
+* insertions and deletions in multi-byte text (two-, three- and four-byte characters, a combining mark, CRLF);
+* undo and redo;
+* one engine pumping out of step;
+* links dropping and resuming;
+* held deliveries;
+* role changes;
+* host saves;
+* a page reloaded from disk in a new epoch;
+* a duplicated update.
+
+After every step it checks that:
+
+* each engine's rope and replica agree;
+* a refused edit changes nothing;
+* an undo never takes away another participant's text;
+* a saved revision is the text on disk.
+
+Every connected participant must converge at each full settle and at the end.
+
+A failing schedule is shrunk to the fewest operations that still fail.
+The failure prints them with each replica's state vector, and never a secret.
+Each schedule once found is kept as a named test.
+
+`collab_simulation_soak` is ignored by default.
+Run it with the command below, starting from `ADOC_COLLAB_SEED` (default 1000).
+
+[source,sh]
+----
+cargo test --release -p adoc-engine --test collab_simulation -- --ignored
+----
+
+=== The two-process suite
+
+`crates/adoc-share/tests/two_process.rs` holds `collab_two_process_release_suite`.
+A host engine in the test and a guest engine in a second process meet over loopback TLS, with the fingerprint pinned.
+
+The guest process is the test binary run again on the ignored test `guest_process`.
+It does nothing unless the environment variable `ADOC_SHARE_GUEST_PROCESS` is set.
+This is because no shipped binary but the app may carry collaboration.
+
+The invitation goes to the guest on standard input, never on the command line.
+It answers on standard output, each answer a line containing `@ `.
+
+The suite covers:
+
+* the handshake and safety code;
+* the file listing;
+* two pages edited from both sides with Unicode;
+* acknowledgement;
+* revocation to Viewer;
+* reconnection in the same epoch;
+* the host stopping;
+* the guest ending cleanly and nothing listening afterwards.
+
+Every step is bounded at 30 seconds, and the guest is killed if the test fails.
+
+=== Costs
+
+`crates/adoc-share/tests/performance.rs` holds two tests.
+
+* `collab_update_sizes_stay_small` holds the bytes an edit sends to a bound on every run: one character at most 32 bytes, a pasted paragraph at most its length plus 32.
+CI gates on no wall-clock time.
+* `collab_performance_probe` is ignored and prints a table of timings over loopback.
+It is the source of `docs/qa/collab-performance.md` in the repository.
+
+[source,sh]
+----
+cargo test --release -p adoc-share --test performance -- --ignored --nocapture
+----
+
+=== Manual checks
+
+The manual checks are listed in `docs/qa/collab.md` in the repository, with the coverage matrix and the security review.
+
 [[fuzzing]]
 == Fuzzing
 

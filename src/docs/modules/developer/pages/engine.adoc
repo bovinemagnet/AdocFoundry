@@ -992,6 +992,23 @@ A guest that receives an update out of order, or that it cannot apply, asks for 
 
 A guest's update that leaves the host's replica waiting or wrong (`Rebuilt` or `NeedsResync`) drops that guest, and the host sends every guest with the file open a new snapshot in the new epoch.
 
+==== Stale updates and resuming
+
+* An `Update` from a guest names, as `base`, the `client` of the snapshot it was made on.
+The host discards an update whose epoch or base is not the peer's latest.
+It was sent before that snapshot, and the peer starts again from the snapshot without it.
+Numbers alone cannot tell, since they start again with each snapshot, and a change that only deletes names no author.
+* The host also discards, without removing the guest, an update from the document's previous epoch when the host has started the file again (reloaded or rebuilt) and not yet told the guest.
+The new snapshot follows in the same pump.
+* An update numbered below what the host expects was applied already.
+A guest sends again, after reconnecting, the updates after the first acknowledgement it receives, and an acknowledgement may cross them.
+The host discards such an update.
+One numbered above what the host expects is out of order, and the guest is removed.
+* A guest away when the host starts a file again in a new epoch keeps its old epoch recorded, so resuming sends it the new snapshot.
+A resynchronisation request from an earlier epoch is answered with a snapshot too.
+* A guest's resynchronisation sends its edits not yet sent first, so the snapshot answering holds them.
+* A snapshot that arrives while the guest is resuming is followed by a resynchronisation request, since the host may then answer with an acknowledgement and wait to be asked.
+
 ==== Saving and leaving
 
 A guest's `SaveRequest` is answered by the host with a `SaveOutcome`: `PermissionDenied` unless the guest is an Editor, `Stale` if the request names an epoch the file has moved on from, otherwise the result of the host saving the file (`Saved`, `Conflict` or `Failed`).
