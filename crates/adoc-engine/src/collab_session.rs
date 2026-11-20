@@ -196,6 +196,9 @@ struct GuestFile {
     hashed: std::cell::RefCell<Option<(u64, String)>>,
     /// Shown when it arrives: it was opened by following a link to it.
     show: bool,
+    /// The `client` of the snapshot this side's replica was last made from, which each update
+    /// sent names (`Message::Update::base`).
+    base: u64,
 }
 
 fn refused(message: &str) -> EngineError {
@@ -500,6 +503,19 @@ impl Engine {
         match self.collab_session.as_ref().map(|session| &session.side) {
             Some(Side::Guest(guest)) => guest.me,
             _ => None,
+        }
+    }
+
+    /// How many of this guest's changes to shared `file` the host has not yet acknowledged:
+    /// sent (or waiting to be sent) and not known to be applied there.
+    #[must_use]
+    pub fn session_unacknowledged(&self, file: u64) -> usize {
+        match self.collab_session.as_ref().map(|session| &session.side) {
+            Some(Side::Guest(guest)) => guest
+                .files
+                .get(&file)
+                .map_or(0, |state| state.unacked.len()),
+            _ => 0,
         }
     }
 
@@ -1143,19 +1159,20 @@ impl Engine {
                 file,
                 epoch,
                 seq,
+                base,
                 update,
-            } => self.host_update(session, peer, file, epoch, seq, &update),
+            } => self.host_update(session, peer, file, (epoch, base), seq, &update),
             Message::Awareness {
                 file,
                 epoch,
                 selection,
                 ..
             } => self.host_awareness(session, peer, file, epoch, selection),
-            Message::Resync { file, epoch, .. } => {
-                let current = self.host_file_state(session, peer, file)?.epoch;
-                if current == epoch {
-                    self.host_snapshot(session, peer, file);
-                }
+            Message::Resync { file, .. } => {
+                // In the current epoch or one before: either way the peer starts again from
+                // the host's text. One behind lost a snapshot in flight.
+                self.host_file_state(session, peer, file)?;
+                self.host_snapshot(session, peer, file);
                 Ok(())
             }
             Message::SaveRequest {
@@ -1308,6 +1325,17 @@ impl Engine {
             .get_mut(&file)
             .map(|offered| std::mem::replace(&mut offered.epoch, epoch) != epoch)
             .unwrap_or(false);
+        let Some(entry) = host.peers.get_mut(&peer) else {
+            return;
+        };
+        if !entry.connected {
+            // Away: what it has stays recorded, in its old epoch, so that resuming sends it
+            // this snapshot (`host_resume_file`).
+            if moved {
+                self.host_epoch_moved(session, file, Some(peer));
+            }
+            return;
+        }
         let client = fresh_client(&mut host.clients);
         let Some(entry) = host.peers.get_mut(&peer) else {
             return;
@@ -1378,7 +1406,7 @@ impl Engine {
         session: &mut Session,
         peer: PeerId,
         file: u64,
-        epoch: u32,
+        (epoch, base): (u32, u64),
         seq: u64,
         update: &EncodedUpdate,
     ) -> Result<(), String> {
@@ -1422,14 +1450,26 @@ impl Engine {
             .get(&file)
             .and_then(|offered| offered.document)
             .ok_or("a file the peer has not opened")?;
+        if self
+            .shared_file(id)
+            .is_some_and(|(_, current, _)| current != epoch)
+        {
+            // The host started the file again (reloaded from disk, or rebuilt) and has not yet
+            // told the peer, which wrote this in the epoch before: its snapshot follows in this
+            // pump (`host_flush`).
+            return Ok(());
+        }
         let role = host.peers.get(&peer).map(|entry| entry.role);
         let state = host
             .peers
             .get_mut(&peer)
             .and_then(|entry| entry.files.get_mut(&file))
             .ok_or("a file the peer has not opened")?;
-        if state.epoch != epoch {
-            // Sent before the peer had the new epoch's snapshot.
+        if state.epoch != epoch || state.client.get() != base {
+            // Sent before the peer had the new epoch's snapshot, or the latest snapshot in this
+            // epoch: the peer starts again from that snapshot, without this change. Numbers
+            // alone cannot tell, since they start again with each snapshot, and a change that
+            // only deletes names no author.
             return Ok(());
         }
         if state.barrier {
@@ -1437,6 +1477,12 @@ impl Engine {
                 return Ok(());
             }
             state.barrier = false;
+        }
+        if seq < state.next_in {
+            // Applied already: sent again after a reconnection, its acknowledgement having
+            // crossed it, as happens when the link comes back before the host has read what
+            // came before.
+            return Ok(());
         }
         if seq != state.next_in {
             return Err(format!("update {seq} out of order"));
@@ -1511,6 +1557,7 @@ impl Engine {
                 file,
                 epoch: state.epoch,
                 seq: state.next_out,
+                base: 0,
                 update: update.clone(),
             };
             state.next_out += 1;
@@ -1823,6 +1870,7 @@ impl Engine {
                 epoch,
                 seq,
                 update,
+                ..
             } => {
                 self.guest_update(session, file, epoch, seq, &update);
                 false
@@ -1961,9 +2009,15 @@ impl Engine {
                 state.conflict = false;
                 state.next_in = 1;
                 state.next_out = 1;
+                state.base = client;
                 state.unacked.clear();
                 state.waiting = false;
-                state.resuming = false;
+                if std::mem::take(&mut state.resuming) {
+                    // Sent before the host knew the link had come back, it may be answered by
+                    // an acknowledgement after which the host waits to be asked: ask now.
+                    self.guest_resync(session, file);
+                    return;
+                }
             }
             Err(_) => {
                 // A snapshot this side cannot use: ask again.
@@ -2017,12 +2071,38 @@ impl Engine {
 
     /// Asks the host to resynchronise `file`, refusing edits to it until the answer.
     fn guest_resync(&mut self, session: &mut Session, file: u64) {
+        // Changes made here and not yet sent go first, so that the snapshot answering holds
+        // them rather than the host applying them after it.
+        let pending = match &session.side {
+            Side::Guest(guest) => guest.files.get(&file).and_then(|state| state.document),
+            Side::Host(_) => None,
+        }
+        .map(|id| self.take_shared_updates(id))
+        .unwrap_or_default();
         let Side::Guest(guest) = &mut session.side else {
             return;
         };
+        let connected = guest.connected;
         let Some(state) = guest.files.get_mut(&file) else {
             return;
         };
+        for update in pending {
+            let seq = state.next_out;
+            state.next_out += 1;
+            state.unacked.push_back((seq, update.clone()));
+            if connected && !state.resuming {
+                let _ = session.link.send(
+                    PeerId::HOST,
+                    Message::Update {
+                        file,
+                        epoch: state.epoch,
+                        seq,
+                        base: state.base,
+                        update,
+                    },
+                );
+            }
+        }
         state.waiting = true;
         let epoch = state.epoch;
         if let Some(vector) = state
@@ -2047,13 +2127,16 @@ impl Engine {
         let Side::Guest(guest) = &mut session.side else {
             return;
         };
-        let Some(state) = guest
-            .files
-            .get_mut(&file)
-            .filter(|state| state.epoch == epoch)
-        else {
+        let Some(state) = guest.files.get_mut(&file) else {
             return;
         };
+        if state.epoch != epoch {
+            // The host is in another epoch: resuming, this side missed its snapshot.
+            if std::mem::take(&mut state.resuming) {
+                self.guest_resync(session, file);
+            }
+            return;
+        }
         while state.unacked.front().is_some_and(|(sent, _)| *sent <= seq) {
             state.unacked.pop_front();
         }
@@ -2066,6 +2149,7 @@ impl Engine {
                         file,
                         epoch,
                         seq: *sent,
+                        base: state.base,
                         update: update.clone(),
                     },
                 );
@@ -2100,11 +2184,8 @@ impl Engine {
                 continue;
             };
             if guest.indexed.get(&id).map(|(version, _)| *version) != Some(document.version) {
-                let parsed = adoc_parser::parse(
-                    &crate::document::uri_for(&document.path),
-                    &document.text.to_string(),
-                )
-                .document;
+                // The document's own parse, shared with whatever else reads this version.
+                let parsed = document.parsed().clone();
                 guest.shared.index.replace(document.path.clone(), parsed);
                 guest
                     .indexed
@@ -2154,6 +2235,7 @@ impl Engine {
                             file,
                             epoch: state.epoch,
                             seq,
+                            base: state.base,
                             update,
                         },
                     );

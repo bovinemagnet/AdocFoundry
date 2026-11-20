@@ -293,6 +293,7 @@ fn collab_stale_epoch_is_refused() {
             file: 1,
             epoch: 1,
             seq: 1,
+            base: 0,
             update: EncodedUpdate(vec![0, 0]),
         },
     );

@@ -25,6 +25,9 @@ pub struct Net {
     pub admitted: Vec<PeerId>,
     /// While set, the host reads nothing: what guests send stays in flight.
     pub hold_host: bool,
+    /// Guests whose link is down: what either side sends between them is lost, as on a
+    /// connection that has gone, until the guest resumes.
+    pub down: std::collections::BTreeSet<PeerId>,
 }
 
 /// `message` as the other side reads it: encoded as a frame and decoded again.
@@ -50,6 +53,9 @@ impl Link for HostLink {
         let message = wire(message);
         let mut net = self.0.lock().unwrap();
         net.sent.entry(peer).or_default().push(message.clone());
+        if net.down.contains(&peer) {
+            return Ok(());
+        }
         net.to_guest
             .entry(peer)
             .or_default()
@@ -113,14 +119,14 @@ impl Link for GuestLink {
 
     fn send(&mut self, _: PeerId, message: Message) -> Result<(), LinkError> {
         let message = wire(message);
-        self.net
-            .lock()
-            .unwrap()
-            .to_host
-            .push_back(LinkEvent::Message {
-                peer: self.me,
-                message,
-            });
+        let mut net = self.net.lock().unwrap();
+        if net.down.contains(&self.me) {
+            return Ok(());
+        }
+        net.to_host.push_back(LinkEvent::Message {
+            peer: self.me,
+            message,
+        });
         Ok(())
     }
 

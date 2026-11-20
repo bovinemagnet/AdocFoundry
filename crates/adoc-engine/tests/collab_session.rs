@@ -120,6 +120,7 @@ fn collab_unauthorised_requests_are_refused() {
             file: 1,
             epoch: 1,
             seq: 1,
+            base: client,
             update: change.outbound.unwrap(),
         },
     );
@@ -180,6 +181,7 @@ fn messages_only_the_host_sends_close_the_connection() {
             file: 2,
             epoch: 1,
             seq: 1,
+            base: 0,
             update: EncodedUpdate(vec![0]),
         },
     ] {
@@ -213,12 +215,14 @@ fn collab_forged_author_is_refused() {
     let change = forged
         .apply_local(&[adoc_collab::ByteEdit::new(0, 0, "forged ")])
         .unwrap();
+    let base = session.base(ada, 1);
     session.forge(
         ada,
         Message::Update {
             file: 1,
             epoch: 1,
             seq: 1,
+            base,
             update: change.outbound.unwrap(),
         },
     );
@@ -235,12 +239,14 @@ fn updates_out_of_order_close_the_connection() {
     session.settle();
     let before = session.host_text();
     // The next update must be number 2.
+    let base = session.base(ada, 1);
     session.forge(
         ada,
         Message::Update {
             file: 1,
             epoch: 1,
             seq: 7,
+            base,
             update: EncodedUpdate(vec![0]),
         },
     );

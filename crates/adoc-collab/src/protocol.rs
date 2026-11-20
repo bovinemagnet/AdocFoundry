@@ -264,10 +264,14 @@ pub enum Message {
         update: EncodedUpdate,
     },
     /// A change to a file; `seq` grows by one per sender, file and epoch on a connection.
+    /// From a guest, `base` is the `client` of the snapshot the change was made on, so the host
+    /// can tell a change sent before its latest snapshot from one after it; from the host it is
+    /// 0.
     Update {
         file: u64,
         epoch: u32,
         seq: u64,
+        base: u64,
         update: EncodedUpdate,
     },
     /// The host applied the guest's updates to `file` up to `seq`.
@@ -420,6 +424,15 @@ struct SnapshotControl {
     file: u64,
     epoch: u32,
     client: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateControl {
+    file: u64,
+    epoch: u32,
+    seq: u64,
+    base: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -605,13 +618,15 @@ impl Message {
                 file,
                 epoch,
                 seq,
+                base,
                 update,
             } => (
                 kind::UPDATE,
-                json(&SequenceControl {
+                json(&UpdateControl {
                     file: *file,
                     epoch: *epoch,
                     seq: *seq,
+                    base: *base,
                 })?,
                 update.0.clone(),
             ),
@@ -908,11 +923,17 @@ pub fn decode(frame: &[u8]) -> Result<Message, FrameError> {
             }
         }
         kind::UPDATE => {
-            let SequenceControl { file, epoch, seq } = read(control)?;
+            let UpdateControl {
+                file,
+                epoch,
+                seq,
+                base,
+            } = read(control)?;
             Message::Update {
                 file,
                 epoch,
                 seq,
+                base,
                 update: EncodedUpdate(needed(payload)?),
             }
         }

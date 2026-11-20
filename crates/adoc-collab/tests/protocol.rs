@@ -63,6 +63,7 @@ fn every_message() -> Vec<Message> {
             file: 1,
             epoch: 1,
             seq: 1,
+            base: 12,
             update: EncodedUpdate(vec![1, 2, 3]),
         },
         Message::UpdateAck {
@@ -186,6 +187,7 @@ fn the_largest_update_fits_a_frame() {
         file: u64::MAX,
         epoch: u32::MAX,
         seq: u64::MAX,
+        base: u64::MAX,
         update: EncodedUpdate(vec![0; MAX_UPDATE]),
     };
     assert_eq!(round_trip(&message), message);
@@ -193,6 +195,7 @@ fn the_largest_update_fits_a_frame() {
         file: 1,
         epoch: 1,
         seq: 1,
+        base: 0,
         update: EncodedUpdate(vec![0; MAX_UPDATE + 1]),
     };
     assert_eq!(over.encode(), Err(FrameError::TooLarge(MAX_UPDATE + 1)));
@@ -238,7 +241,7 @@ fn malformed_frames_are_refused() {
         Err(FrameError::Payload)
     );
     assert_eq!(
-        decode(&body(8, r#"{"file":1,"epoch":1,"seq":1}"#, &[])),
+        decode(&body(8, r#"{"file":1,"epoch":1,"seq":1,"base":0}"#, &[])),
         Err(FrameError::Payload)
     );
     assert_eq!(

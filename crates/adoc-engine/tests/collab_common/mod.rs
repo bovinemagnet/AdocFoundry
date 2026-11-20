@@ -201,10 +201,27 @@ impl Session {
             .unwrap_or_default()
     }
 
+    /// The `client` of the latest snapshot of `file` the host sent `peer`, which an update from
+    /// it names as its base.
+    pub fn base(&self, peer: PeerId, file: u64) -> u64 {
+        self.sent_to(peer)
+            .into_iter()
+            .rev()
+            .find_map(|message| match message {
+                Message::Snapshot {
+                    file: sent, client, ..
+                } if sent == file => Some(client),
+                _ => None,
+            })
+            .unwrap_or(0)
+    }
+
     /// The link to `peer` drops: what the host sent it and the last `lost` messages it sent
-    /// are lost; both sides hear it went.
+    /// are lost; both sides hear it went; until it resumes, whatever either sends the other is
+    /// lost.
     pub fn drop_link(&mut self, peer: PeerId, lost: usize) {
         let mut net = self.net.lock().unwrap();
+        net.down.insert(peer);
         net.to_guest.entry(peer).or_default().clear();
         let mut kept = VecDeque::new();
         let mut dropped = 0;
@@ -234,6 +251,7 @@ impl Session {
     /// The guest reconnects with its resume token: the transport sends it a new `Join`.
     pub fn resume(&mut self, peer: PeerId) {
         let mut net = self.net.lock().unwrap();
+        net.down.remove(&peer);
         net.to_host.push_back(LinkEvent::Resumed { peer });
         let queue = net.to_guest.entry(peer).or_default();
         queue.push_back(LinkEvent::Resumed { peer: PeerId::HOST });
