@@ -78,10 +78,39 @@ Use *Let Edit* to make a Viewer an Editor, and *Make Viewer* to take editing awa
 Taking editing away applies at once, to everything that person sends from then on.
 *Remove* sends someone out of the session; a removed person cannot resume.
 
+=== While you are sharing
+
+A file a guest opens does not appear in your tabs.
+It stays open in the background.
+Choose *Show*, beside a shared file in the *Session* panel, to open it in a tab.
+Closing a shared tab hides it again.
+It does not close the file for your guests.
+
+Commands that change more than one file, or the structure of the folder, are refused while you share:
+
+* renaming, moving or deleting files;
+* New Page, New Module and New Project;
+* adding a page to navigation;
+* Replace across the workspace;
+* pasting or dropping images;
+* opening another folder.
+
+Stop sharing to use them.
+
+While you share, diagrams drawn by other programs (Graphviz, PlantUML and D2) are not drawn on any page, since a page may include a partial a guest has written.
+Diagrams already drawn before are still shown, and Mermaid diagrams are drawn as usual.
+
+Guests are never told where your files are on your computer.
+The messages they see name no paths.
+
+On a guest's side, renaming or deleting a shared page, its local history and every export are refused.
+
 === Stopping
 
 *Stop Sharing* in the *Session* panel or the *File* menu closes every connection and stops listening.
 Your pages stay open as ordinary pages of your workspace.
+A background page with unsaved changes opens as a tab, so that you can save it.
+The other background pages close.
 
 == Joining a session
 
@@ -110,6 +139,26 @@ It is the host's file, not one on your computer:
 * if you are a Viewer, or the connection is down, the page is read only.
 
 The *Session* panel says whether you may edit, and lists everyone in the session, with "(you)" beside yourself.
+
+Links and includes in a shared page lead only to other files the host shares.
+Antora resource ids, such as `+xref:other.adoc[]+` and `+include::partial$note.adoc[]+`, resolve among the shared files.
+They use the host's component names and versions.
+Your own copy of the same project is never mixed in, even if it is open in the same window.
+
+An include shows in the preview once the included shared file is open.
+Until then it shows as unresolved.
+Open the partial from the *Session* panel.
+
+Following a link to another shared file asks the host for it.
+Use Go to Definition, or click the link in the preview.
+The file opens in a tab when it arrives.
+
+Some things are not shared:
+
+* Pictures are not shared. The preview shows a picture's alternative text instead.
+* Diagrams drawn by other programs (Graphviz, PlantUML and D2) are not drawn for a shared page. Mermaid diagrams are.
+* The host shares only the names and versions of its Antora components, never their attributes or navigation. Attributes set in `antora.yml` are not known on your side.
+* Shared pages do not appear in search, Quick Open, recent files or the link graph.
 
 == What the status bar says
 
@@ -255,7 +304,7 @@ The others then pull.
 == What is not there yet
 
 * Other participants' carets and selections are drawn in the source editor only, not yet in the visual editor.
-* Images and other media are not shared. A guest sees only the pages and partials the host offers.
+* Images and other media are not shared, and guests have no navigation (the trees of navigation files) for shared components.
 * There is no relay server, so sharing works across a local network or a VPN, not across the internet through a network you do not control.
 
 == Related

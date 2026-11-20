@@ -1374,17 +1374,16 @@ pub(crate) fn shared_page_path(path: &Path) -> bool {
 }
 
 impl Engine {
-    /// Whether the page at `path` is shared in a session, the host's or a guest's.
-    pub(crate) fn is_shared_page(&self, path: &Path) -> bool {
+    /// Whether a diagram program (Graphviz, PlantUML, D2) may draw the page at `path`: never
+    /// over text another participant may have written, so not on a guest's shared page, nor on
+    /// any page while hosting, since one may include a shared partial.
+    pub(crate) fn diagram_programs_for(&self, path: &Path) -> bool {
         #[cfg(feature = "collab")]
-        return shared_page_path(path)
-            || self
-                .document_for_path(path)
-                .is_some_and(|id| self.shared.contains_key(&id));
+        return !shared_page_path(path) && !self.hosting();
         #[cfg(not(feature = "collab"))]
         {
             let _ = path;
-            false
+            true
         }
     }
 

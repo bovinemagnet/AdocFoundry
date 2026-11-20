@@ -168,8 +168,8 @@ struct Guest {
     /// a catalog of the manifest's files under the virtual root and an index of those open,
     /// apart from this computer's own workspace.
     components: Vec<SharedComponent>,
-    shared: adoc_lang::WorkspaceState,
-    indexed: BTreeMap<DocumentId, u64>,
+    shared: Box<adoc_lang::WorkspaceState>,
+    indexed: BTreeMap<DocumentId, (u64, PathBuf)>,
 }
 
 #[derive(Default)]
@@ -343,7 +343,7 @@ impl Engine {
                 roster: Vec::new(),
                 virtual_root: None,
                 components: Vec::new(),
-                shared: adoc_lang::WorkspaceState::default(),
+                shared: Box::default(),
                 indexed: BTreeMap::new(),
             }),
             backlog: false,
@@ -2081,7 +2081,17 @@ impl Engine {
         let Side::Guest(guest) = &mut session.side else {
             return;
         };
-        // The shared workspace's index follows the shared pages open here.
+        // The shared workspace's index follows the shared pages open here: a page closed
+        // leaves it.
+        let documents = &self.documents;
+        let shared = &mut guest.shared;
+        guest.indexed.retain(|id, (_, path)| {
+            let open = documents.contains_key(id);
+            if !open {
+                shared.index.remove(path);
+            }
+            open
+        });
         for state in guest.files.values() {
             let Some(id) = state.document else {
                 continue;
@@ -2089,14 +2099,16 @@ impl Engine {
             let Some(document) = self.documents.get(&id) else {
                 continue;
             };
-            if guest.indexed.get(&id) != Some(&document.version) {
+            if guest.indexed.get(&id).map(|(version, _)| *version) != Some(document.version) {
                 let parsed = adoc_parser::parse(
                     &crate::document::uri_for(&document.path),
                     &document.text.to_string(),
                 )
                 .document;
                 guest.shared.index.replace(document.path.clone(), parsed);
-                guest.indexed.insert(id, document.version);
+                guest
+                    .indexed
+                    .insert(id, (document.version, document.path.clone()));
             }
         }
         // A remote tab closed here: the host stops sending it, and it may be opened again.
@@ -2588,7 +2600,7 @@ impl Guest {
         }
         let ignore: [&str; 0] = [];
         let discovered = adoc_antora::discover_antora_files(&[root], &files, &ignore);
-        self.shared = adoc_lang::WorkspaceState {
+        *self.shared = adoc_lang::WorkspaceState {
             antora: discovered.catalog,
             descriptor_issues: discovered.issues,
             ..adoc_lang::WorkspaceState::default()
@@ -2612,6 +2624,14 @@ impl Engine {
             }
         }
         &self.workspace
+    }
+
+    /// Whether this engine hosts a session.
+    pub(crate) fn hosting(&self) -> bool {
+        matches!(
+            self.collab_session.as_ref().map(|session| &session.side),
+            Some(Side::Host(_))
+        )
     }
 
     /// Asks the host for the shared file at `path`, a guest's virtual path, to be shown when it
@@ -2667,12 +2687,18 @@ impl Engine {
                 name: descriptor.name.clone(),
                 version: descriptor.version.clone(),
             };
-            // One the protocol cannot carry is left out: its pages resolve as plain files.
+            if components.contains(&component) {
+                continue;
+            }
+            // The message is sent whole, so it is checked whole: a component it cannot carry
+            // (a name that is not a word, or one too many for its frame) is left out, and its
+            // pages resolve as plain files.
+            components.push(component);
             let checked = Message::Components {
-                components: vec![component.clone()],
+                components: components.clone(),
             };
-            if checked.encode().is_ok() && !components.contains(&component) {
-                components.push(component);
+            if checked.encode().is_err() {
+                components.pop();
             }
         }
         components

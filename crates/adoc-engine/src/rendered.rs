@@ -796,14 +796,14 @@ impl Engine {
         let diagrams = self.diagrams();
         // A shared page's text may be another participant's: no diagram program runs on it
         // (Graphviz, PlantUML and D2 read files and more of their own), only the cache and
-        // Mermaid in process; and a guest's has no pictures, which only the host has.
-        let shared = self.is_shared_page(path);
+        // Mermaid in process (`diagram_programs_for`); and a guest's has no pictures, which
+        // only the host has.
         let resolver = EngineResolver {
             workspace: self.workspace_for(path),
             diagrams: &diagrams,
             failed: &self.rendered.failed,
             formulas,
-            programs: programs && !shared,
+            programs: programs && self.diagram_programs_for(path),
             media: !crate::engine::shared_page_path(path),
             measures: &self.rendered.formulas,
             wanted: RefCell::default(),

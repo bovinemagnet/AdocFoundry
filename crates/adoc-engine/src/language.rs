@@ -36,12 +36,25 @@ impl Engine {
     #[must_use]
     pub fn definition(&self, id: DocumentId, offset: usize) -> Option<DefinitionTarget> {
         let document = self.document(id)?;
-        adoc_lang::definition_in(
+        let target = adoc_lang::definition_in(
             self.workspace_for(&document.path),
             &document.path,
             document.parsed(),
             offset,
-        )
+        )?;
+        // From a guest's shared page a link leads only to another shared page: never to a file
+        // handed to the system, nor one of this computer's, whatever is at that path here.
+        if crate::engine::shared_page_path(&document.path) {
+            return match &target {
+                DefinitionTarget::Location(location)
+                    if crate::engine::shared_page_path(&location.path) =>
+                {
+                    Some(target)
+                }
+                _ => None,
+            };
+        }
+        Some(target)
     }
 
     #[must_use]
@@ -101,7 +114,7 @@ impl Engine {
             return Vec::new();
         };
         adoc_lang::references::references_at(
-            &self.workspace,
+            self.workspace_for(&document.path),
             &document.path,
             &document.parsed().text,
             offset,
@@ -121,7 +134,7 @@ impl Engine {
                 let text = match self.document_for_path(&location.path) {
                     Some(open) => self.document(open)?.text_string(),
                     None => self
-                        .workspace
+                        .workspace_for(&location.path)
                         .index
                         .file(&location.path)?
                         .text()?
@@ -148,8 +161,13 @@ impl Engine {
     #[must_use]
     pub fn anchor_at(&self, id: DocumentId, offset: usize) -> Option<String> {
         let document = self.document(id)?;
-        adoc_lang::references::anchor_at(&self.workspace, &document.path, document.parsed(), offset)
-            .map(|anchor| anchor.id)
+        adoc_lang::references::anchor_at(
+            self.workspace_for(&document.path),
+            &document.path,
+            document.parsed(),
+            offset,
+        )
+        .map(|anchor| anchor.id)
     }
 
     /// The sections, anchors and page titles matching `query`: across the workspace, each
@@ -269,7 +287,7 @@ impl Engine {
         self.flush_index();
         let document = self.document(id)?;
         let edits = adoc_lang::references::rename_anchor(
-            &self.workspace,
+            self.workspace_for(&document.path),
             &document.path,
             &document.parsed().text,
             offset,
@@ -283,7 +301,7 @@ impl Engine {
                 _ => {
                     // The ranges come from the index's text, as rename's do.
                     let base = self
-                        .workspace
+                        .workspace_for(&location.path)
                         .index
                         .file(&location.path)
                         .and_then(|file| file.text().map(std::borrow::Cow::into_owned))
@@ -315,9 +333,9 @@ impl Engine {
             .and_then(|open| self.document(open))
         {
             Some(open) => open.parsed(),
-            None => &self.workspace.index.file(to)?.document,
+            None => &self.workspace_for(from).index.file(to)?.document,
         };
-        adoc_lang::xref_to(&self.workspace, from, to, target, section)
+        adoc_lang::xref_to(self.workspace_for(from), from, to, target, section)
     }
 
     /// The outline of document `id`: the navigation tree for an Antora navigation file,

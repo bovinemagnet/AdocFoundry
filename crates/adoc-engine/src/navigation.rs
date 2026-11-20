@@ -132,6 +132,9 @@ impl Engine {
                 Ok(CommandOutcome::opened(item))
             }
             Some(DefinitionTarget::Location(location)) => {
+                if self.asked_host_for(&location.path)? {
+                    return Ok(CommandOutcome::Done);
+                }
                 let target = self.open_as(&location.path, OpenDisposition::Preview)?;
                 self.history
                     .back
@@ -206,7 +209,22 @@ impl Engine {
         self.arrive(position)
     }
 
+    /// Whether `path` is another shared page not open yet, which the host has now been asked
+    /// for: it is shown when it arrives.
+    fn asked_host_for(&mut self, path: &std::path::Path) -> Result<bool, EngineError> {
+        #[cfg(feature = "collab")]
+        if crate::engine::shared_page_path(path) && self.document_for_path(path).is_none() {
+            self.open_shared_path(path)?;
+            return Ok(true);
+        }
+        let _ = path;
+        Ok(false)
+    }
+
     fn arrive(&mut self, position: NavigationPosition) -> Result<CommandOutcome, EngineError> {
+        if self.asked_host_for(&position.path)? {
+            return Ok(CommandOutcome::Done);
+        }
         let item = self.open_item(&position.path, OpenDisposition::Preview)?;
         self.activate(item);
         self.history.current = Some(position);

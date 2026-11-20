@@ -49,7 +49,7 @@ pub struct Misspelling {
 /// What a check reads its page from.
 enum Source {
     Parsed(Arc<SharedParse>),
-    Input(OwnedInput),
+    Input(Box<OwnedInput>),
 }
 
 /// A document's last check: the version and word lists it checked, and what it found.
@@ -176,7 +176,7 @@ impl Engine {
             }
             Lookup::Missing if self.start_shared_parse(id) => return 1,
             Lookup::Missing => match self.parse_input(id) {
-                Some(input) => Source::Input(input),
+                Some(input) => Source::Input(Box::new(input)),
                 None => return 0,
             },
         };
