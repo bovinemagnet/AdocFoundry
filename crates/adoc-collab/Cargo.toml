@@ -1,0 +1,14 @@
+[package]
+name = "adoc-collab"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+adoc-core.workspace = true
+yrs.workspace = true
+
+[lints]
+workspace = true

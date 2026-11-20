@@ -312,6 +312,22 @@ The spike is `spikes/collab/`, recorded in `docs/qa/spike-collab.md`. The contra
 - **Guest saves and conflict prompts:** Editors may request saves. A change on disk to a shared file is a conflict the host resolves: keep the shared text, reload from disk (a new epoch), or save a copy.
 - **Still open:** platform firewall and interface experience (C8); media for guests.
 
+### C2 (COLLAB 2/8, #689)
+
+`crates/adoc-collab`. Where it departs from #689 or the design, the design changed in the same pull request:
+
+- **The edit type** is the crate's own `ByteEdit` over `adoc_core::SourceRange`, as C1 settled.
+- **Untrusted bytes are checked before `yrs` reads them.** Its fuzz target, `collab_update`, found three things `yrs` 0.28.2 does with a hostile update, which the guards C1 planned (a size limit and a panic guard) did not stop:
+  - **Memory blow-up.** It reserves memory for the counts an update claims before reading any entry, touching gigabytes for six bytes (8.6 GB measured in a release build).
+  - **Split characters.** It integrates an item at a position inside a character (it counts in UTF-16 units), splitting it into replacement characters the reported edits do not show.
+  - **Use-after-free.** It integrates a block overlapping items it already holds into freed memory, and reports success.
+
+  So every update is first checked against the grammar of what a text replica sends, every count bounded by the bytes left. It is then admitted by sender: each participant's items must start exactly where the receiver's copy of their work ends, a guest's only its own. Only then is it applied, and its result is compared whole with the text before it, a mismatch poisoning the replica. `apply_remote` takes a `Sender` (`Host` or `Guest(id)`), so admission cannot be skipped. Three million fuzzed inputs then ran clean.
+- **Duplicates and reordering.** #689 asked for replicas that converge "regardless of order and duplicates". Over ordered links neither happens honestly, and admitting them is what let overlapping blocks reach `yrs`, so a duplicate or reordered update is refused unread, changing nothing. Convergence is tested over the star a session is.
+- **Character boundaries are the caller's to check.** #689 asked that an edit inside a character change nothing. The replica cannot see character boundaries without copying the text, so the engine checks them against its rope, as `TextEdit::validate` already does. If a caller skips that, `yrs` moves the edit and the replica's projection check fails closed (poisoned, rebuilt in a new epoch).
+- **`MAX_UPDATE` is 16 MiB, not 4 MiB.** No snapshot of a file between 4 and 8 MiB fitted the old limit.
+- **To report upstream,** with the C1 finding: the reservations, the split characters and the use-after-free.
+
 ## 15. References
 
 - Epic #686.

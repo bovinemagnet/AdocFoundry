@@ -34,6 +34,7 @@ unsafe_code = "forbid"
 # Internal crates
 adoc-antora = { path = "crates/adoc-antora" }
 adoc-audit = { path = "crates/adoc-audit" }
+adoc-collab = { path = "crates/adoc-collab" }
 adoc-impact = { path = "crates/adoc-impact" }
 adoc-core = { path = "crates/adoc-core" }
 adoc-diagrams = { path = "crates/adoc-diagrams" }
@@ -184,6 +185,9 @@ roxmltree = "=0.21.2"
 # The DocBook 5.2.1 RELAX NG schema, checked in tests only (adoc-docbook's `test-support`).
 oxixml-relaxng = "=0.1.2"
 typst-svg = "=0.15.1"
+# The CRDT behind collaborative editing (adoc-collab); `sync` so a replica is `Send`, as the
+# COLLAB 1/8 spike found (`docs/qa/spike-collab.md`).
+yrs = { version = "=0.28.2", default-features = false, features = ["sync"] }
 unicode-segmentation = "=1.13.3"
 url = "=2.5.8"
 

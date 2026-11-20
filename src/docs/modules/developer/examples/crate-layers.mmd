@@ -18,6 +18,7 @@ flowchart TD
         ebook["adoc-ebook<br/>(ebook model, in process)"]
         epub["adoc-epub<br/>(EPUB export, in process)"]
         docbook["adoc-docbook<br/>(DocBook export, in process)"]
+        collab["adoc-collab<br/>(collaboration core, in process)"]
         kindle["adoc-kindle<br/>(Kindle export, in process)"]
         audit["adoc-audit<br/>(quality audit model)"]
         impact["adoc-impact<br/>(impact analysis model)"]
@@ -72,6 +73,7 @@ flowchart TD
     docbook --> render
     docbook --> dom
     docbook --> core
+    collab --> core
     ebook --> render
     ebook --> dom
     ebook --> core

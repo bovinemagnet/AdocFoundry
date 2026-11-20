@@ -88,8 +88,9 @@ Every guest is treated as possibly modified, and everything it sends as untruste
 | A man in the middle | TLS with the certificate pinned from the invitation, plus the safety code compared out of band |
 | A guessed, replayed or stolen invitation | 256-bit secrets, held as hashes, single use, `INVITE_LIFETIME`; resume tokens rotated per reconnect and revoked with the peer |
 | Forged file ids, guessed paths, `..`, links leaving the root, `.git`, credentials | Guests name files only by opaque `SharedFileId`s from their own manifest. The host resolves an id to a path it already confined (lexically inside the root and again once links are followed, as `adoc-mcp`'s `paths::confine` does) and confines it again when the file is opened. Dotfiles, `.git`, ignored folders, binaries and anything outside the manifest are never offered |
-| Forged authorship (an update creating another participant's items) | The host assigns each guest its `yrs` client id at Admit, and refuses a guest's update whose `authors` (the clients it creates items for) are not exactly that id. Deletions name no author and are allowed to Editors |
-| Oversized or decompression-bomb updates | `MAX_FRAME` checked from the length prefix before reading; `MAX_UPDATE` before decoding; decoding inside a panic guard; the text after applying held to `MAX_SHARED_FILE`, the update refused and the file resynchronised otherwise. `yrs` updates are not compressed |
+| Forged authorship, overlaps and reorderings (an update creating another participant's items, or items the receiver already holds, or not next in line) | Every update is admitted before `yrs` reads it (`Replica::apply_remote` with its `Sender`): each participant's items must be one run starting exactly where the receiver's copy of that participant's work ends, and a guest's update may hold only the guest's own items (the host assigns each guest its `yrs` client id at Admit). In the star an honest update always passes. This is a memory-safety rule as well as an authorship one: `yrs` 0.28.2 integrates a block overlapping items it holds into freed memory, reporting success (a use-after-free found by COLLAB 2/8's fuzz target), so such a block must never reach it, from a guest or from the host. Deletions name no author and are admitted; the engine checks who may delete |
+| Oversized or decompression-bomb updates | `MAX_FRAME` checked from the length prefix before reading; `MAX_UPDATE` before decoding. `yrs` 0.28.2 reserves memory for as many participants, blocks, map entries or values as an update claims before reading any, and a hash table's reservation is touched as it is made, so six bytes cost 8.6 GB (found by COLLAB 2/8's fuzz target). So every update is checked first against the grammar of what a text replica sends (`adoc-collab`'s `wire.rs`): string, deleted, garbage-collected and skipped blocks of the one root text, ids within 53 bits, every count bounded by the bytes left; no map, array, JSON, embed, format or type content ever reaches the decoder. State vectors are checked the same way. Decoding runs inside a panic guard. The text after applying is held to `MAX_SHARED_FILE`, the replica poisoned otherwise |
+| An update that changes text its byte edits do not show (`yrs` counts in UTF-16 units, and an item placed inside a character splits it into replacement characters) | Every remote update's result is compared whole with the text before it and the edits reported, and a mismatch poisons the replica: the host rebuilds it from its own text in a new epoch and drops the sender |
 | A valid-looking update that `yrs` parks as pending, to stall the host | The host never resynchronises from a guest. An update from a guest that leaves the host with anything pending drops that guest, and the host rebuilds the file's replica from its own text in a new epoch |
 | An update from a stale session or epoch | Every `Update`, `SaveRequest` and `Awareness` carries its file's epoch, and the receiver refuses a mismatch before decoding |
 | An unauthorised save, role change or command | Each is a request the host checks against the peer's current role. Guests cannot build, export, run commands, use Git, create, rename or delete files, or reach MCP tools; the protocol has no message for any of them |
@@ -139,15 +140,15 @@ An unknown kind, malformed JSON, or a field outside its limit closes the connect
 
 **Acknowledgements.**
 - The host acknowledges a guest's `Update` only after applying it (and forwarding it, if more guests exist).
-- Sequence numbers are per sender, per file and epoch, and grow by one. A gap or a repeat closes the connection.
+- Sequence numbers are per sender, per file and epoch, and grow by one. A gap or a repeat closes the connection. So does an update the receiver's replica does not admit (§6): on an ordered link a duplicate or reordered update is never honest.
 - The interface shows a guest's edit as Acknowledged once its sequence number is acknowledged. Acknowledged is not Saved (§10).
 
-**Limits** (constants in `adoc-collab`, each with tests at its bound; values are COLLAB 2/8's to confirm):
+**Limits** (constants in `adoc-collab`, each with tests at its bound; confirmed by COLLAB 2/8):
 
 | Constant | Value |
 |---|---|
-| `MAX_FRAME` | 8 MiB |
-| `MAX_UPDATE` | 4 MiB |
+| `MAX_FRAME` | 16 MiB and 64 KiB, room for `MAX_UPDATE` and its control part |
+| `MAX_UPDATE` | 16 MiB: a whole file's snapshot must fit, its text at most `MAX_SHARED_FILE` and the history around it (COLLAB 2/8 raised it from 4 MiB, which no 4–8 MiB file's snapshot fit) |
 | `MAX_SHARED_FILE` | 8 MiB of text |
 | `MAX_OPEN_FILES` | 64 per peer |
 | `MAX_PARTICIPANTS` | 8 (v1 admits one guest) |
@@ -219,7 +220,7 @@ The PRD's §10 names the tests; this adds those the spike's findings call for.
 
 | Package | Tests |
 |---|---|
-| C2 `adoc-collab` | `collab_replicas_converge` (two-replica and star schedules from the spike, kept as seeds); `collab_edits_are_byte_exact`; `collab_local_undo_keeps_remote_edits`; `collab_malformed_update_changes_nothing`; `collab_offsets_inside_a_character_are_refused`; `collab_pending_update_asks_for_resync` (a guest); `collab_hostile_pending_update_rebuilds_the_host` (the host); `collab_authors_are_read_before_applying`; `collab_limits_hold_at_their_bounds`; the fuzz target `collab_update` in `fuzz/` |
+| C2 `adoc-collab` | `collab_replicas_converge` (one and two guests in the star, 1,000 seeds each); `collab_edits_are_byte_exact`; `collab_local_undo_keeps_remote_edits`; `collab_malformed_update_changes_nothing`; `collab_offsets_inside_a_character_are_refused`; `collab_pending_update_asks_for_resync`; `collab_authors_are_read_before_applying`; `collab_limits_hold_at_their_bounds`; `duplicates_and_reordering_are_refused_unread`; `an_update_splitting_a_character_poisons_the_replica`; `counts_claiming_more_than_follows_are_refused`; `a_guest_update_left_pending_makes_the_host_rebuild`; the fuzz target `collab_update` in `fuzz/` (both senders) |
 | C3 engine bridge | `collab_engines_converge`; `collab_remote_edit_is_not_echoed`; `collab_visual_edits_share_the_bridge`; `collab_off_changes_nothing`; `collab_projection_failure_fails_closed`; `collab_undo_groups_follow_the_engine` |
 | C4 transport | `collab_loopback_session_syncs`; `collab_unauthorised_requests_are_refused`; `collab_wrong_fingerprint_sends_nothing`; `collab_slow_peer_never_blocks_host`; `collab_forged_author_is_refused`; `collab_nothing_is_sent_before_admit`; `collab_frame_limits_close_the_connection` |
 | C5 saving | `collab_save_writes_converged_text`; `collab_external_change_is_a_conflict`; `collab_stale_epoch_is_refused` |

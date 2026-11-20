@@ -22,6 +22,7 @@
 *** xref:crates:adoc-ebook.adoc[adoc-ebook]
 *** xref:crates:adoc-epub.adoc[adoc-epub]
 *** xref:crates:adoc-docbook.adoc[adoc-docbook]
+*** xref:crates:adoc-collab.adoc[adoc-collab]
 *** xref:crates:adoc-kindle.adoc[adoc-kindle]
 *** xref:crates:adoc-audit.adoc[adoc-audit]
 *** xref:crates:adoc-impact.adoc[adoc-impact]

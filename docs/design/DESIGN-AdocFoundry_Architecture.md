@@ -209,7 +209,7 @@ Front ends        adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)   ado
 Engine            adoc-engine: sessions, documents, command registry, undo, watcher, settings, events
                           |
                           v
-Document services adoc-render   adoc-diagrams   adoc-model   adoc-git   adoc-pdf   adoc-docx   adoc-ebook   adoc-epub   adoc-docbook   adoc-kindle   adoc-audit   adoc-impact
+Document services adoc-render   adoc-diagrams   adoc-model   adoc-git   adoc-pdf   adoc-docx   adoc-ebook   adoc-epub   adoc-docbook   adoc-collab   adoc-kindle   adoc-audit   adoc-impact
                           |
                           v
 Language layer    adoc-parser   adoc-dom   adoc-antora   adoc-index   adoc-lang   adoc-math   adoc-spell   adoc-graph   adoc-theme
@@ -247,6 +247,7 @@ AdocFoundry/
     adoc-ebook               L2  the reflowable ebook model: pages mapped to one Book, its pictures embedded; read by Kindle and EPUB export
     adoc-epub                L2  EPUB export: one book written as an EPUB 3.3 container, in process (PRD-AdocFoundry_EPUB_Export.md)
     adoc-docbook             L2  DocBook export: an article or a book as DocBook 5.2 XML, in process (PRD-AdocFoundry_DocBook_Export.md)
+    adoc-collab              L2  collaborative editing's core: a yrs replica per shared file, byte edits, per-author undo (DESIGN-AdocFoundry_Collaboration.md)
     adoc-kindle              L2  Kindle export: AZW3 and KFX from one book, in process (PRD-AdocFoundry_Kindle_Export.md)
     adoc-audit               L2  documentation quality audit: rules, reports, policy
     adoc-impact              L2  documentation impact analysis: rules over two revisions, report

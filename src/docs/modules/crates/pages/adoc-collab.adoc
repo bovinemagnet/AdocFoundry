@@ -1,0 +1,192 @@
+= adoc-collab
+Paul Snow
+:revnumber: 0.0.0
+:description: Collaborative editing's core: one CRDT replica of each shared file's text, exchanging encoded updates, with byte edits, undo, selections and limits.
+
+`adoc-collab` holds one participant's copy of one shared file's text and the rules for keeping the copies of every participant equal.
+It is at layer L2, beside `adoc-render` and `adoc-docbook`.
+The design is `docs/design/DESIGN-AdocFoundry_Collaboration.md` in the repository, and the evidence for choosing `yrs` is `docs/qa/spike-collab.md`; neither is part of this site.
+
+NOTE: The crate is COLLAB 2/8 (issue #689) of the collaboration epic #686.
+The engine does not use it yet.
+Wiring replicas into the engine's documents is COLLAB 3/8 (issue #690), so nothing in the app, the command line or the MCP server collaborates today.
+
+== What it does
+
+A `Replica` is a copy of one shared file's text over the `yrs` CRDT, version 0.28.2.
+It is built with the `sync` feature of `yrs`, so a replica is `Send`.
+The replica exchanges only encoded bytes: an `EncodedUpdate` to send, a `StateVectorBytes` to say what it holds.
+It knows nothing of how the bytes travel, which files are shared or who may do what.
+The engine will own that.
+
+== Replicas
+
+A replica counts offsets in UTF-8 bytes (`OffsetKind::Bytes`), the offsets every other crate uses, so no conversion is needed at its edge.
+
+* `Replica::new(text, id)` is for the host.
+The starting text is not in any undo history.
+* `Replica::from_snapshot(snapshot, id)` is for a guest, from the host's `snapshot`.
+A file is never bootstrapped twice, which would give two unrelated histories.
+
+The `ReplicaId` names a participant, up to `ReplicaId::MAX`, which is 2^53^ - 1.
+`ReplicaId::random()` makes one.
+`text`, `len`, `is_empty`, `is_poisoned` and `has_pending` read a replica.
+The text is held exactly as given: line endings, a byte order mark and Unicode normalisation are never rewritten.
+
+== Byte edits
+
+`ByteEdit { range: SourceRange, text }` is the crate's own edit.
+The engine's `TextEdit` is at layer L3, so the engine converts between the two.
+
+`apply_local(&[ByteEdit])` and `apply_remote(&EncodedUpdate, Sender)` both return an `AppliedChange`.
+`Sender` says where a remote update came from: `Sender::Host`, or `Sender::Guest(id)`.
+The fields are:
+
+`origin`::
+A `ChangeOrigin`: `Local`, `Remote`, `Undo` or `Redo`.
+`edits`::
+The byte edits the change made, as one batch in pre-change coordinates, for the engine's rope.
+`outbound`::
+The update to send to the other replicas.
+It is set for the local author's changes and never for a remote one.
+`pending`::
+True when `yrs` holds an update it cannot integrate until something else arrives.
+A guest then asks the host to resynchronise the file.
+The host instead treats it as the sender's violation, drops that guest and rebuilds its replica from its own text in a new epoch.
+
+Helpers for working with edits are exported: `check_boundaries`, `check_order`, `normalise`, `apply_edits` and `length_after`.
+
+An offset inside a character is refused by the caller, which is the engine checking against its rope.
+`yrs` would move such an offset silently, and the replica's projection check then fails closed.
+
+== Synchronising
+
+* `state_vector` says what a replica holds from each participant.
+* `missing_since(&StateVectorBytes)` encodes what another replica lacks.
+* `snapshot` encodes the whole text and its history, for a new guest.
+* `authors(update)` names the replicas an update creates items for.
+It reads the update without applying it, so the host can refuse an update that forges another participant's authorship before it reaches a replica.
+
+An update that cannot be decoded, or that the replica refuses, changes nothing.
+
+=== Admission
+
+`apply_remote` admits an update before `yrs` reads it.
+Each participant's items in the update must be one unbroken run that starts exactly where the receiver's copy of that participant's work ends.
+A guest's update may hold only that guest's own items.
+A duplicate or reordered update is therefore refused unread with `CollabError::NotAdmitted`, and nothing changes.
+Links in a session are ordered, so an honest update always passes.
+
+The `wire` module checks every update and state vector against the grammar of what a text replica sends, before `yrs` decodes it.
+It accepts string, deleted, garbage-collected and skipped blocks of the one root text named `text`.
+Participant ids must fit in 53 bits, every count is bounded by the bytes left, and nothing may follow the end.
+Map, array, JSON, embed, format and type content never reach the decoder.
+
+The `collab_update` fuzz target found three faults in `yrs` 0.28.2 that these checks prevent:
+
+* It reserves memory for the counts an update claims before it reads the entries: six bytes cost 8.6 GB.
+* It can integrate an item inside a character, splitting it into replacement characters that the reported edits do not show.
+* It integrates a block that overlaps items it already holds into freed memory while reporting success, which is a use-after-free.
+
+After the checks were added, three million fuzzed inputs ran clean.
+
+== Undo
+
+`undo_local` and `redo_local` touch only the local author's transactions, so one participant never undoes another's work.
+They return `None` when there is nothing to undo or redo, and `can_undo` and `can_redo` say which.
+
+A group of edits ends where the caller calls `end_group`.
+The engine's coalescing rules decide that, never the clock of `yrs`.
+
+== Selections and presence
+
+A `RelativeSelection` holds a selection's two ends as positions relative to the text around them, encoded to send.
+`Replica::selection` makes one from byte offsets and an `Affinity`, and `Replica::resolve` turns one back into offsets in any replica of the same file, however the text changed meanwhile.
+`RelativeSelection::from_wire` checks a received one against `MAX_ANCHOR`.
+
+`Affinity` chooses the side an anchor stays on when text is inserted at its place: `Before` stays before the new text, and `After` moves after it, as a caret does.
+
+`AwarenessThrottle` paces presence messages.
+The caller offers every change and sends when told to.
+The throttle reads no clock: the caller passes the time to `offer`, `due` and `take_due`.
+
+== Failure and poisoning
+
+A replica that fails in a way that may have changed it is poisoned.
+That happens on a panic inside `yrs`, on a projection mismatch (what the CRDT reports changing is not what was asked for, or does not add up) and on a remote update that makes the text larger than `MAX_SHARED_FILE`.
+A poisoned replica refuses everything with `CollabError::Poisoned` until it is rebuilt in a new epoch.
+
+Each remote update's result is compared whole with the text before it and the edits reported, which takes two copies of the text and about 90 µs for 1 MiB.
+A mismatch poisons the replica.
+Local edits are still checked by their delta alone.
+
+Other errors leave the replica as it was.
+
+[cols="2,3",options="header"]
+|===
+|`CollabError` |Meaning
+
+|`InvalidBoundary`
+|An offset past the end or inside a character.
+
+|`Unordered`
+|Edits out of order, overlapping or backwards.
+
+|`MalformedUpdate`
+|Bytes that are not an update or a state vector, or that `yrs` refused.
+
+|`NotAdmitted`
+|An update refused unread: a duplicate, a reordered one, or a guest's carrying another participant's items.
+
+|`TooLarge`
+|Something over its limit.
+
+|`ProjectionMismatch`
+|The replica is poisoned.
+
+|`Poisoned`
+|The replica failed earlier.
+|===
+
+== Limits
+
+[cols="2,1,3",options="header"]
+|===
+|Constant |Value |Meaning
+
+|`MAX_UPDATE`
+|16 MiB
+|The largest encoded update, checked before decoding.
+It leaves room for a whole file's snapshot.
+
+|`MAX_SHARED_FILE`
+|8 MiB
+|The largest shared text.
+
+|`MAX_ANCHOR`
+|256 bytes
+|The largest encoded end of a `RelativeSelection`.
+
+|`AWARENESS_INTERVAL`
+|50 ms
+|The least time between two presence messages from one participant.
+|===
+
+== Tests
+
+The tests are in `crates/adoc-collab/tests/`.
+They include `collab_replicas_converge`, `collab_edits_are_byte_exact`, `collab_local_undo_keeps_remote_edits`, `collab_malformed_update_changes_nothing`, `collab_offsets_inside_a_character_are_refused`, `collab_pending_update_asks_for_resync`, `collab_authors_are_read_before_applying` and `collab_limits_hold_at_their_bounds`, `duplicates_and_reordering_are_refused_unread`, `an_update_splitting_a_character_poisons_the_replica`, `counts_claiming_more_than_follows_are_refused` and `a_guest_update_left_pending_makes_the_host_rebuild`.
+
+The fuzz target `collab_update` (`fuzz/fuzz_targets/collab_update.rs`) feeds arbitrary bytes to a replica, offering each input as from a guest and as from the host.
+`collab_is_in_process`, in `xtask`, checks that the crate's sources name no process, network, file or thread.
+
+== Where it sits
+
+`adoc-collab` depends on `adoc-core` and `yrs` only.
+It starts no process, uses no network, no files and no threads of its own: `cargo xtask layers` holds its sources to the same forbidden paths as `adoc-audit`.
+It is in `LEAN_EXCLUDED` with `yrs`, so the language server's default build compiles neither.
+
+== Related
+
+* xref:adoc-core.adoc[adoc-core], the domain types it depends on
+* xref:index.adoc[Crates]

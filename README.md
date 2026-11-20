@@ -488,6 +488,7 @@ L2  adoc-render     the view tree and HTML
     adoc-ebook      the book model Kindle and EPUB export write
     adoc-epub       EPUB export
     adoc-docbook    DocBook export
+    adoc-collab     collaborative editing's core: shared text replicas
     adoc-kindle     Kindle export (AZW3 and KFX)
     adoc-audit      the documentation quality audit
     adoc-impact     documentation impact analysis

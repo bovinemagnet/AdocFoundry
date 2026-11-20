@@ -13,6 +13,7 @@ cargo-fuzz = true
 
 [dependencies]
 adoc-antora = { path = "../crates/adoc-antora" }
+adoc-collab = { path = "../crates/adoc-collab" }
 adoc-core = { path = "../crates/adoc-core" }
 adoc-dom = { path = "../crates/adoc-dom" }
 # Only for `resource_id_string`, the writer of resource ids the MCP server uses.
@@ -95,6 +96,13 @@ bench = false
 [[bin]]
 name = "docbook_write"
 path = "fuzz_targets/docbook_write.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "collab_update"
+path = "fuzz_targets/collab_update.rs"
 test = false
 doc = false
 bench = false

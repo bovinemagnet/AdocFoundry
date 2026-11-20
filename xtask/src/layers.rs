@@ -34,6 +34,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("adoc-ebook", 2),
     ("adoc-epub", 2),
     ("adoc-docbook", 2),
+    ("adoc-collab", 2),
     ("adoc-kindle", 2),
     ("adoc-audit", 2),
     ("adoc-impact", 2),
@@ -291,6 +292,10 @@ pub fn check_sources(name: &str, files: &BTreeMap<PathBuf, String>) -> Vec<Strin
         // DocBook export is held as the audit is (DocBook PRD §7): no process and no network,
         // and no files or threads of its own; the engine writes what it hands back.
         "adoc-docbook" => ADOC_AUDIT_FORBIDDEN_PATHS,
+        // The collaboration core is pure as the audit is (COLLAB design §3): no files,
+        // processes, network or threads; the engine owns its replicas and the transport moves
+        // their bytes.
+        "adoc-collab" => ADOC_AUDIT_FORBIDDEN_PATHS,
         _ => return Vec::new(),
     };
     let mut violations = Vec::new();
@@ -448,6 +453,8 @@ const LEAN_EXCLUDED: &[&str] = &[
     "adoc-epub",
     "adoc-docbook",
     "adoc-kindle",
+    "adoc-collab",
+    "yrs",
     "typst",
     "gix",
 ];
@@ -694,6 +701,19 @@ fn docbook_licence_violations(licences: &[(String, String)]) -> Vec<String> {
         .collect()
 }
 
+/// A violation for each package of the collaboration core that may be used only under a
+/// copyleft licence, or declares none (COLLAB design §3: permissive dependencies only, and no
+/// Zed collaboration code).
+fn collab_licence_violations(licences: &[(String, String)]) -> Vec<String> {
+    licences
+        .iter()
+        .filter(|(_, licence)| !permissive(licence))
+        .map(|(name, licence)| {
+            format!("collaboration builds {name}, licensed `{licence}`; no copyleft is allowed")
+        })
+        .collect()
+}
+
 /// Runs every check over the workspace rooted at `root`.
 pub fn run(root: &Path) -> Result<Vec<String>, String> {
     let crates = root.join("crates");
@@ -740,6 +760,7 @@ pub fn run(root: &Path) -> Result<Vec<String>, String> {
     violations.extend(kindle_licence_violations(&kindle_licences(root)?));
     violations.extend(epub_licence_violations(&licences(root, "adoc-epub")?));
     violations.extend(docbook_licence_violations(&licences(root, "adoc-docbook")?));
+    violations.extend(collab_licence_violations(&licences(root, "adoc-collab")?));
     Ok(violations)
 }
 
@@ -1220,6 +1241,33 @@ libc = "=0.2.0"
         assert_eq!(docbook_licence_violations(&licences), Vec::<String>::new());
         let copyleft = [("libxml2-sys".to_owned(), "GPL-2.0".to_owned())];
         assert_eq!(docbook_licence_violations(&copyleft).len(), 1);
+    }
+
+    /// COLLAB design §3: `adoc-collab` names no file, process, network or thread (the audit's
+    /// list), builds nothing copyleft, and stays out of the language server's default build.
+    #[test]
+    fn collab_is_in_process() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut sources = BTreeMap::new();
+        collect_sources(&root.join("crates/adoc-collab/src"), &mut sources);
+        assert!(sources.len() >= 4, "{}", sources.len());
+        assert_eq!(check_sources("adoc-collab", &sources), Vec::<String>::new());
+        let mut sources = BTreeMap::new();
+        sources.insert(
+            PathBuf::from("x.rs"),
+            "std::net::TcpStream; std::thread::spawn; std::fs::write".to_owned(),
+        );
+        assert_eq!(check_sources("adoc-collab", &sources).len(), 4);
+
+        let licences = licences(&root, "adoc-collab").unwrap();
+        assert!(
+            licences.iter().any(|(name, _)| name == "yrs"),
+            "{licences:?}"
+        );
+        assert_eq!(collab_licence_violations(&licences), Vec::<String>::new());
+        let copyleft = [("zed-collab".to_owned(), "AGPL-3.0".to_owned())];
+        assert_eq!(collab_licence_violations(&copyleft).len(), 1);
+        assert!(LEAN_EXCLUDED.contains(&"adoc-collab") && LEAN_EXCLUDED.contains(&"yrs"));
     }
 
     /// The Word looks PRD, §9 test 1: themes load without Typst, so Word export can read them
