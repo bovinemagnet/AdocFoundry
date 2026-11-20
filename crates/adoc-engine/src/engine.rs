@@ -706,6 +706,11 @@ impl Engine {
             .registry
             .shared(command)
             .ok_or(EngineError::UnknownCommand(command))?;
+        // A session refuses what it cannot carry (COLLAB 7/8).
+        #[cfg(feature = "collab")]
+        if let Some(reason) = self.session_refuses(command, &args) {
+            return Err(EngineError::Refused(reason));
+        }
         // Typing reads nothing from the index, so what earlier typing left pending stays so.
         let typing = TYPING_COMMANDS.contains(&command);
         if !typing {

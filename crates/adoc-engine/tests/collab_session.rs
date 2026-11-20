@@ -859,3 +859,230 @@ fn presence_is_paced_and_the_latest_wins() {
         "the latest selection"
     );
 }
+
+/// Every command the engine has, decided for a session: refused while hosting
+/// (`REFUSED_WHILE_HOSTING`) or reviewed and allowed here. A new command fails this until it
+/// is put in one or the other.
+const ALLOWED_WHILE_HOSTING: &[&str] = &[
+    "app.about",
+    "app.check_for_updates",
+    "app.diagnostics",
+    "app.documentation",
+    "app.quit",
+    "appearance.save",
+    "appearance.save_font_set",
+    "collaboration.admit",
+    "collaboration.copy_invitation",
+    "collaboration.deny",
+    "collaboration.grant_edit",
+    "collaboration.join",
+    "collaboration.leave",
+    "collaboration.open_file",
+    "collaboration.remove",
+    "collaboration.revoke_edit",
+    "collaboration.share_workspace",
+    "collaboration.stop_sharing",
+    "document.browse",
+    "document.close",
+    "document.close_all",
+    "document.close_clean",
+    "document.close_left",
+    "document.close_others",
+    "document.close_right",
+    "document.discard_recovery",
+    "document.keep_open",
+    "document.local_history",
+    "document.move_tab",
+    "document.open",
+    "document.overwrite",
+    "document.pin_tab",
+    "document.recover",
+    "document.recover_unsaved",
+    "document.reload",
+    "document.restore_version",
+    "document.save",
+    "document.save_all",
+    "document.unpin_tab",
+    "edit.delete_table_column",
+    "edit.delete_table_row",
+    "edit.edit_image",
+    "edit.format_table",
+    "edit.indent_list_item",
+    "edit.insert_admonition",
+    "edit.insert_code_block",
+    "edit.insert_image",
+    "edit.insert_link",
+    "edit.insert_table",
+    "edit.insert_table_column",
+    "edit.insert_table_row",
+    "edit.insert_text",
+    "edit.outdent_list_item",
+    "edit.redo",
+    "edit.remove_link",
+    "edit.replace_range",
+    "edit.set_block_type",
+    "edit.toggle_bullet_list",
+    "edit.toggle_checked",
+    "edit.toggle_checklist",
+    "edit.toggle_code",
+    "edit.toggle_emphasis",
+    "edit.toggle_highlight",
+    "edit.toggle_line_comment",
+    "edit.toggle_numbered_list",
+    "edit.toggle_strong",
+    "edit.undo",
+    "export.docbook_component",
+    "export.docbook_page",
+    "export.docbook_profile",
+    "export.docx_component",
+    "export.docx_component_themed",
+    "export.docx_page",
+    "export.docx_page_themed",
+    "export.docx_profile",
+    "export.epub_component",
+    "export.epub_page",
+    "export.epub_profile",
+    "export.html_page",
+    "export.kindle_component",
+    "export.kindle_page",
+    "export.kindle_profile",
+    "export.pdf_component",
+    "export.pdf_page",
+    "export.pdf_pages",
+    "export.pdf_profile",
+    "git.commit",
+    "git.next_change",
+    "git.previous_change",
+    "git.push",
+    "git.refresh",
+    "git.revert_hunk",
+    "git.save_and_commit",
+    "git.show_blame",
+    "git.show_changes",
+    "git.stage",
+    "git.stage_all_adoc",
+    "git.unstage",
+    "graph.export",
+    "graph.reset_layout",
+    "image.reload",
+    "impact.analyse_changes",
+    "impact.compare_revisions",
+    "impact.inspect",
+    "navigate.back",
+    "navigate.copy_remote_link",
+    "navigate.definition",
+    "navigate.find_references",
+    "navigate.follow_link",
+    "navigate.forward",
+    "navigate.go_to",
+    "navigate.go_to_symbol",
+    "navigate.go_to_symbol_in_page",
+    "navigate.inspect_attribute",
+    "navigate.open_in_version",
+    "navigate.open_on_remote",
+    "navigate.peek_include",
+    "navigate.reveal",
+    "preview.pin",
+    "preview.retry_diagrams",
+    "project.build_site",
+    "quality.run_audit",
+    "settings.open",
+    "settings.reload",
+    "sidebar.collapse_all",
+    "sidebar.collapse_one_level",
+    "sidebar.expand_all",
+    "sidebar.reset_expansion",
+    "spelling.add_to_user",
+    "spelling.add_to_workspace",
+    "view.detach_preview",
+    "view.graph",
+    "view.local_graph",
+    "view.show_source",
+    "view.show_split",
+    "view.show_visual",
+    "view.toggle_pdf_preview",
+    "view.toggle_pdf_window",
+    "view.toggle_preview",
+    "view.toggle_scroll_sync",
+    "visual.delete_backward",
+    "visual.delete_forward",
+    "visual.insert_block",
+    "visual.insert_text",
+    "visual.split_block",
+    "workspace.quick_open",
+    "workspace.reindex",
+    "workspace.search",
+];
+
+#[test]
+fn every_command_is_decided_for_a_session() {
+    let engine = engine();
+    let undecided: Vec<&str> = engine
+        .commands()
+        .all()
+        .map(|spec| spec.id)
+        .filter(|id| {
+            !adoc_engine::REFUSED_WHILE_HOSTING.contains(id)
+                && !ALLOWED_WHILE_HOSTING.contains(&id.as_str())
+        })
+        .map(adoc_engine::CommandId::as_str)
+        .collect();
+    assert!(
+        undecided.is_empty(),
+        "decide these for a session: {undecided:?}"
+    );
+}
+
+/// Commands that would change the host's files beyond a page's text are refused while it
+/// shares, before they do anything (PRD §10 `collab_structural_commands_refused`).
+#[test]
+fn collab_structural_commands_refused() {
+    let mut session = Session::new(&[("page.adoc", "= Page\n"), ("other.adoc", "= Other\n")]);
+    let ada = session.guest(1, true);
+    let listing = |session: &Session| {
+        let mut names: Vec<String> = fs::read_dir(session.directory.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    let before = listing(&session);
+    let page = session.host_doc();
+    for &id in adoc_engine::REFUSED_WHILE_HOSTING {
+        for args in [CommandArgs::None, CommandArgs::Document(page)] {
+            let refused = session.host.invoke(id, args);
+            assert!(
+                matches!(&refused, Err(adoc_engine::EngineError::Refused(reason)) if reason.contains("while sharing")),
+                "{id:?}: {refused:?}"
+            );
+        }
+    }
+    assert_eq!(listing(&session), before);
+    assert_eq!(session.host_text(), "= Page\n");
+
+    // A guest's shared page is the host's: it is not exported, renamed or deleted here.
+    let guest_page = session.engine(ada).session_document(1).unwrap();
+    for id in [
+        ids::EXPORT_HTML_PAGE,
+        ids::PAGE_RENAME,
+        ids::FILE_DELETE,
+        ids::DOCUMENT_LOCAL_HISTORY,
+    ] {
+        let refused = session
+            .engine(ada)
+            .invoke(id, CommandArgs::Document(guest_page));
+        assert!(
+            matches!(&refused, Err(adoc_engine::EngineError::Refused(reason)) if reason.contains("host")),
+            "{id:?}: {refused:?}"
+        );
+    }
+
+    // Stopping sharing makes them available again.
+    session.host.end_session();
+    let after = session.host.invoke(ids::FILE_NEW, CommandArgs::None);
+    assert!(
+        !matches!(&after, Err(adoc_engine::EngineError::Refused(reason)) if reason.contains("while sharing")),
+        "{after:?}"
+    );
+}

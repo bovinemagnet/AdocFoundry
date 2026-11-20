@@ -1165,7 +1165,7 @@ impl Engine {
         if entry.files.len() >= MAX_OPEN_FILES {
             return Err("too many files open".to_owned());
         }
-        if let Err(error) = self.host_ensure_shared(session, file) {
+        if self.host_ensure_shared(session, file).is_err() {
             let _ = session.link.send(
                 peer,
                 Message::Error {
@@ -1349,7 +1349,7 @@ impl Engine {
         }
         let reshared = match self.host_ensure_shared(session, file) {
             Ok(reshared) => reshared,
-            Err(error) => {
+            Err(_) => {
                 // The host closed the file and it cannot be opened again (gone, or now leading
                 // outside the folder): the peer did nothing wrong.
                 let _ = session.link.send(
@@ -2339,4 +2339,63 @@ pub(crate) fn register_collaboration(registry: &mut crate::CommandRegistry) {
                 .map(|()| CommandOutcome::Done)
         },
     );
+}
+
+/// Commands refused while this engine hosts a session (COLLAB 7/8, #694): each changes the
+/// host's workspace beyond editing a page's text, across files or in its folders, which the
+/// session cannot carry to its guests and an Editor's role does not cover. Stopping sharing
+/// makes them available again.
+pub const REFUSED_WHILE_HOSTING: &[crate::CommandId] = &[
+    crate::commands::ids::ANCHOR_RENAME,
+    crate::commands::ids::PAGE_RENAME,
+    crate::commands::ids::PAGE_NEW,
+    crate::commands::ids::PAGE_NEW_PARTIAL,
+    crate::commands::ids::MODULE_NEW,
+    crate::commands::ids::PROJECT_NEW,
+    crate::commands::ids::FILE_NEW,
+    crate::commands::ids::FILE_DELETE,
+    crate::commands::ids::FILE_UNDO_DELETE,
+    crate::commands::ids::FILE_RESTORE_DELETED,
+    crate::commands::ids::NAV_ADD_PAGE,
+    crate::commands::ids::WORKSPACE_REPLACE,
+    crate::commands::ids::WORKSPACE_APPLY_PREVIEW,
+    crate::commands::ids::EDIT_PLACE_IMAGES,
+    crate::commands::ids::WORKSPACE_OPEN_FOLDER,
+    crate::commands::ids::WORKSPACE_OPEN_RECENT,
+];
+
+/// Commands refused on a guest's shared page, which is the host's file: besides these, every
+/// export (`export.*`), which would write the host's text to this computer.
+pub const REFUSED_ON_GUEST_PAGES: &[crate::CommandId] = &[
+    crate::commands::ids::PAGE_RENAME,
+    crate::commands::ids::FILE_DELETE,
+    crate::commands::ids::DOCUMENT_LOCAL_HISTORY,
+    crate::commands::ids::DOCUMENT_RESTORE_VERSION,
+];
+
+impl Engine {
+    /// Why `command` is refused in the session, if it is: a structural command while hosting,
+    /// or a command on a guest's shared page that only the host's own file could answer.
+    pub(crate) fn session_refuses(
+        &self,
+        command: crate::CommandId,
+        args: &crate::CommandArgs,
+    ) -> Option<String> {
+        if self.is_session_host() && REFUSED_WHILE_HOSTING.contains(&command) {
+            return Some(
+                "not while sharing: it would change files the session cannot share. Stop \
+                 sharing first"
+                    .to_owned(),
+            );
+        }
+        let target = match args {
+            crate::CommandArgs::Document(id) => Some(*id),
+            _ => self.active(),
+        };
+        let guest_page = target.is_some_and(|id| self.is_shared_guest(id));
+        let refused =
+            REFUSED_ON_GUEST_PAGES.contains(&command) || command.as_str().starts_with("export.");
+        (guest_page && refused)
+            .then(|| "a shared page is the host's: only the host can do that".to_owned())
+    }
 }

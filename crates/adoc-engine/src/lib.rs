@@ -124,7 +124,8 @@ pub use collab::{
 };
 #[cfg(feature = "collab")]
 pub use collab_session::{
-    Participant, PeerCaret, PeerSelection, SharePlan, SESSION_EVENTS_PER_PUMP,
+    Participant, PeerCaret, PeerSelection, SharePlan, REFUSED_ON_GUEST_PAGES,
+    REFUSED_WHILE_HOSTING, SESSION_EVENTS_PER_PUMP,
 };
 pub use command::{
     CollaborationStep, Command, CommandArgs, CommandCategory, CommandContext, CommandId,
