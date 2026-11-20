@@ -452,6 +452,11 @@ fn admitted(hosting: &mut Hosting) -> (Raw, PeerId) {
         matches!(raw.next(), Ok(Message::Join { peer: joined, role: Role::Viewer, .. }) if joined == peer)
     );
     assert!(matches!(raw.next(), Ok(Message::Manifest { .. })));
+    // A page outside any Antora component: no component is named.
+    assert!(matches!(
+        raw.next(),
+        Ok(Message::Components { components }) if components.is_empty()
+    ));
     (raw, peer)
 }
 
