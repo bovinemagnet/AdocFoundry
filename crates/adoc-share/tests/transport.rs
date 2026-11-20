@@ -478,6 +478,14 @@ fn collab_nothing_is_sent_before_admit() {
         answer(&mut hosting, &mut raw),
         Message::Snapshot { .. }
     ));
+    // The file's state follows every snapshot.
+    assert!(matches!(
+        answer(&mut hosting, &mut raw),
+        Message::FileState {
+            conflict: false,
+            ..
+        }
+    ));
     raw.send(&Message::OpenFile { file: 77 });
     assert!(matches!(
         answer(&mut hosting, &mut raw),

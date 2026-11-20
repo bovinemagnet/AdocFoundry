@@ -85,9 +85,11 @@ struct Offered {
     document: Option<DocumentId>,
     /// The file's epoch as last seen: a change means every peer needs a new snapshot.
     epoch: u32,
-    /// The file's state as last announced to the peers: the saved revision, and a conflict.
-    announced: Option<(Option<String>, bool)>,
 }
+
+/// A file's state as the host tells it: the saved revision while the shared text is it, and a
+/// conflict.
+type FileStatus = (Option<String>, bool);
 
 struct Peer {
     name: String,
@@ -110,6 +112,8 @@ struct PeerFile {
     /// Whether updates are forwarded to the peer: not while it is away or resynchronising.
     live: bool,
     selection: Option<RelativeSelection>,
+    /// The file's state as the peer was last told it.
+    told: Option<FileStatus>,
 }
 
 struct Guest {
@@ -241,7 +245,6 @@ impl Engine {
                     },
                     document: None,
                     epoch: 0,
-                    announced: None,
                 },
             );
         }
@@ -695,10 +698,17 @@ impl Engine {
         });
         // A file saved, or changed on disk, since the peers were told.
         let unannounced = match &session.side {
-            Side::Host(host) => host.offered.values().any(|offered| {
+            Side::Host(host) => host.offered.iter().any(|(file, offered)| {
                 offered.document.is_some_and(|id| {
-                    self.shared.contains_key(&id)
-                        && offered.announced.as_ref() != Some(&self.file_state(id))
+                    self.shared.contains_key(&id) && {
+                        let status = self.file_state(id);
+                        host.peers.values().any(|entry| {
+                            entry.connected
+                                && entry.files.get(file).is_some_and(|open| {
+                                    open.live && open.told.as_ref() != Some(&status)
+                                })
+                        })
+                    }
                 })
             }),
             Side::Guest(_) => false,
@@ -996,6 +1006,7 @@ impl Engine {
             );
             return;
         };
+        let status = self.file_state(id);
         let Side::Host(host) = &mut session.side else {
             return;
         };
@@ -1020,6 +1031,7 @@ impl Engine {
                 next_out: 1,
                 live: entry.connected,
                 selection,
+                told: entry.connected.then(|| status.clone()),
             },
         );
         if entry.connected {
@@ -1032,7 +1044,7 @@ impl Engine {
                     update,
                 },
             );
-            let (saved, conflict) = self.file_state(id);
+            let (saved, conflict) = status;
             let _ = session.link.send(
                 peer,
                 Message::FileState {
@@ -1355,7 +1367,7 @@ impl Engine {
     }
 
     /// The saved revision (while the shared text is it) and the conflict of document `id`.
-    fn file_state(&self, id: DocumentId) -> (Option<String>, bool) {
+    fn file_state(&self, id: DocumentId) -> FileStatus {
         match self.host_save_state(id) {
             Some(SharedSaveState::Saved { revision }) => (Some(revision), false),
             Some(SharedSaveState::Conflict) => (None, true),
@@ -1363,37 +1375,30 @@ impl Engine {
         }
     }
 
-    /// Tells every live peer with `file` open how its file stands, when that changed since it
-    /// was last told.
+    /// Tells each live peer with `file` open how its file stands, if it was told otherwise.
     fn host_announce(&mut self, session: &mut Session, file: u64, id: DocumentId) {
-        let state = self.file_state(id);
+        let status = self.file_state(id);
         let Side::Host(host) = &mut session.side else {
             return;
         };
-        let Some(offered) = host.offered.get_mut(&file) else {
-            return;
-        };
-        if offered.announced.as_ref() == Some(&state) {
-            return;
-        }
-        offered.announced = Some(state.clone());
-        let targets: Vec<(PeerId, u32)> = host
-            .peers
-            .iter()
-            .filter(|(_, entry)| entry.connected)
-            .filter_map(|(peer, entry)| {
-                let open = entry.files.get(&file).filter(|open| open.live)?;
-                Some((*peer, open.epoch))
-            })
-            .collect();
-        for (peer, epoch) in targets {
+        for (peer, entry) in &mut host.peers {
+            if !entry.connected {
+                continue;
+            }
+            let Some(open) = entry.files.get_mut(&file).filter(|open| open.live) else {
+                continue;
+            };
+            if open.told.as_ref() == Some(&status) {
+                continue;
+            }
+            open.told = Some(status.clone());
             let _ = session.link.send(
-                peer,
+                *peer,
                 Message::FileState {
                     file,
-                    epoch,
-                    saved: state.0.clone(),
-                    conflict: state.1,
+                    epoch: open.epoch,
+                    saved: status.0.clone(),
+                    conflict: status.1,
                 },
             );
         }
