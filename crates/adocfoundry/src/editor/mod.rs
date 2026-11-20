@@ -19,9 +19,9 @@ use adoc_engine::{
     commands::ids, CommandArgs, CommandId, CommandOutcome, DocumentId, EngineEvent, ImageSource,
 };
 use gpui::{
-    div, prelude::FluentBuilder as _, relative, AppContext as _, Context, Entity, FocusHandle,
-    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _,
-    Subscription, Window,
+    div, prelude::FluentBuilder as _, relative, AppContext as _, Context, Entity,
+    EntityInputHandler as _, FocusHandle, Focusable, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, Styled as _, Subscription, Window,
 };
 use gpui_component::{
     highlighter::{Diagnostic, DiagnosticSeverity as WidgetSeverity},
@@ -76,10 +76,13 @@ fn send_widget_edit(
     edit: &InputEdit,
     after: &ropey::Rope,
     cx: &mut Context<AppState>,
-) -> Option<u64> {
-    let whole = app.engine.document(document)?.text.len();
+) -> Result<Option<u64>, ()> {
+    let Some(open) = app.engine.document(document) else {
+        return Ok(None);
+    };
+    let whole = open.text.len();
     if edit.start_byte == 0 && edit.old_end_byte == whole && whole > 0 {
-        return sync_widget_to_engine(app, document, after, cx);
+        return Ok(sync_widget_to_engine(app, document, after, cx));
     }
     let command = if edit.old_end_byte == edit.start_byte {
         ids::EDIT_INSERT_TEXT
@@ -92,12 +95,12 @@ fn send_widget_edit(
         text: after.slice(edit.start_byte..edit.new_end_byte).to_string(),
     };
     if let Err(error) = app.invoke(command, args, cx) {
-        // The widget and engine disagree in a way an edit cannot express; the engine wins
-        // when the editor next reconciles.
+        // Refused (a shared page this participant may not edit just now, or an edit the
+        // engine cannot take): the caller puts the engine's text back in the widget.
         eprintln!("adocfoundry: edit rejected: {error}");
-        return None;
+        return Err(());
     }
-    app.engine.document(document).map(|open| open.version)
+    Ok(app.engine.document(document).map(|open| open.version))
 }
 
 /// The character boundary under `point` nearest to it, among the rows the editor has laid out.
@@ -141,6 +144,10 @@ pub struct SourceEditorView {
     app: Entity<AppState>,
     document: DocumentId,
     readonly: bool,
+    /// Read-only because the page is shared and this participant may not edit it now.
+    shared_readonly: bool,
+    /// A change from elsewhere waits for an input method's composition to end.
+    deferred: bool,
     caret: Option<usize>,
     /// The widget's scroll offset as last drawn, which the change markers follow.
     scroll: Option<gpui::Point<gpui::Pixels>>,
@@ -232,25 +239,37 @@ impl SourceEditorView {
             cx.notify();
         });
 
-        let mut subscriptions =
-            vec![
-                cx.subscribe(&state, |this, _, event: &InputEditsEvent, cx| {
-                    let _timed = crate::typing_bench::timed("edit");
-                    let edits = event.edits();
-                    // Edits up to the text the engine already has were sent another way.
-                    let sent = this
-                        .synced
-                        .take()
-                        .and_then(|synced| edits.iter().position(|(_, after)| *after == synced));
-                    let document = this.document;
-                    for (edit, after) in &edits[sent.map_or(0, |at| at + 1)..] {
-                        let version = this.app.update(cx, |app, cx| {
-                            send_widget_edit(app, document, edit, after, cx)
-                        });
-                        this.own_versions.extend(version);
+        let mut subscriptions = vec![cx.subscribe_in(
+            &state,
+            window,
+            |this, _, event: &InputEditsEvent, window, cx| {
+                let _timed = crate::typing_bench::timed("edit");
+                let edits = event.edits();
+                // Edits up to the text the engine already has were sent another way.
+                let sent = this
+                    .synced
+                    .take()
+                    .and_then(|synced| edits.iter().position(|(_, after)| *after == synced));
+                let document = this.document;
+                let mut refused = false;
+                for (edit, after) in &edits[sent.map_or(0, |at| at + 1)..] {
+                    match this.app.update(cx, |app, cx| {
+                        send_widget_edit(app, document, edit, after, cx)
+                    }) {
+                        Ok(version) => this.own_versions.extend(version),
+                        Err(()) => refused = true,
                     }
-                }),
-            ];
+                }
+                // The widget shows what the engine refused: put the engine's text back
+                // once the widget's own edit has finished.
+                if refused {
+                    cx.defer_in(window, |this, window, cx| {
+                        this.reconcile(window, cx);
+                        this.sync_readonly(cx);
+                    });
+                }
+            },
+        )];
         subscriptions.push(cx.subscribe_in(&app, window, |this, _, event, window, cx| {
             let _timed = crate::typing_bench::timed("events.editor");
             match event {
@@ -259,7 +278,9 @@ impl SourceEditorView {
                     if !this.own_versions.remove(version) {
                         this.reconcile(window, cx);
                     }
+                    this.sync_readonly(cx);
                 }
+                EngineEvent::SessionChanged => this.sync_readonly(cx),
                 EngineEvent::GitHunksChanged(id) | EngineEvent::GitBlameChanged(id)
                     if *id == this.document =>
                 {
@@ -282,28 +303,41 @@ impl SourceEditorView {
             }
         }));
 
-        subscriptions.push(cx.observe(&state, |this: &mut Self, state, cx| {
-            let (caret, scroll) = {
-                let state = state.read(cx);
-                (state.cursor(), state.scroll_offset())
-            };
-            let moved = this.caret != Some(caret);
-            if moved {
-                this.caret = Some(caret);
-                cx.emit(SourceEditorEvent::CaretMoved(caret));
-            }
-            // The change markers follow the editor's scrolling; nothing else here changes with
-            // the widget's state, which redraws itself.
-            if moved || this.scroll != Some(scroll) {
-                this.scroll = Some(scroll);
-                cx.notify();
-            }
-        }));
+        subscriptions.push(
+            cx.observe_in(&state, window, |this: &mut Self, state, window, cx| {
+                // A change from elsewhere held back during a composition goes in once it ends.
+                if this.deferred
+                    && state
+                        .update(cx, |state, cx| state.marked_text_range(window, cx))
+                        .is_none()
+                {
+                    this.deferred = false;
+                    this.reconcile(window, cx);
+                }
+                let (caret, scroll) = {
+                    let state = state.read(cx);
+                    (state.cursor(), state.scroll_offset())
+                };
+                let moved = this.caret != Some(caret);
+                if moved {
+                    this.caret = Some(caret);
+                    cx.emit(SourceEditorEvent::CaretMoved(caret));
+                }
+                // The change markers follow the editor's scrolling; nothing else here changes with
+                // the widget's state, which redraws itself.
+                if moved || this.scroll != Some(scroll) {
+                    this.scroll = Some(scroll);
+                    cx.notify();
+                }
+            }),
+        );
 
         let mut view = Self {
             app,
             document,
             readonly,
+            shared_readonly: false,
+            deferred: false,
             caret: None,
             scroll: None,
             own_versions: std::collections::BTreeSet::new(),
@@ -319,7 +353,24 @@ impl SourceEditorView {
             _subscriptions: subscriptions,
         };
         view.show_diagnostics(cx);
+        view.sync_readonly(cx);
         view
+    }
+
+    /// Makes the widget read-only while the page is shared and this participant may not edit
+    /// it (a Viewer, out of touch, or waiting to be resynchronised): the engine refuses such
+    /// edits whatever the widget does, and this keeps them from being typed at all.
+    fn sync_readonly(&mut self, cx: &mut Context<Self>) {
+        let shared_readonly = matches!(
+            self.app.read(cx).engine.shared_file(self.document),
+            Some((_, _, adoc_engine::SharedRole::Guest { can_edit: false }))
+        );
+        if shared_readonly != self.shared_readonly {
+            self.shared_readonly = shared_readonly;
+            let readonly = self.readonly || shared_readonly;
+            self.state
+                .update(cx, |state, cx| state.set_readonly(readonly, cx));
+        }
     }
 
     pub fn document(&self) -> DocumentId {
@@ -572,6 +623,15 @@ impl SourceEditorView {
     /// Applies the engine's text to the widget when they differ, as one replacement, keeping
     /// the selection on the text it was on.
     fn reconcile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Replacing text ends an input method's composition: wait for it to end instead.
+        if self
+            .state
+            .update(cx, |state, cx| state.marked_text_range(window, cx))
+            .is_some()
+        {
+            self.deferred = true;
+            return;
+        }
         let Some(engine_text) = self
             .app
             .read(cx)

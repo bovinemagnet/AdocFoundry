@@ -517,6 +517,7 @@ dependencies = [
 name = "adocfoundry"
 version = "0.13.0"
 dependencies = [
+ "adoc-collab",
  "adoc-core",
  "adoc-engine",
  "adoc-git",

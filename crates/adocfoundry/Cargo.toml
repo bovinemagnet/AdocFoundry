@@ -40,6 +40,8 @@ embed-resource.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+# The in-memory link the collaboration tests meet over.
+adoc-collab = { workspace = true, features = ["test-support"] }
 adoc-core = { workspace = true, features = ["probe"] }
 adoc-git = { workspace = true, features = ["test-support"] }
 # PDF export highlights source blocks as the preview does; `preview::highlight_tests` checks it.

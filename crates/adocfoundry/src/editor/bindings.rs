@@ -65,6 +65,11 @@ actions!(
         ShowDiagnostics,
         ShowDocumentation,
         ShowAbout,
+        ShareWorkspace,
+        JoinSession,
+        CopyInvitation,
+        StopSharing,
+        LeaveSession,
         Quit,
         HideApp,
         HideOtherApps,
@@ -325,6 +330,11 @@ fn binding_for(id: CommandId, keys: &str, cx: &App) -> Option<KeyBinding> {
         ids::APP_DIAGNOSTICS => key_binding(keys, ShowDiagnostics, workspace, cx),
         ids::APP_DOCUMENTATION => key_binding(keys, ShowDocumentation, workspace, cx),
         ids::APP_ABOUT => key_binding(keys, ShowAbout, workspace, cx),
+        ids::COLLAB_SHARE => key_binding(keys, ShareWorkspace, workspace, cx),
+        ids::COLLAB_JOIN => key_binding(keys, JoinSession, workspace, cx),
+        ids::COLLAB_COPY_INVITATION => key_binding(keys, CopyInvitation, workspace, cx),
+        ids::COLLAB_STOP => key_binding(keys, StopSharing, workspace, cx),
+        ids::COLLAB_LEAVE => key_binding(keys, LeaveSession, workspace, cx),
         // From any window, the graph and the detached preview too: the app handles it.
         ids::APP_QUIT => key_binding(keys, Quit, None, cx),
         ids::SETTINGS_RELOAD => key_binding(keys, ReloadSettings, workspace, cx),
@@ -452,6 +462,11 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::APP_DIAGNOSTICS => Box::new(ShowDiagnostics),
         ids::APP_DOCUMENTATION => Box::new(ShowDocumentation),
         ids::APP_ABOUT => Box::new(ShowAbout),
+        ids::COLLAB_SHARE => Box::new(ShareWorkspace),
+        ids::COLLAB_JOIN => Box::new(JoinSession),
+        ids::COLLAB_COPY_INVITATION => Box::new(CopyInvitation),
+        ids::COLLAB_STOP => Box::new(StopSharing),
+        ids::COLLAB_LEAVE => Box::new(LeaveSession),
         ids::APP_QUIT => Box::new(Quit),
         ids::SETTINGS_RELOAD => Box::new(ReloadSettings),
         ids::VIEW_TOGGLE_PREVIEW => Box::new(TogglePreview),
@@ -628,6 +643,13 @@ mod tests {
             ids::APPEARANCE_SAVE,
             // Saved by Select Font Set…, which is the app's own.
             ids::APPEARANCE_SAVE_FONT_SET,
+            // The Session panel's buttons, each on the participant or file of its row.
+            ids::COLLAB_ADMIT,
+            ids::COLLAB_DENY,
+            ids::COLLAB_GRANT_EDIT,
+            ids::COLLAB_REVOKE_EDIT,
+            ids::COLLAB_REMOVE,
+            ids::COLLAB_OPEN_FILE,
         ];
         let engine = Engine::new(Settings::default());
         let missing: Vec<&str> = engine
