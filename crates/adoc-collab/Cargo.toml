@@ -12,5 +12,9 @@ serde.workspace = true
 serde_json.workspace = true
 yrs.workspace = true
 
+[features]
+# An in-memory link for tests of sessions (`testing`), for the engine's and the app's tests.
+test-support = []
+
 [lints]
 workspace = true

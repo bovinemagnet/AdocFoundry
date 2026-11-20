@@ -123,10 +123,10 @@ pub use collab::{
     revision_of, DiskResolution, SharedFileId, SharedReceipt, SharedRole, SharedSaveState,
 };
 #[cfg(feature = "collab")]
-pub use collab_session::{Participant, PeerSelection, SESSION_EVENTS_PER_PUMP};
+pub use collab_session::{Participant, PeerSelection, SharePlan, SESSION_EVENTS_PER_PUMP};
 pub use command::{
-    Command, CommandArgs, CommandCategory, CommandContext, CommandId, CommandOutcome,
-    CommandRegistry, CommandSpec, RegistryError,
+    CollaborationStep, Command, CommandArgs, CommandCategory, CommandContext, CommandId,
+    CommandOutcome, CommandRegistry, CommandSpec, RegistryError,
 };
 pub use deletion::{KeptDeletion, DELETED_DIR};
 pub use discovery::{IncomingReference, ReferenceKind, ResourceEntry, ResourceQuery};

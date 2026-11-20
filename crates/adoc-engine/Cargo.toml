@@ -70,7 +70,7 @@ git = ["dep:adoc-git"]
 collab = ["dep:adoc-collab"]
 
 [dev-dependencies]
-adoc-collab.workspace = true
+adoc-collab = { workspace = true, features = ["test-support"] }
 adoc-core = { workspace = true, features = ["probe"] }
 adoc-git = { workspace = true, features = ["test-support"] }
 # Reading written DOCX packages back in `tests/docx_export.rs`.

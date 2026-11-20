@@ -153,8 +153,24 @@ pub enum CommandArgs {
     },
 }
 
+/// What a collaboration command asks of the front end, which holds the transport and so alone
+/// can listen, connect or hand out invitations (COLLAB 6/8).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CollaborationStep {
+    /// Ask what to share, and only then listen.
+    Share,
+    /// Ask for an invitation and connect.
+    Join,
+    /// Copy a new invitation to the clipboard.
+    CopyInvitation,
+    /// The session ended here: close the transport.
+    Ended,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum CommandOutcome {
+    /// A collaboration command's step for the front end.
+    Collaboration(CollaborationStep),
     Done,
     Opened(DocumentId),
     /// An image opened, or activated, in an image tab.

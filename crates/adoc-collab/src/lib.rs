@@ -25,6 +25,8 @@ mod edit;
 mod link;
 pub mod protocol;
 mod replica;
+#[cfg(feature = "test-support")]
+pub mod testing;
 mod wire;
 
 use std::time::Duration;

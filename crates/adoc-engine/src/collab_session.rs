@@ -1920,3 +1920,222 @@ fn fresh_client(clients: &mut BTreeSet<u64>) -> ReplicaId {
         }
     }
 }
+
+/// What Share would offer from a folder: the files that may be shared, and how many AsciiDoc
+/// files there were left out (hidden, ignored, leading outside, too large or unshowable).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SharePlan {
+    pub root: PathBuf,
+    pub files: Vec<PathBuf>,
+    pub left_out: usize,
+}
+
+impl Engine {
+    /// The indexed AsciiDoc files under `root` Share would offer, as `host_session` checks
+    /// them, for the front end to show before anything listens.
+    #[must_use]
+    pub fn share_plan(&self, root: &Path) -> SharePlan {
+        let root =
+            normalize_path(&std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf()));
+        let access = FileAccess::within([root.clone()]);
+        let ignore = &self.settings.workspace.ignore;
+        let mut plan = SharePlan {
+            root: root.clone(),
+            ..SharePlan::default()
+        };
+        let mut candidates: Vec<PathBuf> = self
+            .workspace
+            .index
+            .files()
+            .map(|file| normalize_path(&file.path))
+            .filter(|path| path.starts_with(&root) && adoc_index::is_asciidoc_path(path))
+            .collect();
+        candidates.sort();
+        candidates.dedup();
+        for path in candidates {
+            if offer(&access, &root, &path, ignore).is_ok() {
+                plan.files.push(path);
+            } else {
+                plan.left_out += 1;
+            }
+        }
+        plan
+    }
+}
+
+/// The collaboration commands (COLLAB 6/8). Those that listen, connect or copy an invitation
+/// hand their step to the front end, which holds the transport; the others act on the session
+/// here, and refuse when there is none.
+pub(crate) fn register_collaboration(registry: &mut crate::CommandRegistry) {
+    use crate::{
+        commands::{ids, register, spec},
+        CollaborationStep, CommandArgs, CommandCategory, CommandContext, CommandOutcome,
+    };
+
+    fn step(step: CollaborationStep) -> Result<CommandOutcome, EngineError> {
+        Ok(CommandOutcome::Collaboration(step))
+    }
+
+    fn number(
+        command: crate::CommandId,
+        args: &CommandArgs,
+        key: &str,
+    ) -> Result<u64, EngineError> {
+        match args {
+            CommandArgs::Custom(value) => value.get(key).and_then(serde_json::Value::as_u64),
+            _ => None,
+        }
+        .ok_or(EngineError::InvalidArguments {
+            command,
+            expected: "a participant or file number",
+        })
+    }
+
+    fn peer(command: crate::CommandId, args: &CommandArgs) -> Result<PeerId, EngineError> {
+        let value = number(command, args, "peer")?;
+        u32::try_from(value)
+            .map(PeerId)
+            .map_err(|_| EngineError::InvalidArguments {
+                command,
+                expected: "a participant number",
+            })
+    }
+
+    let simple = |id, title| {
+        spec(
+            id,
+            title,
+            CommandCategory::Workspace,
+            None,
+            CommandContext::Always,
+        )
+    };
+    register(
+        registry,
+        simple(ids::COLLAB_SHARE, "Share Workspace…"),
+        |engine, _| {
+            if engine.in_session() {
+                return Err(refused("a session is already running"));
+            }
+            if engine.roots().is_empty() {
+                return Err(refused("open a folder to share it"));
+            }
+            step(CollaborationStep::Share)
+        },
+    );
+    register(
+        registry,
+        simple(ids::COLLAB_JOIN, "Join Session…"),
+        |engine, _| {
+            if engine.in_session() {
+                return Err(refused("a session is already running"));
+            }
+            step(CollaborationStep::Join)
+        },
+    );
+    register(
+        registry,
+        simple(ids::COLLAB_COPY_INVITATION, "Copy Invitation"),
+        |engine, _| {
+            if !engine.is_session_host() {
+                return Err(refused("only a host invites"));
+            }
+            step(CollaborationStep::CopyInvitation)
+        },
+    );
+    register(
+        registry,
+        simple(ids::COLLAB_STOP, "Stop Sharing"),
+        |engine, _| {
+            if !engine.is_session_host() {
+                return Err(refused("nothing is being shared"));
+            }
+            engine.end_session();
+            step(CollaborationStep::Ended)
+        },
+    );
+    register(
+        registry,
+        simple(ids::COLLAB_LEAVE, "Leave Session"),
+        |engine, _| {
+            if !engine.in_session() || engine.is_session_host() {
+                return Err(refused("not in someone else's session"));
+            }
+            engine.end_session();
+            step(CollaborationStep::Ended)
+        },
+    );
+    register(
+        registry,
+        simple(ids::COLLAB_ADMIT, "Admit Participant"),
+        |engine, args| {
+            engine
+                .admit_peer(peer(ids::COLLAB_ADMIT, &args)?)
+                .map(|()| CommandOutcome::Done)
+        },
+    );
+    register(
+        registry,
+        simple(ids::COLLAB_DENY, "Turn Participant Away"),
+        |engine, args| {
+            let peer = peer(ids::COLLAB_DENY, &args)?;
+            if !engine
+                .session_knocks()
+                .iter()
+                .any(|(knock, _)| *knock == peer)
+            {
+                return Err(refused("nobody is waiting with that number"));
+            }
+            engine.remove_peer(peer);
+            Ok(CommandOutcome::Done)
+        },
+    );
+    register(
+        registry,
+        simple(ids::COLLAB_GRANT_EDIT, "Let Participant Edit"),
+        |engine, args| {
+            engine
+                .set_peer_role(peer(ids::COLLAB_GRANT_EDIT, &args)?, Role::Editor)
+                .map(|()| CommandOutcome::Done)
+        },
+    );
+    register(
+        registry,
+        simple(ids::COLLAB_REVOKE_EDIT, "Make Participant a Viewer"),
+        |engine, args| {
+            engine
+                .set_peer_role(peer(ids::COLLAB_REVOKE_EDIT, &args)?, Role::Viewer)
+                .map(|()| CommandOutcome::Done)
+        },
+    );
+    register(
+        registry,
+        simple(ids::COLLAB_REMOVE, "Remove Participant"),
+        |engine, args| {
+            let peer = peer(ids::COLLAB_REMOVE, &args)?;
+            if !engine
+                .participants()
+                .iter()
+                .any(|participant| participant.peer == peer)
+            {
+                return Err(refused("no such participant"));
+            }
+            engine.remove_peer(peer);
+            Ok(CommandOutcome::Done)
+        },
+    );
+    register(
+        registry,
+        simple(ids::COLLAB_OPEN_FILE, "Open Shared File"),
+        |engine, args| {
+            let file = number(ids::COLLAB_OPEN_FILE, &args, "file")?;
+            if let Some(id) = engine.session_document(file) {
+                engine.set_active(id);
+                return Ok(CommandOutcome::Opened(id));
+            }
+            engine
+                .open_session_file(file)
+                .map(|()| CommandOutcome::Done)
+        },
+    );
+}

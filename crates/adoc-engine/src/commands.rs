@@ -83,6 +83,17 @@ pub mod ids {
     pub const APP_ABOUT: CommandId = CommandId::new("app.about");
     pub const APP_DOCUMENTATION: CommandId = CommandId::new("app.documentation");
     pub const APP_QUIT: CommandId = CommandId::new("app.quit");
+    pub const COLLAB_SHARE: CommandId = CommandId::new("collaboration.share_workspace");
+    pub const COLLAB_JOIN: CommandId = CommandId::new("collaboration.join");
+    pub const COLLAB_COPY_INVITATION: CommandId = CommandId::new("collaboration.copy_invitation");
+    pub const COLLAB_STOP: CommandId = CommandId::new("collaboration.stop_sharing");
+    pub const COLLAB_LEAVE: CommandId = CommandId::new("collaboration.leave");
+    pub const COLLAB_ADMIT: CommandId = CommandId::new("collaboration.admit");
+    pub const COLLAB_DENY: CommandId = CommandId::new("collaboration.deny");
+    pub const COLLAB_GRANT_EDIT: CommandId = CommandId::new("collaboration.grant_edit");
+    pub const COLLAB_REVOKE_EDIT: CommandId = CommandId::new("collaboration.revoke_edit");
+    pub const COLLAB_REMOVE: CommandId = CommandId::new("collaboration.remove");
+    pub const COLLAB_OPEN_FILE: CommandId = CommandId::new("collaboration.open_file");
     pub const SETTINGS_RELOAD: CommandId = CommandId::new("settings.reload");
     pub const VIEW_TOGGLE_PREVIEW: CommandId = CommandId::new("view.toggle_preview");
     pub const VIEW_DETACH_PREVIEW: CommandId = CommandId::new("view.detach_preview");
@@ -624,6 +635,8 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     crate::impact_inspection::register_impact_inspection(registry);
     crate::deletion::register_deletion(registry);
     crate::appearance::register_appearance(registry);
+    #[cfg(feature = "collab")]
+    crate::collab_session::register_collaboration(registry);
     crate::font_sets::register_font_sets(registry);
     crate::graph::register_graph(registry);
     #[cfg(feature = "git")]
@@ -659,6 +672,11 @@ fn document_save(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcom
     let CommandArgs::Document(id) = args else {
         return Err(invalid(ids::DOCUMENT_SAVE, "a document"));
     };
+    // A guest's Save asks the host, the only one who writes the file.
+    #[cfg(feature = "collab")]
+    if engine.is_shared_guest(id) {
+        return engine.request_shared_save(id).map(|_| CommandOutcome::Done);
+    }
     engine.save(id).map(|()| CommandOutcome::Done)
 }
 

@@ -608,3 +608,117 @@ fn selections_of_an_earlier_epoch_are_forgotten() {
     assert!(session.host.peer_selections(host_doc).is_empty());
     assert!(session.engine(bob).peer_selections(bob_doc).is_empty());
 }
+
+fn peer_args(peer: PeerId) -> adoc_engine::CommandArgs {
+    adoc_engine::CommandArgs::Custom(serde_json::json!({ "peer": peer.0 }))
+}
+
+#[test]
+fn collaboration_commands_act_on_the_session() {
+    use adoc_engine::{CollaborationStep, CommandOutcome};
+
+    let mut session = Session::new(&[("page.adoc", "= Page\n")]);
+    // Listening, connecting and inviting are the front end's: their commands say so.
+    assert!(session
+        .host
+        .invoke(ids::COLLAB_SHARE, CommandArgs::None)
+        .is_err());
+    assert_eq!(
+        session
+            .host
+            .invoke(ids::COLLAB_COPY_INVITATION, CommandArgs::None)
+            .unwrap(),
+        CommandOutcome::Collaboration(CollaborationStep::CopyInvitation)
+    );
+    let ada = session.knock(1);
+    session
+        .host
+        .invoke(ids::COLLAB_ADMIT, peer_args(ada))
+        .unwrap();
+    session.settle();
+    session
+        .host
+        .invoke(ids::COLLAB_GRANT_EDIT, peer_args(ada))
+        .unwrap();
+    session.settle();
+    assert_eq!(session.engine(ada).session_me(), Some((ada, Role::Editor)));
+    session
+        .engine(ada)
+        .invoke(
+            ids::COLLAB_OPEN_FILE,
+            CommandArgs::Custom(serde_json::json!({ "file": 1 })),
+        )
+        .unwrap();
+    session.settle();
+    // A guest's Save asks the host.
+    guest_types(&mut session, ada, 0, "x");
+    session.settle();
+    let id = session.engine(ada).session_document(1).unwrap();
+    session
+        .engine(ada)
+        .invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(id))
+        .unwrap();
+    session.settle();
+    assert_eq!(
+        fs::read_to_string(session.directory.path().join("page.adoc")).unwrap(),
+        "x= Page\n"
+    );
+    session
+        .host
+        .invoke(ids::COLLAB_REVOKE_EDIT, peer_args(ada))
+        .unwrap();
+    session.settle();
+    assert_eq!(session.engine(ada).session_me(), Some((ada, Role::Viewer)));
+    // Stopping ends the session and hands the front end its step.
+    assert_eq!(
+        session
+            .host
+            .invoke(ids::COLLAB_STOP, CommandArgs::None)
+            .unwrap(),
+        CommandOutcome::Collaboration(CollaborationStep::Ended)
+    );
+    assert!(!session.host.in_session());
+    assert_eq!(session.removed(), [(ada, ErrorCode::Closed)]);
+    assert!(session
+        .host
+        .invoke(ids::COLLAB_STOP, CommandArgs::None)
+        .is_err());
+}
+
+#[test]
+fn the_share_plan_offers_what_hosting_would() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("docs");
+    for name in [
+        "modules/ROOT/pages/index.adoc",
+        "modules/ROOT/partials/part.adoc",
+        "modules/ROOT/pages/.draft.adoc",
+        "node_modules/pkg/readme.adoc",
+    ] {
+        let path = root.join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "= Page\n").unwrap();
+    }
+    let mut engine = engine();
+    assert!(matches!(
+        engine.invoke(ids::COLLAB_SHARE, CommandArgs::None),
+        Err(adoc_engine::EngineError::Refused(_))
+    ));
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let plan = engine.share_plan(&root);
+    let root = adoc_engine::normalize_path(&root);
+    assert_eq!(
+        plan.files,
+        [
+            root.join("modules/ROOT/pages/index.adoc"),
+            root.join("modules/ROOT/partials/part.adoc"),
+        ]
+    );
+    // Whatever the plan offers, hosting offers as it is.
+    let net = Arc::new(Mutex::new(Net::default()));
+    let manifest = engine
+        .host_session(Box::new(HostLink(net)), &root, &plan.files, "Host")
+        .unwrap();
+    assert_eq!(manifest.len(), 2);
+}
