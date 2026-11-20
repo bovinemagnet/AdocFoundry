@@ -180,6 +180,13 @@ impl Engine {
         overwrite: bool,
         background: bool,
     ) -> Result<u64, EngineError> {
+        // A guest's shared document has no file here: only the host saves it.
+        #[cfg(feature = "collab")]
+        if self.is_shared_guest(id) {
+            return Err(EngineError::Refused(
+                "a shared document is saved by its host".to_owned(),
+            ));
+        }
         let document = self
             .documents
             .get(&id)

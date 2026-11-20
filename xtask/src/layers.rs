@@ -714,6 +714,19 @@ fn collab_licence_violations(licences: &[(String, String)]) -> Vec<String> {
         .collect()
 }
 
+/// The front ends that never take part in collaboration (COLLAB design §3): the engine's
+/// `collab` feature is the app's alone.
+const COLLAB_FREE: &[&str] = &["adoc-ls", "adoc-mcp", "adocfoundry-cli"];
+
+/// A violation for each collaboration crate `package`'s default build compiles.
+fn collab_violations(package: &str, packages: &BTreeSet<String>) -> Vec<String> {
+    ["adoc-collab", "yrs"]
+        .iter()
+        .filter(|name| packages.contains(**name))
+        .map(|name| format!("{package} builds {name}; only the app takes part in collaboration"))
+        .collect()
+}
+
 /// Runs every check over the workspace rooted at `root`.
 pub fn run(root: &Path) -> Result<Vec<String>, String> {
     let crates = root.join("crates");
@@ -761,6 +774,12 @@ pub fn run(root: &Path) -> Result<Vec<String>, String> {
     violations.extend(epub_licence_violations(&licences(root, "adoc-epub")?));
     violations.extend(docbook_licence_violations(&licences(root, "adoc-docbook")?));
     violations.extend(collab_licence_violations(&licences(root, "adoc-collab")?));
+    for package in COLLAB_FREE {
+        violations.extend(collab_violations(
+            package,
+            &default_build_packages(root, package)?,
+        ));
+    }
     Ok(violations)
 }
 
@@ -1268,6 +1287,19 @@ libc = "=0.2.0"
         let copyleft = [("zed-collab".to_owned(), "AGPL-3.0".to_owned())];
         assert_eq!(collab_licence_violations(&copyleft).len(), 1);
         assert!(LEAN_EXCLUDED.contains(&"adoc-collab") && LEAN_EXCLUDED.contains(&"yrs"));
+    }
+
+    /// COLLAB design §3: the language server, MCP server and command line build no
+    /// collaboration crate; the engine's `collab` feature is the app's to name.
+    #[test]
+    fn collab_stays_out_of_the_other_front_ends() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        for package in COLLAB_FREE {
+            let packages = default_build_packages(&root, package).unwrap();
+            assert_eq!(collab_violations(package, &packages), Vec::<String>::new());
+        }
+        let with = BTreeSet::from(["adoc-collab".to_owned(), "yrs".to_owned()]);
+        assert_eq!(collab_violations("adoc-ls", &with).len(), 2);
     }
 
     /// The Word looks PRD, §9 test 1: themes load without Typst, so Word export can read them

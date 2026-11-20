@@ -8,8 +8,8 @@ It is at layer L2, beside `adoc-render` and `adoc-docbook`.
 The design is `docs/design/DESIGN-AdocFoundry_Collaboration.md` in the repository, and the evidence for choosing `yrs` is `docs/qa/spike-collab.md`; neither is part of this site.
 
 NOTE: The crate is COLLAB 2/8 (issue #689) of the collaboration epic #686.
-The engine does not use it yet.
-Wiring replicas into the engine's documents is COLLAB 3/8 (issue #690), so nothing in the app, the command line or the MCP server collaborates today.
+The engine's `collab` feature uses it (COLLAB 3/8, issue #690), keeping each shared document as a replica.
+The app does not yet (COLLAB 6/8), so nothing in the app, the command line or the MCP server collaborates today.
 
 == What it does
 

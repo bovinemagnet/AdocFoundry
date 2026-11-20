@@ -183,7 +183,7 @@ An unknown kind, malformed JSON, or a field outside its limit closes the connect
   2. Then `apply_remote`, giving byte edits.
   3. Then `edit_document` with `EditOrigin::Remote`: one incremental patch per update, never a whole-text replacement, never echoed, never entered into local undo.
   4. Then the pending check (§2).
-- **One gateway:** every text-producing route already reaches `edit_document`: typing, IME, paste, visual steps, spelling replacements, table formatting, case changes, undo and redo. The bridge sits there, and nothing is special-cased.
+- **One gateway:** every text-producing route already reaches `apply_edits` (or `edit_document`, for undo and redo): typing, IME, paste, visual steps, spelling replacements, table formatting, case changes, a reload. The bridge sits in `apply_edits` (`Engine::apply_shared_edits`), and nothing is special-cased. As built in COLLAB 3/8: `share_document`, `open_shared`, `apply_shared_update` with its `SharedReceipt`, `take_shared_updates`, `reset_shared`, `stop_sharing`.
 - **Events:** `EngineEvent::DocumentChanged` gains the edit's origin. Existing listeners that ignore it are unaffected.
 - **Verification:** whole-text comparisons of rope and replica cost about 90 µs a keystroke on a 1 MiB page (record, finding 8). They run in tests, after a resynchronisation and before a save, not on every keystroke.
 

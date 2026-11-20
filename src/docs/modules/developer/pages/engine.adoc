@@ -413,7 +413,10 @@ The engine publishes `EngineEvent` values to subscribers through `std::sync::mps
 |Indexing finished for the roots, with the number of files.
 
 |`DocumentOpened`, `DocumentChanged`, `DocumentSaved`, `DocumentClosed`
-|Document lifecycle. `DocumentChanged` carries the version and the edits.
+|Document lifecycle. `DocumentChanged` carries the version, the edits and an `origin` (`EditOrigin::Local`, `Undo`, `Redo` or `Remote`).
+
+|`SharedUpdates`
+|A shared document has encoded updates waiting for the transport (`Engine::take_shared_updates`). Only with the `collab` feature.
 
 |`GraphChanged`
 |The link graph changed. It carries the new revision, and is published at most once a `pump`.
@@ -819,6 +822,55 @@ A visual edit is a source edit, so there is no second history.
 A run of visual typing coalesces like source typing, and every other visual command is its own undo group.
 Undo and redo apply to the document whichever editor invoked them, and the model is rebuilt before they return.
 The inverse of a step is the source edits that restore the text before it.
+
+== Collaborative editing
+
+The `collab` Cargo feature (COLLAB 3/8, issue #690) lets the engine share an open document with other participants.
+It is on by default for the crate and off in `[workspace.dependencies]`, so a front end names it.
+Only the app may, and it does not yet (COLLAB 6/8); `cargo xtask layers` holds the language server, the MCP server and the command line to building neither `adoc-collab` nor `yrs` (`COLLAB_FREE` in `xtask/src/layers.rs`).
+The engine has no network code here: the transport (COLLAB 4/8) carries the updates and calls the methods below.
+The design is in `docs/design/DESIGN-AdocFoundry_Collaboration.md` in the repository.
+The code is `crates/adoc-engine/src/collab.rs`, with hooks marked `#[cfg(feature = "collab")]` in the engine, the workspace and the writer.
+
+=== Hosting and joining
+
+`share_document(id, SharedFileId, ReplicaId)` shares an open document as the host, and drops its undo history.
+`open_shared(name, file, epoch, snapshot, me, can_edit)` opens a document with no file on disk, as a guest, from the host's snapshot.
+`reset_shared` restarts a guest from a new snapshot, and `stop_sharing` ends the sharing.
+
+=== Local edits
+
+`apply_edits` hands the edits of a shared document to `apply_shared_edits`.
+It checks them against the rope, applies them to the replica and then to the rope, and keeps the resulting update for the transport.
+The transport collects it with `take_shared_updates`, and `EngineEvent::SharedUpdates` says one is waiting.
+Typing coalesces as it does for any document, and the edits of one command are one undo group.
+The visual editor's edits reach the replica through the same bridge (`collab_visual_edits_share_the_bridge`).
+
+=== Remote updates
+
+`apply_shared_update(id, epoch, update, Sender)` applies another participant's update.
+It reaches the rope as one patch with `EditOrigin::Remote`, is never echoed back and never enters the local undo history.
+It returns a `SharedReceipt`:
+
+`Applied`:: The update is in.
+`NeedsResync`:: A guest could not apply it and needs a new snapshot.
+`Rebuilt { epoch }`:: The host rebuilt its replica from its own text, because a guest's update left it waiting or inconsistent.
+The transport drops that guest and sends everyone a new snapshot.
+
+=== Undo, saving and refusals
+
+Undo and redo of a shared document belong to the replica, so they undo only the local author's work.
+The engine refuses these:
+
+* A guest without editing rights cannot edit or undo.
+* A guest cannot save.
+* A shared document is never reloaded from disk.
+A change on disk to it is reported as `DocumentChangedOnDisk` and not applied.
+* One command's edits to several files are refused while one of them is shared.
+
+`EngineEvent::DocumentChanged` carries an `origin: EditOrigin` for every document, shared or not.
+`collab_off_changes_nothing` holds that a document that is not shared behaves as before.
+The tests are in `crates/adoc-engine/tests/collab.rs`, among them `collab_engines_converge` and `collab_remote_edit_is_not_echoed`.
 
 == The pump and worker indexing
 
@@ -1693,7 +1745,7 @@ See xref:building-and-releasing.adoc#notices[cargo xtask notices] for how the no
 
 == Engine features
 
-The engine has Cargo features `typst`, `docx`, `kindle`, `epub`, `docbook`, `git` and the `export` pipeline the formats share.
+The engine has Cargo features `typst`, `docx`, `kindle`, `epub`, `docbook`, `collab`, `git` and the `export` pipeline the formats share.
 They are on by default for the crate and off in `[workspace.dependencies]`, so each front end names the ones it wants.
 Without `git`, the engine behaves as with `[git] enabled = false`.
 Without `typst`, the PDF export commands are not registered and `export_blocking` fails; likewise the DOCX, Kindle, EPUB and DocBook commands without `docx`, `kindle`, `epub` and `docbook`.

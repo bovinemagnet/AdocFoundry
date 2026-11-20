@@ -8,6 +8,8 @@ mod appearance;
 mod attribute_inspection;
 mod auto_save;
 mod clock;
+#[cfg(feature = "collab")]
+mod collab;
 mod command;
 pub mod commands;
 #[cfg(feature = "git")]
@@ -94,6 +96,9 @@ mod writer;
 pub use about::{About, Notice, Notices, DOCUMENTATION};
 /// The documentation quality audit's model: rules, reports and the `[quality]` policy.
 pub use adoc_audit as audit;
+/// What a shared document's updates, state vectors and participants are, for the transport.
+#[cfg(feature = "collab")]
+pub use adoc_collab::{EncodedUpdate, ReplicaId, Sender, StateVectorBytes};
 /// The documentation impact analysis, for front ends, which never name the crate.
 pub use adoc_impact as impact;
 pub use adoc_lang::effective::{
@@ -108,6 +113,8 @@ pub use attribute_inspection::{
 };
 pub use auto_save::AUTO_SAVE_DELAY;
 pub use clock::{Clock, ManualClock, SystemClock};
+#[cfg(feature = "collab")]
+pub use collab::{SharedFileId, SharedReceipt, SharedRole};
 pub use command::{
     Command, CommandArgs, CommandCategory, CommandContext, CommandId, CommandOutcome,
     CommandRegistry, CommandSpec, RegistryError,
@@ -125,7 +132,7 @@ pub use edit::TextEdit;
 pub use engine::{Engine, INDEX_SETTLE, MAX_TEXT_FILE};
 pub use epub_settings::{EpubProfile, EpubSettings};
 pub use error::{ConflictKind, EngineError};
-pub use event::EngineEvent;
+pub use event::{EditOrigin, EngineEvent};
 pub use expansion::{Branch, SidebarPanel, EXPANSION_SAVE_SETTLE, EXPANSION_STATE_FILE};
 #[cfg(feature = "docbook")]
 pub use export::docbook_assets_folder;

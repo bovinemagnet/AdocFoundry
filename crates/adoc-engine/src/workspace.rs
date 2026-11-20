@@ -1130,7 +1130,13 @@ impl Engine {
         if text.len() == state.saved_len && crate::document::hash_text(&text) == state.saved_hash {
             return;
         }
-        if document.dirty {
+        // A shared document's text is the session's: a change on disk never flows in as an
+        // edit every participant would receive (COLLAB 5/8 makes it a conflict to resolve).
+        #[cfg(feature = "collab")]
+        let shared = self.shared.contains_key(&id);
+        #[cfg(not(feature = "collab"))]
+        let shared = false;
+        if document.dirty || shared {
             if !state.changed_on_disk {
                 state.changed_on_disk = true;
                 self.emit(EngineEvent::DocumentChangedOnDisk(id));

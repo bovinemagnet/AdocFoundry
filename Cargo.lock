@@ -240,6 +240,7 @@ version = "0.13.0"
 dependencies = [
  "adoc-antora",
  "adoc-audit",
+ "adoc-collab",
  "adoc-core",
  "adoc-diagrams",
  "adoc-docbook",

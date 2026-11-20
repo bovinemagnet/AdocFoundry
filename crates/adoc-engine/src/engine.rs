@@ -21,8 +21,8 @@ use crate::{
     undo::Typing,
     workspace::{FileWatcher, WorkerMessage},
     Clock, CommandArgs, CommandContext, CommandId, CommandOutcome, CommandRegistry, DocumentId,
-    EditorMode, EngineError, EngineEvent, OpenDocument, Settings, SystemClock, TextEdit, UndoEntry,
-    UndoGroup, UndoStack,
+    EditOrigin, EditorMode, EngineError, EngineEvent, OpenDocument, Settings, SystemClock,
+    TextEdit, UndoEntry, UndoGroup, UndoStack,
 };
 
 /// The headless editor engine: the single owner of workspace and document state.
@@ -103,6 +103,13 @@ pub struct Engine {
     /// The documents taking part in each applied preview's group, which is undone and redone
     /// only as a whole.
     pub(crate) group_documents: BTreeMap<UndoGroup, Vec<DocumentId>>,
+    /// Documents shared in a collaboration session, by document (`src/collab.rs`).
+    #[cfg(feature = "collab")]
+    pub(crate) shared: BTreeMap<DocumentId, crate::collab::SharedDocument>,
+    /// The undo group of the last change to a shared document: a command changing several
+    /// files at once is refused at the other files too.
+    #[cfg(feature = "collab")]
+    pub(crate) shared_group: Option<UndoGroup>,
     /// Documents whose typed edits are parsed but not yet in the index, with the time after
     /// which `pump` indexes them.
     pub(crate) pending_index: BTreeMap<DocumentId, std::time::Instant>,
@@ -168,7 +175,7 @@ const TYPING_COMMANDS: [CommandId; 5] = [
 
 /// One keystroke's edit: a single replacement of at most a character (up to four bytes) by at
 /// most one character.
-fn is_small(edits: &[TextEdit]) -> bool {
+pub(crate) fn is_small(edits: &[TextEdit]) -> bool {
     matches!(edits, [edit] if edit.range.len() <= 4 && edit.replacement.chars().count() <= 1)
 }
 
@@ -242,6 +249,10 @@ impl Engine {
             impact_generation: 0,
             impact: crate::impact_analysis::ImpactCache::default(),
             group_documents: BTreeMap::new(),
+            #[cfg(feature = "collab")]
+            shared: BTreeMap::new(),
+            #[cfg(feature = "collab")]
+            shared_group: None,
             pending_index: BTreeMap::new(),
             settling: crate::index_settle::Settling::default(),
             typing: false,
@@ -502,6 +513,8 @@ impl Engine {
             .remove(&id)
             .ok_or(EngineError::UnknownDocument(id))?;
         self.states.remove(&id);
+        #[cfg(feature = "collab")]
+        self.shared.remove(&id);
         let closed_at = self.forget_tab(crate::TabItem::Document(id));
         self.pending_index.remove(&id);
         self.forget_preview(id);
@@ -613,6 +626,12 @@ impl Engine {
 
     /// Replaces document `id`'s text with its file's, as one undo step, leaving it clean.
     pub fn reload(&mut self, id: DocumentId) -> Result<(), EngineError> {
+        #[cfg(feature = "collab")]
+        if self.shared.contains_key(&id) {
+            return Err(EngineError::Refused(
+                "a shared document is not reloaded from disk while it is shared".to_owned(),
+            ));
+        }
         let document = self
             .documents
             .get(&id)
@@ -756,6 +775,10 @@ impl Engine {
     /// is undone in all of them, and not at all while one of them was edited after it (see
     /// [`Engine::check_group`]).
     pub fn undo(&mut self, id: DocumentId) -> bool {
+        #[cfg(feature = "collab")]
+        if self.shared.contains_key(&id) {
+            return self.shared_undo(id, false);
+        }
         let Some(group) = self
             .states
             .get(&id)
@@ -775,7 +798,7 @@ impl Engine {
                 continue;
             };
             if self
-                .edit_document(document, entry.inverse.clone(), false)
+                .edit_document(document, entry.inverse.clone(), false, EditOrigin::Undo)
                 .is_ok()
             {
                 if let Some(state) = self.states.get_mut(&document) {
@@ -793,6 +816,10 @@ impl Engine {
     /// Redoes the most recently undone group of `id`, across every document it spans, and not
     /// at all once one of them was edited after its undo (see [`Engine::check_group`]).
     pub fn redo(&mut self, id: DocumentId) -> bool {
+        #[cfg(feature = "collab")]
+        if self.shared.contains_key(&id) {
+            return self.shared_undo(id, true);
+        }
         let Some(group) = self
             .states
             .get(&id)
@@ -812,7 +839,7 @@ impl Engine {
                 continue;
             };
             if self
-                .edit_document(document, entry.forward.clone(), false)
+                .edit_document(document, entry.forward.clone(), false, EditOrigin::Redo)
                 .is_ok()
             {
                 if let Some(state) = self.states.get_mut(&document) {
@@ -838,7 +865,7 @@ impl Engine {
             else {
                 continue;
             };
-            let _ = self.edit_document(document, entry.inverse, false);
+            let _ = self.edit_document(document, entry.inverse, false, EditOrigin::Undo);
         }
     }
 
@@ -904,7 +931,20 @@ impl Engine {
             _ => None,
         };
         let defer = typed.is_some() || (self.typing && is_small(&edits));
-        let applied = self.edit_document(id, edits, defer)?;
+        // A shared document's edits go through its replica first, and its undo is the
+        // replica's (`src/collab.rs`).
+        #[cfg(feature = "collab")]
+        if self.shared.contains_key(&id) {
+            return self.apply_shared_edits(id, edits, mode, typed, defer);
+        }
+        #[cfg(feature = "collab")]
+        if matches!(mode, UndoMode::Group(group) if self.shared_group == Some(group)) {
+            return Err(EngineError::Refused(
+                "a change to several files at once is not made while one of them is shared"
+                    .to_owned(),
+            ));
+        }
+        let applied = self.edit_document(id, edits, defer, EditOrigin::Local)?;
         if self.states.get(&id).is_some_and(|state| state.client_owned) {
             // The client keeps the undo history of its own buffer; nothing would read this one.
             return Ok(());
@@ -944,11 +984,12 @@ impl Engine {
     /// Applies edits without touching undo history: updates the rope, bumps the version,
     /// re-parses and publishes the change. With `defer_index`, re-indexing and diagnostics wait
     /// for [`INDEX_SETTLE`].
-    fn edit_document(
+    pub(crate) fn edit_document(
         &mut self,
         id: DocumentId,
         edits: Vec<TextEdit>,
         defer_index: bool,
+        origin: EditOrigin,
     ) -> Result<AppliedEdits, EngineError> {
         let document = self
             .documents
@@ -989,6 +1030,7 @@ impl Engine {
             id,
             version: version_after,
             edits: forward.clone(),
+            origin,
         });
         self.words_changed(id);
         self.spelling_edited(id, &forward);
@@ -1200,11 +1242,11 @@ impl Engine {
     }
 }
 
-struct AppliedEdits {
-    forward: Vec<TextEdit>,
-    inverse: Vec<TextEdit>,
-    version_before: u64,
-    version_after: u64,
+pub(crate) struct AppliedEdits {
+    pub(crate) forward: Vec<TextEdit>,
+    pub(crate) inverse: Vec<TextEdit>,
+    pub(crate) version_before: u64,
+    pub(crate) version_after: u64,
 }
 
 /// Writes `text` to `path` through a temporary file in the same directory, renamed over the

@@ -329,6 +329,18 @@ The spike is `spikes/collab/`, recorded in `docs/qa/spike-collab.md`. The contra
 - **`MAX_UPDATE` is 16 MiB, not 4 MiB.** No snapshot of a file between 4 and 8 MiB fitted the old limit.
 - **Reported upstream** on 2026-11-20: the split characters as y-crdt/y-crdt#778 and C1's stuck pending update as y-crdt/y-crdt#779; the use-after-free and the memory blow-up privately, as security reports.
 
+### C3 (COLLAB 3/8, #690)
+
+The engine's `collab` feature, `crates/adoc-engine/src/collab.rs`, departs from #690 as follows:
+
+- **The gateway is `apply_edits`.** Every local change already reaches the rope through it, or through `edit_document` for undo and redo. So it hands a shared document's edits to `apply_shared_edits`: checked against the rope, applied to the replica, then to the rope. No separate `apply_document_change` was needed. Typing coalesces as `UndoStack::coalesce_typing` does, and one command's edits are one undo group.
+- **Remote changes** come in through `apply_shared_update` with the sender's epoch and `Sender`, and reach the rope as one `edit_document` patch (`EditOrigin::Remote`). `EngineEvent::DocumentChanged` gained `origin` rather than a second event.
+- **Optimistic guest edits.** A guest's edit applies locally at once and is sent; there is no rollback of a single edit. A host that refuses one drops the guest or rebuilds, and the guest starts again from a snapshot (`reset_shared`). Acknowledgements are the transport's (C4); disconnected guests not editing is C4's and C6's to enforce.
+- **Commands changing several files** are refused at the gateway, in both directions, once one of their files is shared (`shared_group`). Refusing them before they start, so nothing is half-applied, is C7's.
+- **Disk.** A shared document never takes a change on disk as an edit (it is reported `DocumentChangedOnDisk`) and is not reloaded. Conflict resolution is C5's.
+- **The app's editor** (remote patches without echo, carets mapped, IME) is C6's: nothing in the app shares a document before then. The engine already gives what it needs: precise patches with their origin.
+- **No `pump` step.** The transport calls `apply_shared_update` and `take_shared_updates` itself.
+
 ## 15. References
 
 - Epic #686.
