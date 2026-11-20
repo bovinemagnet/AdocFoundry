@@ -7,9 +7,10 @@ Paul Snow
 It is at layer L2, beside `adoc-render` and `adoc-docbook`.
 The design is `docs/design/DESIGN-AdocFoundry_Collaboration.md` in the repository, and the evidence for choosing `yrs` is `docs/qa/spike-collab.md`; neither is part of this site.
 
-NOTE: The crate is COLLAB 2/8 (issue #689) of the collaboration epic #686.
-The engine's `collab` feature uses it (COLLAB 3/8, issue #690), keeping each shared document as a replica.
-The app does not yet (COLLAB 6/8), so nothing in the app, the command line or the MCP server collaborates today.
+NOTE: The crate is COLLAB 2/8 (issue #689) of the collaboration epic #686, with the session protocol and the `Link` trait added by COLLAB 4/8 (issue #691).
+The engine's `collab` feature uses it (COLLAB 3/8, issue #690), keeping each shared document as a replica, and runs a session over a `Link` (COLLAB 4/8).
+The transport that implements `Link` is xref:adoc-share.adoc[adoc-share].
+The app does not run either yet (COLLAB 6/8), so nothing in the app, the command line or the MCP server collaborates today.
 
 == What it does
 
@@ -17,7 +18,7 @@ A `Replica` is a copy of one shared file's text over the `yrs` CRDT, version 0.2
 It is built with the `sync` feature of `yrs`, so a replica is `Send`.
 The replica exchanges only encoded bytes: an `EncodedUpdate` to send, a `StateVectorBytes` to say what it holds.
 It knows nothing of how the bytes travel, which files are shared or who may do what.
-The engine will own that.
+The engine owns that, and the transport carries the bytes.
 
 == Replicas
 
@@ -112,6 +113,192 @@ A `RelativeSelection` holds a selection's two ends as positions relative to the 
 The caller offers every change and sends when told to.
 The throttle reads no clock: the caller passes the time to `offer`, `due` and `take_due`.
 
+[#session-protocol]
+== The session protocol
+
+The `protocol` module is version 1 of the messages a host and its guests exchange, their frames and the limits each is held to (`PROTOCOL_VERSION`).
+It has no network: the transport reads and writes frames, and the engine reads and writes messages.
+Its design is section 8 of the design document.
+
+=== Frames
+
+A frame is:
+
+. a 4-byte big-endian length, at most `MAX_FRAME` (`MAX_UPDATE` and 64 KiB for a control part);
+. a 1-byte kind;
+. a 2-byte big-endian length of the control part;
+. the control part, as JSON;
+. any binary payload: an update, a state vector or a selection.
+
+`frame_length(prefix)` checks the length before anything is allocated, so a reader refuses an oversized or too short frame without reading its body.
+
+=== Messages
+
+`Message` has one variant for each kind:
+
+[cols="2,5",options="header"]
+|===
+|Message |Purpose
+
+|`Hello`
+|The versions the sender speaks and its application version.
+The host's answer names the one chosen.
+
+|`Authenticate`
+|A guest's `Credential` (an invitation's `Secret` or a resume `Secret`) and display name.
+
+|`Join`
+|The host's welcome: the guest's `PeerId`, its `Role`, the `SessionId` and the resume token.
+
+|`Manifest`
+|Part of the files offered (`ManifestFile`: number, display path, `FileKind`, size), with `more` until the last part.
+A part holds at most `MANIFEST_PART` files, so a long manifest is sent in parts.
+
+|`OpenFile`, `CloseFile`
+|A guest asks for a file, or lets it go.
+
+|`Snapshot`
+|A file's whole state for its epoch, and the client id the receiver writes with.
+
+|`Update`, `UpdateAck`
+|A change to a file, numbered per sender, file and epoch; and the host's acknowledgement of a guest's updates up to a number.
+
+|`Awareness`
+|A participant's selection in a file.
+The host forwards a guest's with `peer` set to the guest.
+
+|`SaveRequest`, `SaveResult`
+|A guest asks the host to save a file, and the `SaveOutcome`.
+
+|`RoleChanged`
+|A participant's new role; never `Owner`.
+
+|`Resync`
+|The sender's state vector for a file, answered with what it lacks.
+
+|`Leave`, `Error`, `Heartbeat`
+|A farewell, a refusal with a stable `ErrorCode`, and a sign that a quiet link is alive.
+|===
+
+`PeerId::HOST` is 0, and the host numbers guests from 1 without reusing a number in a session.
+`Role` is `Owner` (the host), `Editor` or `Viewer`, and every guest joins as a viewer.
+`ErrorCode` is `Incompatible`, `Denied`, `Protocol`, `Slow`, `Unauthorised`, `Stale`, `Closed` or `TimedOut`.
+
+=== Everything read is untrusted
+
+`Message::encode` and `decode` hold every field to its limit, in both directions, so a message the host forwards is never one the other end would close on.
+`decode` refuses:
+
+* an unknown kind;
+* a control part that is not the JSON its kind expects, including any unknown field;
+* a field outside its limit: a name over `MAX_NAME`, free text over `MAX_TEXT`, a manifest part over `MANIFEST_PART`, an update over `MAX_UPDATE`, a selection end over `MAX_ANCHOR`;
+* a payload where the kind has none, or none where it needs one;
+* a `RoleChanged` that names the owner, and a `client` that is not a valid replica id.
+
+`display_path` holds a manifest path to what can only be shown: relative, `/`-separated, with no empty, `.` or `..` part, no part starting with a dot, no backslash, colon or control character, and at most `MAX_PATH` bytes.
+A guest never finds a file by it.
+
+`Secret` is a random 256-bit value, an invitation's secret or a resume token.
+Its `Debug` prints `Secret(..)`, so it is never logged by accident, and it is written as hexadecimal in JSON.
+
+=== Protocol limits and times
+
+[cols="2,1,3",options="header"]
+|===
+|Constant |Value |Meaning
+
+|`MAX_FRAME`
+|`MAX_UPDATE` + 64 KiB
+|The largest frame after its length prefix.
+
+|`MAX_CONTROL`
+|65,535 bytes
+|The largest control part, since its length is two bytes.
+
+|`MAX_OPEN_FILES`
+|64
+|Files one guest may have open.
+
+|`MAX_PARTICIPANTS`
+|8
+|Participants in a session, the host included.
+
+|`MAX_QUEUED_FRAMES`
+|1,024
+|Frames waiting to be sent to one peer.
+
+|`MAX_QUEUED_BYTES`
+|16 MiB
+|Bytes waiting to be sent to one peer.
+
+|`MAX_MANIFEST_FILES`
+|100,000
+|Files a manifest lists.
+
+|`MANIFEST_PART`
+|24
+|Files in one `Manifest` message.
+
+|`MAX_PATH`, `MAX_NAME`, `MAX_TEXT`
+|1,024, 64 and 512 bytes
+|A display path, a display name, and free text such as a reason.
+
+|`INVITE_LIFETIME`
+|10 minutes
+|How long an invitation stays valid.
+
+|`HANDSHAKE_TIMEOUT`
+|10 seconds
+|From accepting a connection to its `Authenticate`.
+
+|`HEARTBEAT_INTERVAL`
+|15 seconds
+|How often a quiet link sends a heartbeat.
+
+|`LINK_TIMEOUT`
+|45 seconds
+|How long a link may be silent before it is down.
+|===
+
+The `collab_frame` fuzz target (`fuzz/fuzz_targets/collab_frame.rs`) feeds arbitrary bytes to `frame_length` and `decode`, and checks that whatever decodes encodes again to the same message.
+The tests are in `crates/adoc-collab/tests/protocol.rs`.
+
+[#link]
+== The link
+
+`Link` is the seam between the transport and the engine.
+The engine owns a `Link` and drains it a bounded number of events per `pump`; the transport fills it from the network and wakes the engine.
+Neither waits for the other.
+It has four methods, and every one returns at once:
+
+`try_recv`::
+The next `LinkEvent`, if one has arrived.
+`send(peer, message)`::
+Queues a message for a peer.
+A guest's only peer is `PeerId::HOST`.
+`admit(peer)`::
+For a host: lets a knocking peer in.
+The transport sends its `Join`, with the resume token that only it holds.
+`remove(peer, code, message)`::
+Closes the connection to a peer with an `ErrorCode`, and for a host forgets it, so that it cannot resume.
+
+A `LinkEvent` is one of:
+
+`Knock { peer, name }`::
+For a host: a connection showed a valid invitation and waits for `admit` or `remove`.
+Nothing about the workspace has been sent to it.
+`Resumed { peer }`::
+For a host: an admitted peer reconnected with its resume token.
+For a guest: the link to the host is back.
+`Message { peer, message }`::
+A message, already decoded and held to the limits.
+`Hello`, `Authenticate` and heartbeats are the transport's and never arrive here.
+`Gone { peer, reason }`::
+The connection closed.
+A host keeps the peer, which may resume, until it is removed or sharing stops.
+
+A `LinkError` says why a send was refused: `Closed` (no connection to that peer), `Slow` (the peer's queue is full, and the transport disconnects it) or `Frame` (the message breaks a limit and was not sent).
+
 == Failure and poisoning
 
 A replica that fails in a way that may have changed it is poisoned.
@@ -183,16 +370,19 @@ It leaves room for a whole file's snapshot.
 The tests are in `crates/adoc-collab/tests/`.
 They include `collab_replicas_converge`, `collab_edits_are_byte_exact`, `collab_local_undo_keeps_remote_edits`, `collab_malformed_update_changes_nothing`, `collab_offsets_inside_a_character_are_refused`, `collab_pending_update_asks_for_resync`, `collab_authors_are_read_before_applying` and `collab_limits_hold_at_their_bounds`, `duplicates_and_reordering_are_refused_unread`, `an_update_splitting_a_character_poisons_the_replica`, `counts_claiming_more_than_follows_are_refused` and `a_guest_update_left_pending_makes_the_host_rebuild`.
 
-The fuzz target `collab_update` (`fuzz/fuzz_targets/collab_update.rs`) feeds arbitrary bytes to a replica, offering each input as from a guest and as from the host.
+The fuzz targets are `collab_update` and `collab_frame`.
+`collab_update` (`fuzz/fuzz_targets/collab_update.rs`) feeds arbitrary bytes to a replica, offering each input as from a guest and as from the host.
 `collab_is_in_process`, in `xtask`, checks that the crate's sources name no process, network, file or thread.
 
 == Where it sits
 
-`adoc-collab` depends on `adoc-core` and `yrs` only.
+`adoc-collab` depends on `adoc-core`, `yrs`, `serde` and `serde_json` (for the protocol's control parts).
 It starts no process, uses no network, no files and no threads of its own: `cargo xtask layers` holds its sources to the same forbidden paths as `adoc-audit`.
 It is in `LEAN_EXCLUDED` with `yrs`, so the language server's default build compiles neither.
 
 == Related
 
 * xref:adoc-core.adoc[adoc-core], the domain types it depends on
+* xref:adoc-share.adoc[adoc-share], the transport that implements `Link`
+* xref:adoc-engine.adoc[adoc-engine], which runs the session
 * xref:index.adoc[Crates]

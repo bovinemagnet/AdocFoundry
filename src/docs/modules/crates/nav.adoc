@@ -33,3 +33,4 @@
 *** xref:crates:adocfoundry-cli.adoc[adocfoundry-cli]
 *** xref:crates:adoc-ls.adoc[adoc-ls]
 *** xref:crates:adoc-mcp.adoc[adoc-mcp]
+*** xref:crates:adoc-share.adoc[adoc-share]

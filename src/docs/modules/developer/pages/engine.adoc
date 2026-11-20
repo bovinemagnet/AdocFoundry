@@ -828,7 +828,7 @@ The inverse of a step is the source edits that restore the text before it.
 The `collab` Cargo feature (COLLAB 3/8, issue #690) lets the engine share an open document with other participants.
 It is on by default for the crate and off in `[workspace.dependencies]`, so a front end names it.
 Only the app may, and it does not yet (COLLAB 6/8); `cargo xtask layers` holds the language server, the MCP server and the command line to building neither `adoc-collab` nor `yrs` (`COLLAB_FREE` in `xtask/src/layers.rs`).
-The engine has no network code here: the transport (COLLAB 4/8) carries the updates and calls the methods below.
+The engine has no network code: the transport (xref:crates:adoc-share.adoc[adoc-share], COLLAB 4/8) carries the updates, and xref:#collaborative-session[the session] below decides what each message does.
 The design is in `docs/design/DESIGN-AdocFoundry_Collaboration.md` in the repository.
 The code is `crates/adoc-engine/src/collab.rs`, with hooks marked `#[cfg(feature = "collab")]` in the engine, the workspace and the writer.
 
@@ -874,6 +874,82 @@ A change on disk to it is reported as `DocumentChangedOnDisk` and not applied.
 `EngineEvent::DocumentChanged` carries an `origin: EditOrigin` for every document, shared or not.
 `collab_off_changes_nothing` holds that a document that is not shared behaves as before.
 The tests are in `crates/adoc-engine/tests/collab.rs`, among them `collab_engines_converge` and `collab_remote_edit_is_not_echoed`.
+
+[#collaborative-session]
+=== The session
+
+The session (COLLAB 4/8, issue #691) is the code in `crates/adoc-engine/src/collab_session.rs`.
+The transport authenticates connections and moves frames.
+Everything a message may do is decided here, against the session's own state, whatever the peer claims.
+
+==== The link and the pump
+
+`host_session(link, root, files)` and `join_session(link)` start a session, and `end_session` ends it.
+The engine owns the `Link` (see xref:crates:adoc-collab.adoc#link[adoc-collab]), and `pump` drains at most `SESSION_EVENTS_PER_PUMP` (64) events from it, so a flooding peer never holds the engine.
+Sending never waits: a peer that cannot keep up is disconnected by the transport.
+When a pump stops at the limit, the session is due again at once, and so is a session with a shared document that has updates to send; `next_due` reports both (`due_session`), so nothing else is due for ever.
+`EngineEvent::SessionChanged` follows any change to who is in the session or what they may do, and `participants`, `session_knocks`, `session_manifest` and `peer_selections` read the state.
+
+==== What the host offers
+
+`host_session` checks every file before it offers any, and one that may not be offered refuses the whole call, so the host is never left sharing less than it chose without knowing.
+A file must be:
+
+* an `.adoc` file;
+* inside the shared folder, both as written and with its links followed;
+* reached through no hidden or ignored folder (the `workspace.ignore` list);
+* a file, within `MAX_SHARED_FILE`;
+* a path that `display_path` allows.
+
+Each file is given a number for the session, and files under a `partials` folder are offered as partials.
+The manifest holds the display path, never the real one.
+A guest finds a file only by its number, never by a path.
+The path is confined again when a guest first opens the file.
+Nothing is sent until a guest is admitted.
+
+==== Admission and roles
+
+A guest with a valid invitation arrives as a knock (`session_knocks`).
+`admit_peer` lets it in as a Viewer, up to `MAX_PARTICIPANTS`, and sends it the manifest in parts of `MANIFEST_PART` files; `remove_peer` turns a knock away or removes a participant, who cannot then resume.
+`set_peer_role` makes a guest an Editor or a Viewer, and never an Owner.
+A guest opens a file with `open_session_file`, which asks the host and opens a document without a file when the snapshot arrives.
+
+==== Client ids and sequence numbers
+
+The host gives each guest a new `yrs` client id for each file, with every snapshot, and never gives out one twice in a session, the host's own included.
+An update is applied as `Sender::Guest(client)`, so a guest cannot write as anyone else.
+
+Sequence numbers count each sender's updates for a file, from 1 after every snapshot the host sends that peer.
+A snapshot replaces whatever the receiver had, so what was in flight before it means nothing after.
+The host therefore discards a guest's updates for a file after a snapshot until one numbered 1 arrives, and discards those of another epoch.
+Any other number out of order is a breach of the protocol, and the guest is dropped.
+
+==== A role taken away in flight
+
+Taking editing away applies to every update processed from now on, whenever it was sent.
+When an update from a guest that is no longer an Editor arrives, the host refuses it with `Unauthorised` and sends the guest a new snapshot, so the guest starts again from the host's text.
+
+==== Resumption
+
+The host keeps an admitted guest whose connection drops, with its files, until it is removed or sharing stops.
+When it resumes with its token:
+
+. If a file's epoch is unchanged, the host tells the guest the last of its updates it applied (`UpdateAck`), and waits.
+. The guest sends again the updates after that, which it kept until they were acknowledged, and asks to be resynchronised with `Resync`.
+. The host answers with a checked snapshot.
+. If the epoch changed meanwhile, the host sends the new epoch's snapshot at once.
+
+A guest does not edit a file while it is disconnected, waiting for a resynchronisation, resuming, or too far ahead of the host's acknowledgements (`MAX_QUEUED_FRAMES`).
+A guest that receives an update out of order, or that it cannot apply, asks for a resynchronisation in the same way.
+
+A guest's update that leaves the host's replica waiting or wrong (`Rebuilt` or `NeedsResync`) drops that guest, and the host sends every guest with the file open a new snapshot in the new epoch.
+
+==== Saving and leaving
+
+A guest's `SaveRequest` is answered by the host with a `SaveOutcome`: `PermissionDenied` unless the guest is an Editor, `Failed` if the file's epoch has moved on, otherwise the result of the host saving the file (`Saved`, `Conflict` or `Failed`).
+A `Leave` removes the participant.
+Ending a session leaves the shared documents open, no longer shared, with empty undo histories.
+The tests are in `crates/adoc-engine/tests/collab_session.rs`, and `crates/adoc-share/tests/transport.rs` runs the same session over real connections.
 
 == The pump and worker indexing
 

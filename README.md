@@ -478,6 +478,7 @@ The workspace is a ladder of crates, each depending only on those below it:
 
 ```text
 L4  adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)   adoc-mcp (MCP)
+    adoc-share      collaboration's transport: TLS between host and guests
 L3  adoc-engine     documents, commands, undo, workspace, watcher, settings, search, preview, visual model, graph
 L2  adoc-render     the view tree and HTML
     adoc-diagrams   diagrams
@@ -488,7 +489,7 @@ L2  adoc-render     the view tree and HTML
     adoc-ebook      the book model Kindle and EPUB export write
     adoc-epub       EPUB export
     adoc-docbook    DocBook export
-    adoc-collab     collaborative editing's core: shared text replicas
+    adoc-collab     collaborative editing's core: shared text replicas, the session protocol
     adoc-kindle     Kindle export (AZW3 and KFX)
     adoc-audit      the documentation quality audit
     adoc-impact     documentation impact analysis

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed by COLLAB 1/8 (#688), 2026-11-20; awaiting the maintainer's acceptance before COLLAB 2/8 starts |
+| Status | Proposed by COLLAB 1/8 (#688) and accepted on 2026-11-20; each later package changes it first where it departs (the PRD's §14) |
 | Author | Paul Snow |
 | Version | 0.0.0 |
 | PRD | `docs/prd/PRD-AdocFoundry_COLAB.md` (epic #686) |
@@ -42,11 +42,11 @@ Settled from the PRD's §13:
 - **Where the edit type lives:** `adoc-collab` has its own `ByteEdit` over `adoc_core::SourceRange`, and the engine converts from `TextEdit`. Moving `TextEdit` to `adoc-core` would touch every crate that edits, for no gain.
 - **Transport stack:**
   - **No WebSocket.** It is framed TLS over TCP. There are no browser peers, so a WebSocket would add a crate and an HTTP upgrade surface for nothing.
-  - **Its own L4 crate,** `adoc-share`, so its loopback tests run on every platform without GPUI. It is added to `NETWORK_ALLOWED` and `NETWORK_SERVER_ALLOWED` in `xtask/src/layers.rs`, and `AGENTS.md`'s confinement rules change in the same pull request.
-  - **Libraries:** `rustls` 0.23 with the `ring` provider and `tokio-rustls`, both already in the lock file through GPUI's HTTP client, so they add no new cryptography; `tokio`, already there through `adoc-mcp`.
-  - **Runtime:** a current-thread runtime on a thread of its own.
+  - **Its own L4 crate,** `adoc-share`, so its loopback tests run on every platform without GPUI. Its TLS crates are confined to it and the app (`TLS_CRATES` and `TLS_ALLOWED` in `xtask/src/layers.rs`; the HTTP lists, `NETWORK_ALLOWED` and `NETWORK_SERVER_ALLOWED`, are about HTTP and do not name it), and `AGENTS.md`'s confinement rules changed in the same pull request.
+  - **Libraries:** `rustls` 0.23 with the `ring` provider, TLS 1.3 only (no `tls12` feature), and `tokio-rustls`; `tokio`, already there through `adoc-mcp`. Both TLS crates were in the lock file through GPUI's HTTP client, but no shipped build compiled them: this is new cryptography for the app (ring, rustls, webpki), from COLLAB 6/8, when the app first depends on `adoc-share`. `ring` builds C and assembly, with clang on Windows on ARM, so the release builds of every target are checked then.
+  - **Runtime:** a current-thread runtime on a thread of its own, for the host's listener and for each guest's connection.
 - **Front ends:** the engine's `collab` feature is off in `[workspace.dependencies]`. Only the app names it. `adoc-ls`, `adoc-mcp` and the CLI never do, and `cargo xtask layers` checks that their builds compile neither `adoc-collab` nor `adoc-share`.
-- **Dependency footprint:** `yrs` with `sync` brings 34 crates, of which only `smallstr` is new to the workspace. `adoc-share` adds `rcgen` and `tokio-rustls`. Every new dependency is pinned exactly and passes `cargo deny check`.
+- **Dependency footprint:** `yrs` with `sync` brings 34 crates, of which only `smallstr` is new to the workspace. `adoc-share` adds `rcgen` (MIT or Apache-2.0, without its `pem` or aws-lc features) and `yasna`, and builds `rustls`, `tokio-rustls` and `ring` for the first time. Every new dependency is pinned exactly and passes `cargo deny check`.
 
 ## 4. Positions, text and line endings
 
@@ -126,22 +126,25 @@ An unknown kind, malformed JSON, or a field outside its limit closes the connect
 | `Hello` | both | Protocol versions supported (`min`, `max`), the application's version, capabilities. The host answers with the version chosen, or `Error { incompatible }`, and both show it |
 | `Authenticate` | guest | The invitation secret or a resume token; a display name |
 | `Join` | host | The decision after Admit: `PeerId`, role, session id; or `Error { denied }` |
-| `Manifest` | host | The shared files: `SharedFileId`, root-relative display path, kind (page or partial), size |
+| `Manifest` | host | The shared files: `SharedFileId`, root-relative display path, kind (page or partial), size; in parts of at most `MANIFEST_PART` files, `more` until the last, so each control part fits its two-byte length whatever the paths |
 | `OpenFile` | guest | A `SharedFileId` |
+| `CloseFile` | guest | A `SharedFileId` the guest no longer follows |
 | `Snapshot` | host | File id, epoch, the peer's client id for that epoch, the whole state as a `yrs` update |
 | `Update` | both | File id, epoch, a per-sender sequence number, a `yrs` update |
 | `UpdateAck` | host | File id, epoch, the highest sequence number applied |
-| `Awareness` | both | File id, epoch, the sender's selection as two encoded sticky indexes; throttled to one per `AWARENESS_INTERVAL` |
+| `Awareness` | both | File id, epoch, the participant's `PeerId` (the host sets it to the sender's when forwarding, whatever the guest wrote), the selection as two encoded sticky indexes; throttled to one per `AWARENESS_INTERVAL` |
 | `SaveRequest` | guest | File id, epoch, a request id |
 | `SaveResult` | host | Request id; `Saved { revision }`, `Queued`, `Conflict`, `PermissionDenied` or `Failed { reason }` |
 | `RoleChanged` | host | A peer's new role |
-| `Resync` | both | File id, epoch, the sender's state vector; answered with the missing updates, or with a `Snapshot` of a new epoch |
+| `Resync` | guest | File id, epoch, the sender's state vector; the host answers with a checked `Snapshot` (§6), never a diff, and never asks a guest for one |
 | `Leave` | both | A reason; the connection closes after it |
 | `Error` | both | A stable code and a message; a fatal one closes the connection |
+| `Heartbeat` | both | Nothing; sent every `HEARTBEAT_INTERVAL`, so a link silent for `LINK_TIMEOUT` is down |
 
 **Acknowledgements.**
 - The host acknowledges a guest's `Update` only after applying it (and forwarding it, if more guests exist).
-- Sequence numbers are per sender, per file and epoch, and grow by one. A gap or a repeat closes the connection. So does an update the receiver's replica does not admit (§6): on an ordered link a duplicate or reordered update is never honest.
+- Sequence numbers are per sender and per file, and start at 1 after every `Snapshot` the host sends that peer: a snapshot replaces whatever the receiver had, so what was in flight before it means nothing after. The host discards a guest's updates to a file after sending it a snapshot until one numbered 1 arrives; the guest numbers from 1 once it has applied the snapshot. Otherwise a gap or a repeat closes the connection. So does an update the receiver's replica does not admit (§6): on an ordered link a duplicate or reordered update is never honest.
+- An update from a peer whose role no longer allows editing (taken away while it was on its way) changes nothing; the host sends `Error { unauthorised }` and a new snapshot, and the guest starts again from the host's text.
 - The interface shows a guest's edit as Acknowledged once its sequence number is acknowledged. Acknowledged is not Saved (§10).
 
 **Limits** (constants in `adoc-collab`, each with tests at its bound; confirmed by COLLAB 2/8):
@@ -153,21 +156,25 @@ An unknown kind, malformed JSON, or a field outside its limit closes the connect
 | `MAX_SHARED_FILE` | 8 MiB of text |
 | `MAX_OPEN_FILES` | 64 per peer |
 | `MAX_PARTICIPANTS` | 8 (v1 admits one guest) |
-| `MAX_QUEUED` | 1,024 frames or 16 MiB per peer, outbound |
+| `MAX_QUEUED` | 1,024 frames or 16 MiB per peer, outbound (`MAX_QUEUED_FRAMES`, `MAX_QUEUED_BYTES`); a guest also stops editing with 1,024 updates unacknowledged |
+| `MANIFEST_PART` | 24 files a `Manifest` message; `MAX_MANIFEST_FILES` 100,000 in all |
+| `HANDSHAKE_FRAME` | 4 KiB: the largest frame read before a connection has authenticated |
+| `MAX_PENDING` | 8 connections not yet admitted; more are closed at once |
 | `AWARENESS_INTERVAL` | 50 ms |
 | `INVITE_LIFETIME` | 10 minutes |
-| `HANDSHAKE_TIMEOUT` | 10 s |
-| Heartbeat | every 15 s; a link silent for 45 s is down |
+| `HANDSHAKE_TIMEOUT` | 10 s, from accepting a connection to its `Authenticate` |
+| `HEARTBEAT_INTERVAL`, `LINK_TIMEOUT` | every 15 s; a link silent for 45 s is down |
 
 **Backpressure.**
 - The transport and the engine exchange messages through bounded channels.
-- The engine processes at most a fixed number of collaboration messages per `pump`; its deadline goes in `Engine::next_due`, with a test in `tests/wake.rs`.
+- The engine processes at most `SESSION_EVENTS_PER_PUMP` (64) link events per `pump`, and sends its documents' updates; while more wait, or updates are unsent, the next pump is due at once (`Engine::next_due`, with a test in `tests/wake.rs`). The transport calls the front end's waker when an event arrives.
+- The transport's queue to the engine holds `EVENT_QUEUE` (256) events; a peer whose message would be one more waits, so a flood holds up only its sender.
 - A peer whose outbound queue is full is disconnected (`Error { slow }`), and it may resume. The engine never waits on the network, and the transport never holds the engine.
 
 **Disconnecting and reconnecting.**
 - A disconnected guest cannot edit. Its last text stays visible and copyable, marked unsaved, and no edit typed while disconnected is accepted.
-- While the session lives, the guest reconnects with its resume token. For each open file, both sides exchange `Resync`, each sending what the other lacks. Edits made before the link dropped are delivered once, and duplicates change nothing.
-- If the epoch no longer matches, the host sends a new `Snapshot`, and the guest's replica is rebuilt from it.
+- While the session lives, the guest reconnects with its resume token, which the host's `Join` replaces. For each file the guest has open, the host sends `UpdateAck` with the last of the guest's updates it applied, and forwards nothing more to it yet. The guest keeps every update until it is acknowledged; it sends again those after the acknowledged one, then `Resync`, and the host answers with a checked `Snapshot`, which already holds them. So an edit made before the link dropped arrives once, and nothing the host sent while the guest was away is lost.
+- If the epoch no longer matches, the host sends the new epoch's `Snapshot` instead, and the guest's replica is rebuilt from it; its updates of the old epoch are dropped.
 - A host restart is a new session; the guest rejoins explicitly with a new invitation.
 
 ## 9. The edit bridge (COLLAB 3/8)
@@ -223,7 +230,7 @@ The PRD's §10 names the tests; this adds those the spike's findings call for.
 |---|---|
 | C2 `adoc-collab` | `collab_replicas_converge` (one and two guests in the star, 1,000 seeds each); `collab_edits_are_byte_exact`; `collab_local_undo_keeps_remote_edits`; `collab_malformed_update_changes_nothing`; `collab_offsets_inside_a_character_are_refused`; `collab_pending_update_asks_for_resync`; `collab_authors_are_read_before_applying`; `collab_limits_hold_at_their_bounds`; `duplicates_and_reordering_are_refused_unread`; `an_update_splitting_a_character_poisons_the_replica`; `counts_claiming_more_than_follows_are_refused`; `a_guest_update_left_pending_makes_the_host_rebuild`; the fuzz target `collab_update` in `fuzz/` (both senders) |
 | C3 engine bridge | `collab_engines_converge`; `collab_remote_edit_is_not_echoed`; `collab_visual_edits_share_the_bridge`; `collab_off_changes_nothing`; `collab_projection_failure_fails_closed`; `collab_undo_groups_follow_the_engine` |
-| C4 transport | `collab_loopback_session_syncs`; `collab_unauthorised_requests_are_refused`; `collab_wrong_fingerprint_sends_nothing`; `collab_slow_peer_never_blocks_host`; `collab_forged_author_is_refused`; `collab_nothing_is_sent_before_admit`; `collab_frame_limits_close_the_connection` |
+| C4 transport | In `adoc-share`'s `tests/transport.rs`, over loopback TLS with raw peers that break the protocol: `collab_loopback_session_syncs`; `collab_unauthorised_requests_are_refused`; `collab_wrong_fingerprint_sends_nothing`; `collab_slow_peer_never_blocks_host`; `collab_nothing_is_sent_before_admit`; `collab_frame_limits_close_the_connection`. In the engine's `tests/collab_session.rs`, over an in-memory link that encodes every frame and can lose what is in flight: `collab_forged_author_is_refused`, `collab_unauthorised_requests_are_refused`, `collab_nothing_is_sent_before_admit`, `a_reconnected_guest_delivers_each_edit_once`, `a_role_taken_away_while_edits_are_in_flight`, `collab_manifest_offers_only_what_may_be_shared`. `adoc-collab`'s `tests/protocol.rs` and the fuzz target `collab_frame` |
 | C5 saving | `collab_save_writes_converged_text`; `collab_external_change_is_a_conflict`; `collab_stale_epoch_is_refused` |
 | C6 interface | `collab_share_needs_confirmation`; `collab_viewer_cannot_edit`; `collab_remote_carets_follow_edits` |
 | C7 scope | `collab_pages_converge_independently`; `collab_scope_never_leaks`; `collab_structural_commands_refused` |

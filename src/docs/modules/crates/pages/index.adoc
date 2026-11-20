@@ -56,3 +56,4 @@ See xref:developer:architecture.adoc[Architecture] for the layering rules and ho
 * xref:adocfoundry-cli.adoc[adocfoundry-cli]: the headless command line.
 * xref:adoc-ls.adoc[adoc-ls]: the language server.
 * xref:adoc-mcp.adoc[adoc-mcp]: the MCP server.
+* xref:adoc-share.adoc[adoc-share]: collaboration's transport, framed TLS between a host and its guests.

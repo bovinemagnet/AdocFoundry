@@ -92,8 +92,11 @@ The engine built with `--features epub` compiles `adoc-epub` and `adoc-ebook` an
 The app, the command line and the MCP server name `docbook`.
 The `collab` feature keeps a shared document as an `adoc-collab` replica beside its rope (COLLAB 3/8, issue #690).
 Only the app may name it, and it does not yet (COLLAB 6/8); `cargo xtask layers` holds the language server, the MCP server and the command line to building neither `adoc-collab` nor `yrs`.
-It has no network code, since the transport (COLLAB 4/8) drives it.
-See xref:developer:engine.adoc#collaborative-editing[collaborative editing] for what it adds.
+It has no network code: the transport, xref:crates:adoc-share.adoc[adoc-share], supplies a `Link` that the engine owns.
+`host_session` and `join_session` start a session over it (COLLAB 4/8, issue #691).
+The host checks the files it offers, admits knocking guests (`admit_peer`) and sets their roles (`set_peer_role`), and every message is decided against the session's own state, whatever the peer claims.
+The engine drains at most `SESSION_EVENTS_PER_PUMP` link events a `pump`, and reports changes with `EngineEvent::SessionChanged`.
+See xref:developer:engine.adoc#collaborative-editing[collaborative editing] and xref:developer:engine.adoc#collaborative-session[the session] for what it adds.
 `[docbook]` and `[docbook.profiles.<name>]` are read by `docbook_settings.rs` (`DocBookSettings`, `DocBookProfile`, reached as `Settings::docbook`), which is built without the `docbook` feature too.
 `Engine::docbook_profile_export_args`, `docbook_profile_problems` and `docbook_profiles` serve the profiles, and `export.docbook_profile` ("Export DocBook Profile…", `CommandArgs::Profile`) exports one.
 `[docbook]` has one key, `assets` (`"copy"` or `"reference"`), which a profile may override.

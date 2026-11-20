@@ -203,7 +203,7 @@ Mermaid needs a DOM and font metrics in JavaScript, so embedding a JS engine is 
 AdocFoundry is one Cargo workspace at [bovinemagnet/AdocFoundry](https://github.com/bovinemagnet/AdocFoundry) that adopted the five `adoc-*` crates from zed-asciidoc, added a document-model layer above them, and keeps every front end (GPUI app, CLI, LSP, MCP) as a thin consumer of one engine. The ladder and layout below are the workspace as shipped. The Phase 1 proposal had the same five layers with three front ends; the later phases added crates to each layer.
 
 ```text
-Front ends        adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)   adoc-mcp (MCP)
+Front ends        adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)   adoc-mcp (MCP)   adoc-share (collaboration's transport)
                           |                      |               |               |
                           v                      v               v               v
 Engine            adoc-engine: sessions, documents, command registry, undo, watcher, settings, events
@@ -218,7 +218,7 @@ Language layer    adoc-parser   adoc-dom   adoc-antora   adoc-index   adoc-lang 
 Core              adoc-core: Document, LineIndex, SourceRange, Section, Anchor, Reference, Diagnostic
 ```
 
-*Crate ladder: 5 layers, 4 front ends. Arrows are the only permitted dependency direction.*
+*Crate ladder: 5 layers, 4 front ends and collaboration's transport. Arrows are the only permitted dependency direction.*
 
 Arrows show the only permitted dependency direction; a crate never imports a crate above it, and only `adocfoundry` imports GPUI. `cargo xtask layers` checks the ladder in CI from `LAYERS` in `xtask/src/layers.rs`, with a few same-layer pairs allowed (`adoc-index` and `adoc-lang` on `adoc-parser`; `adoc-lang` on `adoc-index` and `adoc-antora`; `adoc-pdf`, `adoc-docx`, `adoc-ebook` and `adoc-kindle` on `adoc-render`; `adoc-kindle` and `adoc-epub` on `adoc-ebook`; `adoc-epub` and `adoc-docbook` on `adoc-render`). Front ends reach `adoc-audit` and `adoc-impact` only through the engine.
 
@@ -247,7 +247,7 @@ AdocFoundry/
     adoc-ebook               L2  the reflowable ebook model: pages mapped to one Book, its pictures embedded; read by Kindle and EPUB export
     adoc-epub                L2  EPUB export: one book written as an EPUB 3.3 container, in process (PRD-AdocFoundry_EPUB_Export.md)
     adoc-docbook             L2  DocBook export: an article or a book as DocBook 5.2 XML, in process (PRD-AdocFoundry_DocBook_Export.md)
-    adoc-collab              L2  collaborative editing's core: a yrs replica per shared file, byte edits, per-author undo (DESIGN-AdocFoundry_Collaboration.md)
+    adoc-collab              L2  collaborative editing's core: a yrs replica per shared file, byte edits, per-author undo, the session protocol (DESIGN-AdocFoundry_Collaboration.md)
     adoc-kindle              L2  Kindle export: AZW3 and KFX from one book, in process (PRD-AdocFoundry_Kindle_Export.md)
     adoc-audit               L2  documentation quality audit: rules, reports, policy
     adoc-impact              L2  documentation impact analysis: rules over two revisions, report
@@ -256,6 +256,7 @@ AdocFoundry/
     adocfoundry-cli          L4  headless binary
     adoc-ls                  L4  LSP binary (from zed-asciidoc), on the engine since Phase 5
     adoc-mcp                 L4  Phase 5: MCP server over stdio, and Streamable HTTP since Phase 6
+    adoc-share               L4  collaboration's transport: framed TLS 1.3 between host and guests, invitations (DESIGN-AdocFoundry_Collaboration.md)
   grammars/                  tree-sitter-asciidoc, a git submodule on its master branch
   vendor/                    evalexpr stand-in, patched comemo and notify (see vendor/README.md)
   xtask/                     layers, package, run, notices, bump

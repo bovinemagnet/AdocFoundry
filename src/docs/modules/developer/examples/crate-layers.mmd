@@ -4,6 +4,7 @@ flowchart TD
         cli["adocfoundry-cli"]
         ls["adoc-ls<br/>(LSP, only LSP speaker)"]
         mcp["adoc-mcp<br/>(MCP over stdio or HTTP)"]
+        share["adoc-share<br/>(collaboration transport, TLS)"]
     end
     subgraph L3["L3: engine"]
         engine["adoc-engine"]
@@ -73,6 +74,7 @@ flowchart TD
     docbook --> render
     docbook --> dom
     docbook --> core
+    share --> collab
     collab --> core
     ebook --> render
     ebook --> dom

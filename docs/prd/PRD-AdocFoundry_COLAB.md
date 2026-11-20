@@ -341,6 +341,20 @@ The engine's `collab` feature, `crates/adoc-engine/src/collab.rs`, departs from 
 - **The app's editor** (remote patches without echo, carets mapped, IME) is C6's: nothing in the app shares a document before then. The engine already gives what it needs: precise patches with their origin.
 - **No `pump` step.** The transport calls `apply_shared_update` and `take_shared_updates` itself.
 
+### C4 (COLLAB 4/8, #691)
+
+The transport is the new L4 crate `crates/adoc-share`; the protocol's messages, frames and limits are `adoc-collab`'s `protocol` module; the session's rules run on the engine's thread (`crates/adoc-engine/src/collab_session.rs`). Where it departs from #691 or the design, the design changed in the same pull request:
+
+- **A `pump` step after all.** C3 left the transport to call the engine. A session needs more than that (admission, roles, sequence numbers, acknowledgements, resumption), and the app (C6) and the tests should drive one seam: the engine owns the session's `Link` (`adoc-collab`'s trait, which `adoc-share` implements), drains at most 64 events a `pump` and sends its documents' updates there, due at once while either waits.
+- **The transport decides nothing about the workspace.** It authenticates connections (TLS with the pinned certificate, the invitation's secret or a resume token), holds frames to their limits and moves them. Which files are offered, who may open, edit and save them, and what every message does are the engine's, checked against its own state whatever a peer claims.
+- **Not in the app yet.** #691 names `crates/adocfoundry/src/collaboration/`; the app's Share and Join are C6, which runs `adoc-share`. So this package adds no cryptography to a shipped build, and the release targets, `ring` on Windows on ARM included, are checked when C6 does.
+- **New cryptography, after all.** The design said `rustls` and `tokio-rustls` were already in the lock file through GPUI's HTTP client, so they added none. They were in the lock file, but no shipped build compiled them: `ring`, `rustls`, `rustls-webpki` and `tokio-rustls`, and `rcgen` with `yasna`, are new to what the app will build. They are confined to `adoc-share` and the app (`TLS_CRATES`, `TLS_ALLOWED`); the HTTP lists the design named (`NETWORK_ALLOWED`, `NETWORK_SERVER_ALLOWED`) are about HTTP clients and servers and stay as they were.
+- **Two processes in C8.** #691 asks for a two-process loopback session. These tests run host and guest engines in one test process, over real TLS sockets on loopback with the transport's own threads; the two-process suite is C8's (`collab_two_process_release_suite`, design §12).
+- **Sequence numbers start again at every snapshot** rather than running per epoch, since a snapshot replaces what the receiver had; the host discards a guest's updates after a snapshot until its number 1 arrives. A role taken away while edits are on their way refuses them without closing the connection: the guest gets `Error { unauthorised }` and a new snapshot.
+- **Resuming acknowledges, then resynchronises.** The host tells a resuming guest the last of its updates applied; the guest sends again those after it, then asks for a checked snapshot, which C2 settled is safer than a diff. An edit sent before the drop arrives once.
+- **Messages added:** `CloseFile`; `Heartbeat`; `Manifest` in parts, since a large workspace's list would not fit a two-byte control length; `Awareness` names its participant, set by the host when forwarding.
+- **Saving** answers an Editor's `SaveRequest` with the host's ordinary save (`Saved` with no revision yet, `Conflict`, `Failed`) and a Viewer's with `PermissionDenied`; revisions and conflict states are C5's.
+
 ## 15. References
 
 - Epic #686.
