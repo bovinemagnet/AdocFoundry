@@ -149,6 +149,17 @@ pub struct ManifestFile {
     pub size: u64,
 }
 
+/// A participant as the host tells guests of them.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Member {
+    pub peer: PeerId,
+    pub name: String,
+    pub role: Role,
+    /// Whether their link is up.
+    pub connected: bool,
+}
+
 /// How a credential proves who is connecting.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
@@ -267,6 +278,12 @@ pub enum Message {
     SaveResult {
         request: u64,
         outcome: SaveOutcome,
+    },
+    /// Who is in the session, the host first, and the name of the folder shared; sent after
+    /// `Join` and whenever it changes. Names are for showing only.
+    Roster {
+        workspace: String,
+        members: Vec<Member>,
     },
     /// The host's file as it stands: the revision on disk if the shared text is that text
     /// (`None` while unsaved changes are in it), and whether a change made outside the session
@@ -422,6 +439,13 @@ struct SaveResultControl {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct RosterControl {
+    workspace: String,
+    members: Vec<Member>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FileStateControl {
     file: u64,
     epoch: u32,
@@ -479,6 +503,7 @@ mod kind {
     pub const ERROR: u8 = 16;
     pub const HEARTBEAT: u8 = 17;
     pub const FILE_STATE: u8 = 18;
+    pub const ROSTER: u8 = 19;
 }
 
 impl Message {
@@ -614,6 +639,14 @@ impl Message {
                 })?,
                 Vec::new(),
             ),
+            Self::Roster { workspace, members } => (
+                kind::ROSTER,
+                json(&RosterControl {
+                    workspace: workspace.clone(),
+                    members: members.clone(),
+                })?,
+                Vec::new(),
+            ),
             Self::FileState {
                 file,
                 epoch,
@@ -719,6 +752,15 @@ impl Message {
                 outcome: SaveOutcome::Saved { revision: reason } | SaveOutcome::Failed { reason },
                 ..
             } => text(reason, MAX_TEXT, "reason"),
+            Self::Roster { workspace, members } => {
+                text(workspace, MAX_TEXT, "workspace")?;
+                if members.len() > MAX_PARTICIPANTS {
+                    return Err(FrameError::TooLarge(members.len()));
+                }
+                members
+                    .iter()
+                    .try_for_each(|member| display_name(&member.name))
+            }
             Self::FileState {
                 saved: Some(revision),
                 ..
@@ -871,6 +913,10 @@ pub fn decode(frame: &[u8]) -> Result<Message, FrameError> {
         kind::SAVE_RESULT => {
             let SaveResultControl { request, outcome } = read(control)?;
             no_payload(Message::SaveResult { request, outcome })?
+        }
+        kind::ROSTER => {
+            let RosterControl { workspace, members } = read(control)?;
+            no_payload(Message::Roster { workspace, members })?
         }
         kind::FILE_STATE => {
             let FileStateControl {

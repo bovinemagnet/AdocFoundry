@@ -1006,10 +1006,20 @@ impl Engine {
         document.version += 1;
         // Parsed again when something next reads it.
         document.parsed = std::cell::OnceCell::new();
-        document.dirty = !self
-            .states
+        // A guest's shared document is the host's to save: never unsaved here, so nothing asks
+        // to save it or keeps it (`Engine::shared_save_state` says how it stands).
+        #[cfg(feature = "collab")]
+        let guest = self
+            .shared
             .get(&id)
-            .is_some_and(|state| state.is_saved(&document.text));
+            .is_some_and(crate::collab::SharedDocument::is_guest);
+        #[cfg(not(feature = "collab"))]
+        let guest = false;
+        document.dirty = !guest
+            && !self
+                .states
+                .get(&id)
+                .is_some_and(|state| state.is_saved(&document.text));
         let version_after = document.version;
         let path = document.path.clone();
         let untitled = document.untitled;

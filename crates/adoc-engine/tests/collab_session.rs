@@ -366,7 +366,7 @@ fn collab_manifest_offers_only_what_may_be_shared() {
     let offer = |files: &[&str]| {
         let files: Vec<PathBuf> = files.iter().map(PathBuf::from).collect();
         let net = Arc::new(Mutex::new(Net::default()));
-        engine().host_session(Box::new(HostLink(net)), &root, &files)
+        engine().host_session(Box::new(HostLink(net)), &root, &files, "Host")
     };
     let manifest = offer(&[
         "modules/ROOT/pages/index.adoc",
@@ -457,4 +457,154 @@ fn a_session_drains_a_bounded_number_of_events_a_pump() {
     assert!(session
         .host_text()
         .starts_with(&"a".repeat(SESSION_EVENTS_PER_PUMP + 10)));
+}
+
+#[test]
+fn guests_are_told_who_is_in_the_session() {
+    let mut session = Session::new(&[("page.adoc", "= Page\n")]);
+    let ada = session.guest(1, true);
+    let bob = session.guest(2, false);
+    session.settle();
+    let names = |engine: &mut adoc_engine::Engine| {
+        engine
+            .participants()
+            .into_iter()
+            .map(|participant| (participant.name, participant.role, participant.connected))
+            .collect::<Vec<_>>()
+    };
+    let expected = vec![
+        ("Host".to_owned(), Role::Owner, true),
+        ("guest 1".to_owned(), Role::Editor, true),
+        ("guest 2".to_owned(), Role::Viewer, true),
+    ];
+    assert_eq!(names(session.engine(ada)), expected);
+    assert_eq!(names(session.engine(bob)), expected);
+    assert_eq!(
+        session.engine(ada).session_workspace(),
+        session.host.session_workspace()
+    );
+    assert_eq!(session.engine(bob).session_me(), Some((bob, Role::Viewer)));
+
+    // A change of role and a drop reach everyone, once each.
+    session.host.set_peer_role(bob, Role::Editor).unwrap();
+    session.drop_link(ada, 0);
+    session.settle();
+    let told = session
+        .sent_to(bob)
+        .iter()
+        .filter(|message| matches!(message, Message::Roster { .. }))
+        .count();
+    assert_eq!(
+        names(session.engine(bob)),
+        vec![
+            ("Host".to_owned(), Role::Owner, true),
+            ("guest 1".to_owned(), Role::Editor, false),
+            ("guest 2".to_owned(), Role::Editor, true),
+        ]
+    );
+    session.settle();
+    assert_eq!(
+        session
+            .sent_to(bob)
+            .iter()
+            .filter(|message| matches!(message, Message::Roster { .. }))
+            .count(),
+        told
+    );
+}
+
+#[test]
+fn a_remote_tab_closed_can_be_opened_again() {
+    let mut session = Session::new(&[("page.adoc", "= Page\n")]);
+    let ada = session.guest(1, true);
+    let id = session.engine(ada).session_document(1).unwrap();
+    session.engine(ada).close(id).unwrap();
+    session.settle();
+    assert!(session.net.lock().unwrap().to_host.is_empty());
+    assert_eq!(session.engine(ada).session_document(1), None);
+    // The host no longer sends it edits.
+    let host_doc = session.host_doc();
+    let before = session.sent_to(ada).len();
+    type_at(&mut session.host, host_doc, 0, "x");
+    session.settle();
+    assert!(!session.sent_to(ada)[before..]
+        .iter()
+        .any(|message| matches!(message, Message::Update { .. })));
+    session.engine(ada).open_session_file(1).unwrap();
+    session.settle();
+    assert_eq!(session.guest_text(ada), "x= Page\n");
+}
+
+#[test]
+fn a_guests_document_is_never_unsaved_on_its_side() {
+    let mut session = Session::new(&[("page.adoc", "= Page\n")]);
+    let ada = session.guest(1, true);
+    guest_types(&mut session, ada, 0, "x");
+    session.settle();
+    let engine = session.engine(ada);
+    let id = engine.session_document(1).unwrap();
+    assert!(!engine.document(id).unwrap().dirty);
+    assert!(session.host.document(session.host_doc()).unwrap().dirty);
+}
+
+#[test]
+fn selections_of_an_earlier_epoch_are_forgotten() {
+    let mut session = Session::new(&[("page.adoc", "= Page\n")]);
+    let ada = session.guest(1, true);
+    let bob = session.guest(2, true);
+    // Ada shows a selection; the host and Bob see it.
+    let (anchor, head) = {
+        let engine = session.engine(ada);
+        let id = engine.session_document(1).unwrap();
+        let _ = engine.document(id).unwrap();
+        (0, 2)
+    };
+    let selection = {
+        let snapshot = session
+            .sent_to(ada)
+            .into_iter()
+            .find_map(|message| match message {
+                Message::Snapshot { update, client, .. } => Some((update, client)),
+                _ => None,
+            })
+            .unwrap();
+        let replica = adoc_collab::Replica::from_snapshot(
+            &snapshot.0,
+            adoc_collab::ReplicaId::new(snapshot.1).unwrap(),
+        )
+        .unwrap();
+        replica
+            .selection(anchor, head, adoc_collab::Affinity::After)
+            .unwrap()
+    };
+    let events = session.engine(bob).subscribe();
+    session.forge(
+        ada,
+        Message::Awareness {
+            file: 1,
+            epoch: 1,
+            peer: ada,
+            selection,
+        },
+    );
+    session.settle();
+    let host_doc = session.host_doc();
+    assert_eq!(session.host.peer_selections(host_doc).len(), 1);
+    let bob_doc = session.engine(bob).session_document(1).unwrap();
+    assert_eq!(session.engine(bob).peer_selections(bob_doc).len(), 1);
+    assert!(events.try_iter().any(
+        |event| matches!(event, adoc_engine::EngineEvent::PresenceChanged(id) if id == bob_doc)
+    ));
+
+    // The file starts again in a new epoch: everyone's selections of the old text go.
+    fs::write(session.directory.path().join("page.adoc"), "= Outside\n").unwrap();
+    type_at(&mut session.host, host_doc, 0, "y");
+    assert!(session.host.save(host_doc).is_err());
+    session
+        .host
+        .resolve_disk_conflict(host_doc, adoc_engine::DiskResolution::ReloadDisk)
+        .unwrap();
+    session.settle();
+    assert!(session.host.peer_selections(host_doc).is_empty());
+    assert!(session.engine(bob).peer_selections(bob_doc).is_empty());
 }

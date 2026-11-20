@@ -111,6 +111,10 @@ impl SharedDocument {
         !self.outbox.is_empty()
     }
 
+    pub(crate) fn is_guest(&self) -> bool {
+        matches!(self.role, SharedRole::Guest { .. })
+    }
+
     pub(crate) fn saved_revision(&self) -> Option<&str> {
         self.saved.as_deref()
     }

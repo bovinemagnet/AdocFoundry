@@ -158,8 +158,13 @@ impl Session {
             files.push(PathBuf::from(name));
         }
         let net = Arc::new(Mutex::new(Net::default()));
-        host.host_session(Box::new(HostLink(net.clone())), directory.path(), &files)
-            .unwrap();
+        host.host_session(
+            Box::new(HostLink(net.clone())),
+            directory.path(),
+            &files,
+            "Host",
+        )
+        .unwrap();
         Self {
             directory,
             net,

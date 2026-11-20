@@ -95,6 +95,23 @@ fn every_message() -> Vec<Message> {
             peer: PeerId(1),
             role: Role::Editor,
         },
+        Message::Roster {
+            workspace: "docs".to_owned(),
+            members: vec![
+                adoc_collab::protocol::Member {
+                    peer: PeerId::HOST,
+                    name: "Host".to_owned(),
+                    role: Role::Owner,
+                    connected: true,
+                },
+                adoc_collab::protocol::Member {
+                    peer: PeerId(3),
+                    name: "Ada".to_owned(),
+                    role: Role::Viewer,
+                    connected: false,
+                },
+            ],
+        },
         Message::FileState {
             file: 1,
             epoch: 2,
@@ -318,6 +335,29 @@ fn fields_outside_their_limits_are_refused() {
             "{revision}"
         );
     }
+    let unnamed = Message::Roster {
+        workspace: "docs".to_owned(),
+        members: vec![adoc_collab::protocol::Member {
+            peer: PeerId(1),
+            name: String::new(),
+            role: Role::Viewer,
+            connected: true,
+        }],
+    };
+    assert_eq!(unnamed.encode(), Err(FrameError::Invalid("name")));
+    let crowd = Message::Roster {
+        workspace: "docs".to_owned(),
+        members: vec![
+            adoc_collab::protocol::Member {
+                peer: PeerId(1),
+                name: "A".to_owned(),
+                role: Role::Viewer,
+                connected: true,
+            };
+            adoc_collab::protocol::MAX_PARTICIPANTS + 1
+        ],
+    };
+    assert!(matches!(crowd.encode(), Err(FrameError::TooLarge(_))));
     let empty = Message::Resync {
         file: 1,
         epoch: 1,

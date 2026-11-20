@@ -58,6 +58,7 @@ fn hosting(text: &str, timings: Timings) -> Hosting {
             Box::new(link),
             directory.path(),
             &[PathBuf::from("page.adoc")],
+            "Host",
         )
         .unwrap();
     Hosting {
@@ -257,9 +258,8 @@ fn collab_loopback_session_syncs() {
     let guest_doc = guest.session_document(1).unwrap();
     until(&mut [host, &mut guest], |engines| {
         engines[1]
-            .participants()
-            .first()
-            .is_some_and(|me| me.role == Role::Editor)
+            .session_me()
+            .is_some_and(|(_, role)| role == Role::Editor)
     });
 
     type_at(host, host_doc, 7, "From the host.\n");
@@ -287,9 +287,8 @@ fn collab_loopback_session_syncs() {
     });
     until(&mut [host, &mut guest], |engines| {
         engines[1]
-            .participants()
-            .first()
-            .is_some_and(|me| me.role == Role::Editor)
+            .session_me()
+            .is_some_and(|(_, role)| role == Role::Editor)
     });
     // Editing resumes once the resynchronisation is done.
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -419,13 +418,14 @@ fn collab_unauthorised_requests_are_refused() {
     drop(first);
 }
 
-/// The next message for `raw` other than a heartbeat, pumping the host's engine meanwhile.
+/// The next message for `raw` other than a heartbeat or the roster, which the host sends
+/// whenever who is in the session changes, pumping the host's engine meanwhile.
 fn answer(hosting: &mut Hosting, raw: &mut Raw) -> Message {
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
         hosting.engine.pump();
         match raw.recv(Duration::from_millis(20)) {
-            Some(Ok(Message::Heartbeat)) | None => {}
+            Some(Ok(Message::Heartbeat | Message::Roster { .. })) | None => {}
             Some(Ok(message)) => return message,
             Some(Err(error)) => panic!("{error:?}"),
         }

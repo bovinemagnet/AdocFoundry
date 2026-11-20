@@ -521,10 +521,14 @@ fn a_shared_change_to_send_is_due_at_once() {
             Box::new(Scripted(Arc::clone(&events))),
             directory.path(),
             &["page.adoc".into()],
+            "Host",
         )
         .unwrap();
     engine.pump();
     engine.admit_peer(peer).unwrap();
+    // Who is in the session is due to be told at once, then nothing.
+    assert!(engine.next_due().is_some_and(|due| due <= Instant::now()));
+    engine.pump();
     assert_eq!(engine.next_due(), None);
 
     // Shared outside the session: its changes are nobody's to send, and never due.

@@ -23,8 +23,9 @@ use std::{
 
 use adoc_collab::{
     protocol::{
-        display_path, ErrorCode, FileKind, ManifestFile, Message, PeerId, Role, SaveOutcome,
-        MANIFEST_PART, MAX_MANIFEST_FILES, MAX_OPEN_FILES, MAX_PARTICIPANTS, MAX_QUEUED_FRAMES,
+        display_path, ErrorCode, FileKind, ManifestFile, Member, Message, PeerId, Role,
+        SaveOutcome, MANIFEST_PART, MAX_MANIFEST_FILES, MAX_OPEN_FILES, MAX_PARTICIPANTS,
+        MAX_QUEUED_FRAMES,
     },
     EncodedUpdate, Link, LinkEvent, RelativeSelection, ReplicaId, Sender, MAX_SHARED_FILE,
 };
@@ -68,6 +69,9 @@ enum Side {
 }
 
 struct Host {
+    /// The host's name, and the shared folder's, as guests are shown them.
+    name: String,
+    workspace: String,
     access: FileAccess,
     /// The offered files, by their session number.
     offered: BTreeMap<u64, Offered>,
@@ -96,6 +100,8 @@ struct Peer {
     role: Role,
     connected: bool,
     files: BTreeMap<u64, PeerFile>,
+    /// Who is in the session, as the peer was last told it.
+    told_roster: Option<Vec<Member>>,
 }
 
 struct PeerFile {
@@ -125,6 +131,9 @@ struct Guest {
     /// The next save request's number, and which file each one waiting is for.
     next_request: u64,
     requests: BTreeMap<u64, u64>,
+    /// The shared folder's name and who is in the session, as the host last said.
+    workspace: Option<String>,
+    roster: Vec<Member>,
 }
 
 #[derive(Default)]
@@ -147,6 +156,8 @@ struct GuestFile {
     conflict: bool,
     /// The answer to this guest's last save request.
     last_save: Option<(u64, SaveOutcome)>,
+    /// The document version last hashed for its save state, and the hash.
+    hashed: std::cell::RefCell<Option<(u64, String)>>,
 }
 
 fn refused(message: &str) -> EngineError {
@@ -210,6 +221,7 @@ impl Engine {
         link: Box<dyn Link>,
         root: &Path,
         files: &[PathBuf],
+        name: &str,
     ) -> Result<Vec<ManifestFile>, EngineError> {
         if self.collab_session.is_some() {
             return Err(refused("a session is already running"));
@@ -255,6 +267,11 @@ impl Engine {
         self.collab_session = Some(Session {
             link,
             side: Side::Host(Host {
+                name: name.to_owned(),
+                workspace: root
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
                 access,
                 offered,
                 peers: BTreeMap::new(),
@@ -282,6 +299,8 @@ impl Engine {
                 files: BTreeMap::new(),
                 next_request: 1,
                 requests: BTreeMap::new(),
+                workspace: None,
+                roster: Vec::new(),
             }),
             backlog: false,
         });
@@ -398,17 +417,45 @@ impl Engine {
                 })
                 .collect(),
             Some(Side::Guest(guest)) => guest
-                .me
+                .roster
                 .iter()
-                .map(|(peer, role)| Participant {
-                    peer: *peer,
-                    name: String::new(),
-                    role: *role,
-                    connected: guest.connected,
+                .map(|member| Participant {
+                    peer: member.peer,
+                    name: member.name.clone(),
+                    role: member.role,
+                    connected: member.connected && guest.connected,
                 })
                 .collect(),
             None => Vec::new(),
         }
+    }
+
+    /// This guest's own number and role in the session, once joined.
+    #[must_use]
+    pub fn session_me(&self) -> Option<(PeerId, Role)> {
+        match self.collab_session.as_ref().map(|session| &session.side) {
+            Some(Side::Guest(guest)) => guest.me,
+            _ => None,
+        }
+    }
+
+    /// The name of the folder shared: the host's own, or the one the host named to a guest.
+    #[must_use]
+    pub fn session_workspace(&self) -> Option<String> {
+        match self.collab_session.as_ref().map(|session| &session.side) {
+            Some(Side::Host(host)) => Some(host.workspace.clone()),
+            Some(Side::Guest(guest)) => guest.workspace.clone(),
+            None => None,
+        }
+    }
+
+    /// Whether this engine hosts the session.
+    #[must_use]
+    pub fn is_session_host(&self) -> bool {
+        matches!(
+            self.collab_session.as_ref().map(|session| &session.side),
+            Some(Side::Host(_))
+        )
     }
 
     /// The selections other participants last showed in document `id`.
@@ -426,6 +473,7 @@ impl Engine {
                 };
                 host.peers
                     .iter()
+                    .filter(|(_, entry)| entry.connected)
                     .filter_map(|(peer, entry)| {
                         let selection = entry.files.get(&file)?.selection.clone()?;
                         Some(PeerSelection {
@@ -435,20 +483,26 @@ impl Engine {
                     })
                     .collect()
             }
-            Some(Side::Guest(guest)) => guest
+            Some(Side::Guest(guest)) if guest.connected => guest
                 .files
                 .values()
                 .filter(|file| file.document == Some(id))
                 .flat_map(|file| {
                     file.selections
                         .iter()
+                        .filter(|(peer, _)| {
+                            guest
+                                .roster
+                                .iter()
+                                .any(|member| member.peer == **peer && member.connected)
+                        })
                         .map(|(peer, selection)| PeerSelection {
                             peer: *peer,
                             selection: selection.clone(),
                         })
                 })
                 .collect(),
-            None => Vec::new(),
+            _ => Vec::new(),
         }
     }
 
@@ -480,6 +534,7 @@ impl Engine {
                 role: Role::Viewer,
                 connected: true,
                 files: BTreeMap::new(),
+                told_roster: None,
             },
         );
         let entries: Vec<ManifestFile> = host
@@ -666,9 +721,18 @@ impl Engine {
         if state.conflict {
             return Some(SharedSaveState::Conflict);
         }
-        let text = self.document(id)?.text_string();
+        let document = self.document(id)?;
+        // Hashed once a version, however often the state is asked for.
+        let mut hashed = state.hashed.borrow_mut();
+        if hashed
+            .as_ref()
+            .is_none_or(|(version, _)| *version != document.version)
+        {
+            *hashed = Some((document.version, revision_of(&document.text_string())));
+        }
+        let own = hashed.as_ref().map(|(_, revision)| revision.as_str());
         Some(match &state.saved {
-            Some(revision) if *revision == revision_of(&text) => SharedSaveState::Saved {
+            Some(revision) if Some(revision.as_str()) == own => SharedSaveState::Saved {
                 revision: revision.clone(),
             },
             _ => SharedSaveState::Unsaved,
@@ -713,7 +777,16 @@ impl Engine {
             }),
             Side::Guest(_) => false,
         };
-        (session.backlog || outgoing || unannounced).then(|| self.clock.now())
+        let roster = match &session.side {
+            Side::Host(host) => {
+                let members = Self::roster(host);
+                host.peers
+                    .values()
+                    .any(|entry| entry.connected && entry.told_roster.as_ref() != Some(&members))
+            }
+            Side::Guest(_) => false,
+        };
+        (session.backlog || outgoing || unannounced || roster).then(|| self.clock.now())
     }
 
     /// Handles what the link brought, at most [`SESSION_EVENTS_PER_PUMP`] events, and sends
@@ -766,6 +839,7 @@ impl Engine {
                     return false;
                 };
                 entry.connected = true;
+                entry.told_roster = None;
                 if entry.role != Role::Viewer {
                     let role = entry.role;
                     let _ = session.link.send(peer, Message::RoleChanged { peer, role });
@@ -1019,7 +1093,9 @@ impl Engine {
         let Some(entry) = host.peers.get_mut(&peer) else {
             return;
         };
-        let selection = entry.files.remove(&file).and_then(|state| state.selection);
+        // A snapshot starts the peer again: its selection, of the text before, goes too.
+        entry.files.remove(&file);
+        let selection = None;
         entry.files.insert(
             file,
             PeerFile {
@@ -1271,7 +1347,9 @@ impl Engine {
                 },
             );
         }
-        self.emit(EngineEvent::SessionChanged);
+        if let Some(id) = host.offered.get(&file).and_then(|offered| offered.document) {
+            self.emit(EngineEvent::PresenceChanged(id));
+        }
         Ok(())
     }
 
@@ -1334,7 +1412,47 @@ impl Engine {
     }
 
     /// Sends the host's own changes to every live peer with the file open.
+    /// Who is in the session, the host first, as guests are told it.
+    fn roster(host: &Host) -> Vec<Member> {
+        std::iter::once(Member {
+            peer: PeerId::HOST,
+            name: host.name.clone(),
+            role: Role::Owner,
+            connected: true,
+        })
+        .chain(host.peers.iter().map(|(peer, entry)| Member {
+            peer: *peer,
+            name: entry.name.clone(),
+            role: entry.role,
+            connected: entry.connected,
+        }))
+        .collect()
+    }
+
+    /// Tells each connected peer who is in the session, if it was told otherwise.
+    fn host_announce_roster(session: &mut Session) {
+        let Side::Host(host) = &mut session.side else {
+            return;
+        };
+        let members = Self::roster(host);
+        let workspace = host.workspace.clone();
+        for (peer, entry) in &mut host.peers {
+            if !entry.connected || entry.told_roster.as_ref() == Some(&members) {
+                continue;
+            }
+            entry.told_roster = Some(members.clone());
+            let _ = session.link.send(
+                *peer,
+                Message::Roster {
+                    workspace: workspace.clone(),
+                    members: members.clone(),
+                },
+            );
+        }
+    }
+
     fn host_flush(&mut self, session: &mut Session) {
+        Self::host_announce_roster(session);
         let Side::Host(host) = &session.side else {
             return;
         };
@@ -1494,9 +1612,16 @@ impl Engine {
                     .filter(|state| state.epoch == epoch)
                 {
                     state.selections.insert(peer, selection);
-                    return true;
+                    if let Some(id) = state.document {
+                        self.emit(EngineEvent::PresenceChanged(id));
+                    }
                 }
                 false
+            }
+            Message::Roster { workspace, members } => {
+                guest.workspace = Some(workspace);
+                guest.roster = members;
+                true
             }
             Message::FileState {
                 file,
@@ -1581,6 +1706,7 @@ impl Engine {
             Ok(id) => {
                 state.document = Some(id);
                 state.epoch = epoch;
+                state.selections.clear();
                 state.saved = None;
                 state.conflict = false;
                 state.next_in = 1;
@@ -1705,6 +1831,23 @@ impl Engine {
         let Side::Guest(guest) = &mut session.side else {
             return;
         };
+        // A remote tab closed here: the host stops sending it, and it may be opened again.
+        let closed: Vec<u64> = guest
+            .files
+            .iter()
+            .filter(|(_, state)| {
+                state
+                    .document
+                    .is_some_and(|id| !self.documents.contains_key(&id))
+            })
+            .map(|(file, _)| *file)
+            .collect();
+        for file in closed {
+            guest.files.remove(&file);
+            if guest.connected {
+                let _ = session.link.send(PeerId::HOST, Message::CloseFile { file });
+            }
+        }
         let open: Vec<(u64, DocumentId)> = guest
             .files
             .iter()

@@ -31,6 +31,9 @@ pub enum EngineEvent {
     /// Who is in the collaboration session, what they may do or where their selections are
     /// changed, or a guest's link went down or came back (`Engine::participants`).
     SessionChanged,
+    /// Another participant's selection in a shared document moved (`Engine::peer_selections`):
+    /// presence only, often, so views redraw carets without rebuilding anything else.
+    PresenceChanged(DocumentId),
     DocumentSaved(DocumentId),
     DocumentClosed(DocumentId),
     /// `new` took the preview tab's place from `old`, which is closed next.
