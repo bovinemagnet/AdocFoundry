@@ -774,3 +774,88 @@ fn a_running_session_can_be_ended_whatever_the_setting() {
         .unwrap();
     assert!(!session.host.command_available(ids::COLLAB_STOP));
 }
+
+/// Each participant's caret and selection reach the others and follow the text through
+/// everyone's edits (PRD §10 `collab_remote_carets_follow_edits`).
+#[test]
+fn collab_remote_carets_follow_edits() {
+    let mut session = Session::new(&[("page.adoc", "= Page\nSome text.\n")]);
+    let ada = session.guest(1, true);
+    let host_doc = session.host_doc();
+    // The host's caret after "Some", and Ada's selection of "text".
+    session.host.share_selection(host_doc, 11, 11);
+    let guest_doc = session.engine(ada).session_document(1).unwrap();
+    session.engine(ada).share_selection(guest_doc, 12, 16);
+    session.settle();
+    let carets = session.engine(ada).peer_carets(guest_doc);
+    assert_eq!(carets.len(), 1);
+    assert_eq!(
+        (
+            carets[0].peer,
+            carets[0].name.as_str(),
+            carets[0].anchor,
+            carets[0].head
+        ),
+        (PeerId::HOST, "Host", 11, 11)
+    );
+    let carets = session.host.peer_carets(host_doc);
+    assert_eq!(
+        (
+            carets[0].peer,
+            carets[0].name.as_str(),
+            carets[0].anchor,
+            carets[0].head
+        ),
+        (ada, "guest 1", 12, 16)
+    );
+
+    // Text typed before them moves both. Ada types at her own caret, the end of her selection,
+    // in her text before the host's edit reaches her: the end moves past it, as a caret does.
+    type_at(&mut session.host, host_doc, 0, "// ");
+    guest_types(&mut session, ada, 16, "!");
+    session.settle();
+    let carets = session.engine(ada).peer_carets(guest_doc);
+    assert_eq!((carets[0].anchor, carets[0].head), (14, 14));
+    let carets = session.host.peer_carets(host_doc);
+    assert_eq!((carets[0].anchor, carets[0].head), (15, 20));
+    assert_eq!(session.host_text(), "// = Page\nSome text!.\n");
+
+    // A participant who drops out shows no caret.
+    session.drop_link(ada, 0);
+    session.settle();
+    assert!(session.host.peer_carets(host_doc).is_empty());
+}
+
+#[test]
+fn presence_is_paced_and_the_latest_wins() {
+    let mut session = Session::new(&[("page.adoc", "= Page\nSome text.\n")]);
+    let ada = session.guest(1, true);
+    let host_doc = session.host_doc();
+    let awareness = |session: &Session| {
+        session
+            .sent_to(ada)
+            .iter()
+            .filter(|message| matches!(message, Message::Awareness { .. }))
+            .count()
+    };
+    let before = awareness(&session);
+    for offset in 0..10 {
+        session.host.share_selection(host_doc, offset, offset);
+    }
+    session.settle();
+    // One at once; the rest wait for the interval.
+    assert_eq!(awareness(&session), before + 1);
+    std::thread::sleep(
+        adoc_engine::protocol::HEARTBEAT_INTERVAL.min(std::time::Duration::from_millis(80)),
+    );
+    assert!(session.host.next_due().is_some());
+    session.settle();
+    assert_eq!(awareness(&session), before + 2);
+    let guest_doc = session.engine(ada).session_document(1).unwrap();
+    let carets = session.engine(ada).peer_carets(guest_doc);
+    assert_eq!(
+        (carets[0].anchor, carets[0].head),
+        (9, 9),
+        "the latest selection"
+    );
+}

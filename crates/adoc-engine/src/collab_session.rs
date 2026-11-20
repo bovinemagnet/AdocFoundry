@@ -49,6 +49,24 @@ pub struct Participant {
     pub connected: bool,
 }
 
+#[derive(Default)]
+struct Presence {
+    throttle: adoc_collab::AwarenessThrottle,
+    /// The selection waiting to be sent.
+    waiting: Option<RelativeSelection>,
+}
+
+/// Another participant's caret and selection in a shared document, where they are now in its
+/// text, for an editor to draw.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PeerCaret {
+    pub peer: PeerId,
+    pub name: String,
+    /// Byte offsets: where the selection started, and the caret.
+    pub anchor: usize,
+    pub head: usize,
+}
+
 /// A selection another participant last showed in a shared file.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PeerSelection {
@@ -59,6 +77,9 @@ pub struct PeerSelection {
 pub(crate) struct Session {
     link: Box<dyn Link>,
     side: Side,
+    /// This participant's own selection in each shared file, paced (design §8: one message
+    /// per `AWARENESS_INTERVAL`, the latest winning).
+    presence: BTreeMap<u64, Presence>,
     /// The last pump stopped at [`SESSION_EVENTS_PER_PUMP`]: the next is due at once.
     backlog: bool,
 }
@@ -279,6 +300,7 @@ impl Engine {
                 clients: BTreeSet::new(),
             }),
             backlog: false,
+            presence: BTreeMap::new(),
         });
         Ok(manifest)
     }
@@ -303,6 +325,7 @@ impl Engine {
                 roster: Vec::new(),
             }),
             backlog: false,
+            presence: BTreeMap::new(),
         });
         Ok(())
     }
@@ -739,6 +762,144 @@ impl Engine {
         })
     }
 
+    /// Shows this participant's selection in shared document `id`, from `anchor` to `head`
+    /// (byte offsets), to the others: sent at once, or once `AWARENESS_INTERVAL` has passed
+    /// since the last, the latest selection winning.
+    pub fn share_selection(&mut self, id: DocumentId, anchor: usize, head: usize) {
+        let Some(selection) = self.shared_selection(id, anchor, head) else {
+            return;
+        };
+        let now = self.clock.now();
+        let Some(mut session) = self.collab_session.take() else {
+            return;
+        };
+        if let Some(file) = Self::session_file(&session, id) {
+            let presence = session.presence.entry(file).or_default();
+            if presence.throttle.offer(now) {
+                presence.waiting = None;
+                Self::send_presence(&mut session, file, selection);
+            } else {
+                presence.waiting = Some(selection);
+            }
+        }
+        self.collab_session = Some(session);
+    }
+
+    /// The other participants' carets and selections in shared document `id`, where they are
+    /// now, with their names.
+    #[must_use]
+    pub fn peer_carets(&self, id: DocumentId) -> Vec<PeerCaret> {
+        let names: BTreeMap<PeerId, String> =
+            match self.collab_session.as_ref().map(|session| &session.side) {
+                Some(Side::Host(host)) => host
+                    .peers
+                    .iter()
+                    .map(|(peer, entry)| (*peer, entry.name.clone()))
+                    .collect(),
+                Some(Side::Guest(guest)) => guest
+                    .roster
+                    .iter()
+                    .map(|member| (member.peer, member.name.clone()))
+                    .collect(),
+                None => return Vec::new(),
+            };
+        self.peer_selections(id)
+            .into_iter()
+            .filter_map(|shown| {
+                let (anchor, head) = self.shared_resolve(id, &shown.selection)?;
+                Some(PeerCaret {
+                    peer: shown.peer,
+                    name: names.get(&shown.peer).cloned().unwrap_or_default(),
+                    anchor,
+                    head,
+                })
+            })
+            .collect()
+    }
+
+    /// The session's number for document `id`.
+    fn session_file(session: &Session, id: DocumentId) -> Option<u64> {
+        match &session.side {
+            Side::Host(host) => host
+                .offered
+                .iter()
+                .find(|(_, offered)| offered.document == Some(id))
+                .map(|(file, _)| *file),
+            Side::Guest(guest) => guest
+                .files
+                .iter()
+                .find(|(_, state)| state.document == Some(id))
+                .map(|(file, _)| *file),
+        }
+    }
+
+    /// Sends this participant's `selection` in `file`: a host to every live guest with it
+    /// open, a guest to the host, which forwards it.
+    fn send_presence(session: &mut Session, file: u64, selection: RelativeSelection) {
+        match &session.side {
+            Side::Host(host) => {
+                let targets: Vec<(PeerId, u32)> = host
+                    .peers
+                    .iter()
+                    .filter(|(_, entry)| entry.connected)
+                    .filter_map(|(peer, entry)| {
+                        let open = entry.files.get(&file).filter(|open| open.live)?;
+                        Some((*peer, open.epoch))
+                    })
+                    .collect();
+                for (peer, epoch) in targets {
+                    let _ = session.link.send(
+                        peer,
+                        Message::Awareness {
+                            file,
+                            epoch,
+                            peer: PeerId::HOST,
+                            selection: selection.clone(),
+                        },
+                    );
+                }
+            }
+            Side::Guest(guest) => {
+                let Some((me, _)) = guest.me else {
+                    return;
+                };
+                let Some(state) = guest.files.get(&file).filter(|state| !state.waiting) else {
+                    return;
+                };
+                if guest.connected {
+                    let _ = session.link.send(
+                        PeerId::HOST,
+                        Message::Awareness {
+                            file,
+                            epoch: state.epoch,
+                            peer: me,
+                            selection,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    /// Sends the selections that waited for their interval.
+    fn flush_presence(&mut self, session: &mut Session) {
+        let now = self.clock.now();
+        let due: Vec<(u64, RelativeSelection)> = session
+            .presence
+            .iter_mut()
+            .filter_map(|(file, presence)| {
+                if presence.waiting.is_some() && presence.throttle.take_due(now) {
+                    Some((*file, presence.waiting.take()?))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for (file, selection) in due {
+            Self::send_presence(session, file, selection);
+        }
+    }
+
     /// Due at once while events wait or one of the session's documents has changes to send:
     /// only those its flush sends, so nothing else is due for ever.
     pub(crate) fn due_session(&self) -> Option<std::time::Instant> {
@@ -786,7 +947,14 @@ impl Engine {
             }
             Side::Guest(_) => false,
         };
-        (session.backlog || outgoing || unannounced || roster).then(|| self.clock.now())
+        let presence = session
+            .presence
+            .values()
+            .filter(|presence| presence.waiting.is_some())
+            .filter_map(|presence| presence.throttle.due())
+            .min();
+        let now = (session.backlog || outgoing || unannounced || roster).then(|| self.clock.now());
+        [now, presence].into_iter().flatten().min()
     }
 
     /// Handles what the link brought, at most [`SESSION_EVENTS_PER_PUMP`] events, and sends
@@ -812,6 +980,7 @@ impl Engine {
             Side::Host(_) => self.host_flush(&mut session),
             Side::Guest(_) => self.guest_flush(&mut session),
         }
+        self.flush_presence(&mut session);
         self.collab_session = Some(session);
         if changed {
             self.emit(EngineEvent::SessionChanged);

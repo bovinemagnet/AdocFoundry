@@ -604,6 +604,42 @@ impl Engine {
         true
     }
 
+    /// This participant's selection from `anchor` to `head` in shared document `id`, relative
+    /// to the text around it, to send as presence.
+    pub(crate) fn shared_selection(
+        &self,
+        id: DocumentId,
+        anchor: usize,
+        head: usize,
+    ) -> Option<adoc_collab::RelativeSelection> {
+        let shared = self.shared.get(&id)?;
+        let text = &self.documents.get(&id)?.text;
+        let len = text.len();
+        // Only offsets on character boundaries reach the replica.
+        let on_boundary = |offset: usize| offset <= len && text.is_char_boundary(offset);
+        if !on_boundary(anchor) || !on_boundary(head) {
+            return None;
+        }
+        shared
+            .replica
+            .selection(anchor, head, adoc_collab::Affinity::After)
+            .ok()
+    }
+
+    /// Where another participant's `selection` is now in shared document `id`, as byte offsets
+    /// on character boundaries of its text.
+    pub(crate) fn shared_resolve(
+        &self,
+        id: DocumentId,
+        selection: &adoc_collab::RelativeSelection,
+    ) -> Option<(usize, usize)> {
+        let (anchor, head) = self.shared.get(&id)?.replica.resolve(selection)?;
+        let text = &self.documents.get(&id)?.text;
+        (text.is_char_boundary(anchor.min(text.len()))
+            && text.is_char_boundary(head.min(text.len())))
+        .then_some((anchor.min(text.len()), head.min(text.len())))
+    }
+
     /// The revision host-shared document `id`'s file holds, as last written or read.
     pub(crate) fn shared_saved_revision(&self, id: DocumentId) -> Option<String> {
         self.shared.get(&id)?.saved_revision().map(str::to_owned)

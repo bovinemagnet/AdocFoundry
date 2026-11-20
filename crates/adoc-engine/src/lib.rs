@@ -123,7 +123,9 @@ pub use collab::{
     revision_of, DiskResolution, SharedFileId, SharedReceipt, SharedRole, SharedSaveState,
 };
 #[cfg(feature = "collab")]
-pub use collab_session::{Participant, PeerSelection, SharePlan, SESSION_EVENTS_PER_PUMP};
+pub use collab_session::{
+    Participant, PeerCaret, PeerSelection, SharePlan, SESSION_EVENTS_PER_PUMP,
+};
 pub use command::{
     CollaborationStep, Command, CommandArgs, CommandCategory, CommandContext, CommandId,
     CommandOutcome, CommandRegistry, CommandSpec, RegistryError,
