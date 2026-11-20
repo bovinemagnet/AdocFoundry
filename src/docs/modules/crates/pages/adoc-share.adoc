@@ -9,8 +9,10 @@ It is at layer L4 and depends on `adoc-collab` (for the protocol and the `Link` 
 The design is `docs/design/DESIGN-AdocFoundry_Collaboration.md` in the repository, which is not part of this site.
 
 NOTE: The crate is COLLAB 4/8 (issue #691) of the collaboration epic #686.
-The app does not run it yet (COLLAB 6/8), so nothing in the app, the command line or the MCP server shares a session today.
+The app runs it from COLLAB 6/8 (issue #693): it holds the `Host`, or the guest's `GuestControl`, and gives the transport the pump's waker so that an event wakes the pump.
+The command line and the MCP server do not share sessions.
 Its tests drive it with engines over loopback.
+See xref:adocfoundry.adoc#collaboration[adocfoundry] for how the app holds it.
 
 == What it does and does not do
 

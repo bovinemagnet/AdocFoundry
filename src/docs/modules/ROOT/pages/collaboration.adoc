@@ -1,0 +1,181 @@
+= Working together
+Paul Snow
+:revnumber: 0.0.0
+:description: Share a workspace from your computer and let others edit its pages with you, or join someone else's session.
+
+AdocFoundry lets two or more people edit the same AsciiDoc pages at the same time.
+One person shares a workspace, and the others join it from their own copy of the app.
+This page describes both sides.
+
+There is no account to make and nothing is stored in the cloud.
+The host's app is the server: it listens for connections, decides who comes in and holds the files.
+Guests see and edit the host's pages, and the host's computer is the only one that saves them.
+
+Collaboration is off until you set `[collaboration] enabled = true` in your user settings file.
+Until then nothing about it appears in the menus or the command palette, and nothing listens or connects.
+A workspace settings file cannot turn it on.
+See xref:settings.adoc[Settings].
+
+Every action here is a command, so it also appears in the command palette and in the *File* menu.
+
+== Sharing a workspace
+
+Choose *Share Workspace…* from the *File* menu or the command palette.
+A dialog shows what would be shared before anything happens.
+
+What is offered:: The `.adoc` pages and partials under the first folder of the workspace.
+The dialog counts them, and says how many AsciiDoc files are left out.
+Files are left out when they are in a hidden folder or an ignored folder (see `workspace.ignore` in xref:settings.adoc[Settings]), lead outside the folder through a link, or are too large.
+
+What is never offered:: Images, settings, the `.git` folder and any other file that is not an AsciiDoc page or partial.
+
+Where it listens:: You choose.
+*This computer only* is for trying it out, or for people using the same computer.
+*Local network* shows your address on the local network, for people on the same network or a VPN.
+Nothing listens until you press one of these buttons, and each person you invite still waits for you to admit them.
+
+After you choose, the *Session* panel opens in the sidebar.
+It shows the folder shared, the address listened on, the safety code, who is waiting, who is in and the shared files that are open.
+
+NOTE: You can share one workspace at a time, and you cannot share while you are in someone else's session.
+
+=== Inviting someone
+
+Press *Copy Invitation* in the *Session* panel, or choose it from the *File* menu.
+The invitation is one line of text, which begins `adocfoundry:join`, placed on your clipboard.
+
+* It can be used once, by one person.
+* It lasts ten minutes. The panel says how long the last one has left.
+* It is never saved. Copy another whenever you need one.
+
+Send it to the person by a channel you trust, such as a direct message or a conversation in person.
+Anyone who has the invitation within those ten minutes can knock at the door, so do not post it somewhere others can read it.
+
+=== The safety code
+
+The *Session* panel shows a safety code for your session, written as four groups of five digits.
+It identifies your session's certificate.
+When someone joins, their app shows a code too, and the two must be the same.
+Compare them by voice or in person, not by the channel that carried the invitation.
+If the codes differ, the guest should not go on.
+
+=== Letting people in
+
+When someone has connected and compared the code, they appear under *Waiting* in the *Session* panel as "asks to join".
+You choose:
+
+*Admit*:: They join as a Viewer.
+*Turn Away*:: They are refused.
+
+A waiting request that you do not answer is turned away after ten minutes.
+
+Each participant under *Participants* has a role:
+
+Viewer:: May read and copy, and cannot edit.
+Editor:: May edit the shared pages.
+
+Use *Let Edit* to make a Viewer an Editor, and *Make Viewer* to take editing away again.
+Taking editing away applies at once, to everything that person sends from then on.
+*Remove* sends someone out of the session; a removed person cannot resume.
+
+=== Stopping
+
+*Stop Sharing* in the *Session* panel or the *File* menu closes every connection and stops listening.
+Your pages stay open as ordinary pages of your workspace.
+
+== Joining a session
+
+Choose *Join Session…* from the *File* menu or the command palette.
+
+. Paste the invitation you were sent, check your name (it starts as your account's name, and the host sees it), and choose *Connect*.
+. The app connects and checks that the host holds the certificate the invitation names.
+If it does not, nothing is sent and the app says so.
+. A dialog shows the safety code.
+Compare it with the code in the host's *Session* panel, and choose *Join* only if they are the same.
+Your name and the invitation's secret are sent only after you choose.
+. The *Session* panel says "Waiting to be let in…" until the host admits you.
+You join as a Viewer, until the host lets you edit.
+
+=== Opening shared files
+
+Once you are in, the *Session* panel lists the shared files under *Shared files*, partials marked as such.
+Choose *Open* beside a file to open it in a tab.
+It opens once the host's text arrives.
+
+A shared tab is marked with "(shared)" after its name.
+It is the host's file, not one on your computer:
+
+* it has no file on your disk and is never saved there;
+* *Save* asks the host to save it, which works only if you are an Editor;
+* if you are a Viewer, or the connection is down, the page is read only.
+
+The *Session* panel says whether you may edit, and lists everyone in the session, with "(you)" beside yourself.
+
+== What the status bar says
+
+While a shared page is active, the status bar shows who it is shared by, what you may do and whether it is saved, for example "Shared · Editor · Saved".
+
+[cols="1,3",options="header"]
+|===
+|Shows |Meaning
+
+|Shared by you
+|You are the host.
+
+|Shared · Editor
+|You joined, and may edit.
+
+|Shared · read only
+|You joined as a Viewer, or you may not edit just now.
+
+|Shared · disconnected
+|You may not edit and the connection to the host is down.
+|===
+
+The second part is the save state:
+
+[cols="1,3",options="header"]
+|===
+|Shows |Meaning
+
+|Saved
+|The host's file on disk holds this text.
+
+|Unsaved changes
+|The shared text differs from the host's file.
+
+|Changed on disk
+|The host's file was changed outside the session, and the host must decide which to keep.
+
+|Not known saved
+|Your connection is down, so you cannot tell.
+|===
+
+== When the connection drops
+
+If a guest's connection drops, a notification says so, and the *Session* panel shows "Disconnected: not known saved".
+You cannot edit until the connection is back.
+Choose *Reconnect* in the panel to connect again; the host keeps your place until it removes you or stops sharing.
+When you are back, the app brings your pages up to date with the host's.
+
+*Leave Session* closes your connection for good.
+Your shared tabs stay open, but they are no longer shared and are not saved on your computer.
+
+If the host stops sharing, the session ends in the same way.
+
+== Firewalls
+
+When you share on the local network, your operating system may ask whether to allow AdocFoundry to accept incoming connections.
+Allow it for the network you are on, or guests cannot connect.
+Sharing on *This computer only* never needs this.
+
+== What is not there yet
+
+* Other participants' carets and selections are not drawn. They are planned for the next part of the collaboration work.
+* Images and other media are not shared. A guest sees only the pages and partials the host offers.
+* There is no relay server, so sharing works across a local network or a VPN, not across the internet through a network you do not control.
+
+== Related
+
+* xref:using-the-editor.adoc[Using the editor]
+* xref:settings.adoc[Settings]

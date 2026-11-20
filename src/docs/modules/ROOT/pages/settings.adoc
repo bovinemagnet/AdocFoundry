@@ -163,6 +163,9 @@ reason = "Deliberately unlisted staff-only page"
 
 [updates]
 check = true                     # look for a newer release at start-up
+
+[collaboration]                  # user file only
+enabled = false                  # true: Share Workspace... and Join Session... appear
 ----
 
 [[font-sets]]
@@ -591,6 +594,15 @@ These settings never affect PDF export (`pdf.theme`), HTML or the Antora site.
 |boolean
 |`true`
 |Look for a newer release at start-up, at most once a day, and tell you once when there is one. The app reads GitHub's latest release for the repository through the system's `curl`; without `curl`, or offline, nothing happens. The request sends only the app's version in its user agent. When `false`, the app never checks unasked. Check for Updates in the command palette checks whatever this says. See xref:getting-started.adoc#updates[Updates].
+
+|`collaboration.enabled`
+|boolean
+|`false`
+|Turns collaboration on.
+Off, *Share Workspace...*, *Join Session...*, *Copy Invitation*, *Stop Sharing* and *Leave Session* are hidden from the *File* menu and the command palette, sharing and joining refuse and say to set this key, and nothing listens or connects.
+A session that is already running can still be stopped or left whatever this says.
+Accepted only in the user file, so a repository cannot turn collaboration on for you.
+See xref:collaboration.adoc[Working together].
 |===
 
 See xref:pdf-export.adoc[Exporting to PDF].
@@ -1166,6 +1178,7 @@ Both files may set `[quality]`: a rule's severity from the workspace file wins, 
 `updates.*` is also accepted only in the user file, so a repository cannot make the editor reach the network.
 `history.*` is also accepted only in the user file, because history is kept outside the repository.
 `spelling.dictionaries` is accepted only in the user file, so a repository cannot point the editor at files of its choosing.
+`collaboration.*` is also accepted only in the user file, so a repository cannot make the editor listen for or join a session.
 
 == Warnings
 

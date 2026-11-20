@@ -27,7 +27,7 @@ This document holds the decisions and contracts that COLLAB 2/8 to 8/8 build on.
   - **A guest,** after an update from the host: it sends `Resync` for that file and refuses local edits to it until the resynchronisation completes.
   - **The host,** after an update from a guest: this never happens with an honest guest, since the host holds everything the guest has seen. A modified guest can cause it with a valid-looking update whose missing dependency can't be seen before applying (record, finding 4). So the host never resynchronises from a guest. It drops the guest (`Error { protocol }`), rebuilds the file's replica from its own text in a new epoch under a new client id, and sends the other guests a new `Snapshot`. The host's own editing never waits on a guest.
 - **Roles.** Owner (the host), Editor, Viewer. A guest joins as a Viewer. The host checks every request against the peer's current role; disabled buttons are a courtesy, not a control.
-- **v1:** one host and one guest. The types, the protocol and the limits allow up to `MAX_PARTICIPANTS`.
+- **v1:** a host and its guests, up to `MAX_PARTICIPANTS` in all (COLLAB 6/8 lets the host admit more than one; the star with two guests is tested).
 
 ## 3. Crates and layers
 
@@ -45,7 +45,7 @@ Settled from the PRD's §13:
   - **Its own L4 crate,** `adoc-share`, so its loopback tests run on every platform without GPUI. Its TLS crates are confined to it and the app (`TLS_CRATES` and `TLS_ALLOWED` in `xtask/src/layers.rs`; the HTTP lists, `NETWORK_ALLOWED` and `NETWORK_SERVER_ALLOWED`, are about HTTP and do not name it), and `AGENTS.md`'s confinement rules changed in the same pull request.
   - **Libraries:** `rustls` 0.23 with the `ring` provider, TLS 1.3 only (no `tls12` feature), and `tokio-rustls`; `tokio`, already there through `adoc-mcp`. Both TLS crates were in the lock file through GPUI's HTTP client, but no shipped build compiled them: this is new cryptography for the app (ring, rustls, webpki), from COLLAB 6/8, when the app first depends on `adoc-share`. `ring` builds C and assembly, with clang on Windows on ARM, so the release builds of every target are checked then.
   - **Runtime:** a current-thread runtime on a thread of its own, for the host's listener and for each guest's connection.
-- **Front ends:** the engine's `collab` feature is off in `[workspace.dependencies]`. Only the app names it. `adoc-ls`, `adoc-mcp` and the CLI never do, and `cargo xtask layers` checks that their builds compile neither `adoc-collab` nor `adoc-share`.
+- **Front ends:** the engine's `collab` feature is off in `[workspace.dependencies]`. Only the app names it. `adoc-ls`, `adoc-mcp` and the CLI never do, and `cargo xtask layers` checks that their builds compile neither `adoc-collab` nor `adoc-share`. The release builds the app apart from the other three (COLLAB 6/8), since built together Cargo's feature unification would compile the app's features into them.
 - **Dependency footprint:** `yrs` with `sync` brings 34 crates, of which only `smallstr` is new to the workspace. `adoc-share` adds `rcgen` (MIT or Apache-2.0, without its `pem` or aws-lc features) and `yasna`, and builds `rustls`, `tokio-rustls` and `ring` for the first time. Every new dependency is pinned exactly and passes `cargo deny check`.
 
 ## 4. Positions, text and line endings
@@ -126,6 +126,7 @@ An unknown kind, malformed JSON, or a field outside its limit closes the connect
 | `Hello` | both | Protocol versions supported (`min`, `max`), the application's version, capabilities. The host answers with the version chosen, or `Error { incompatible }`, and both show it |
 | `Authenticate` | guest | The invitation secret or a resume token; a display name |
 | `Join` | host | The decision after Admit: `PeerId`, role, session id; or `Error { denied }` |
+| `Roster` | host | Who is in the session (each participant's `PeerId`, name, role and whether connected, the host first) and the shared folder's name; sent after `Join` and whenever it changes |
 | `Manifest` | host | The shared files: `SharedFileId`, root-relative display path, kind (page or partial), size; in parts of at most `MANIFEST_PART` files, `more` until the last, so each control part fits its two-byte length whatever the paths |
 | `OpenFile` | guest | A `SharedFileId` |
 | `CloseFile` | guest | A `SharedFileId` the guest no longer follows |

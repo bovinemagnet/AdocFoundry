@@ -367,6 +367,23 @@ Saving and conflicts are the engine's (`src/collab.rs`, the hooks in `writer.rs`
 - **Rename, move and delete of a shared file** are refused at the gateway already when they edit shared text (C3); refusing them before they start is C7's (`collab_structural_commands_refused`).
 - **A guest's update for a file the host closed and can no longer open** (gone, or now leading outside the folder) is answered `Error { stale }`; C4 had treated it as the guest's breach and dropped it.
 
+### C6a (COLLAB 6/8 part a, #693)
+
+Share, Join and the Session panel in the app; presence and remote carets are part b. Where it departs from #693 or the design, the design changed in the same pull request:
+
+- **Two pull requests.** The maintainer chose to split #693: part a is Share, Join, participants, shared tabs and save states; part b is presence, remote carets and selections, and keeping an input method's composition through a participant's edit.
+- **The release builds the app apart.** Built in one `cargo build` with the other three binaries, Cargo's feature unification would put the app's collaboration code, and `yrs`, into the CLI, the language server and the MCP server, which design §3 keeps out. The maintainer chose separate builds: the app alone, then the other three, in every release job and the Flatpak (`test_the_app_is_built_apart_from_the_other_binaries`).
+- **ring on Windows on ARM** is built on every pull request (CI's Windows job builds `adoc-share` for `aarch64-pc-windows-msvc`), since only a release built it otherwise.
+- **The app depends on `adoc-share`,** a same-layer pair (`SAME_LAYER_ALLOWED`).
+- **Commands hand the transport's steps to the app.** `collaboration.share_workspace`, `join`, `copy_invitation`, `stop_sharing` and `leave` answer `CommandOutcome::Collaboration(CollaborationStep)`, since only the app holds the transport; `admit`, `deny`, `grant_edit`, `revoke_edit`, `remove` and `open_file` act on the session in the engine. A guest's `document.save` asks the host.
+- **Guests learn names from the host.** `Join` and `Manifest` named nobody, so a host-only `Roster` message tells guests who is in the session, with roles and whether connected, and the folder's name; it is sent whenever that changes.
+- **Engine fixes the interface needed:** a guest's document is never marked unsaved on its side (nothing asks to save it, keeps it for recovery or counts it on quitting); a remote tab closed can be opened again (the guest sends `CloseFile`); selections of an earlier epoch, or of participants away, are forgotten; a participant's selection moving is `EngineEvent::PresenceChanged`, not `SessionChanged`.
+- **Several guests may be admitted** (up to `MAX_PARTICIPANTS`), as the engine allowed since C4; the star with two guests is tested. Design §2 had said v1 admits one.
+- **An input method's composition ends when a participant's edit arrives,** as with any change made elsewhere. Holding the edit back until the composition ends was tried and dropped: the composition's own edits would then be sent at offsets that no longer match the shared text. Keeping the composition, re-marked where the edit moved it, is part b's.
+- **Where to listen:** this computer only, or the address the system would use to reach the local network; never every interface. Platform interface lists and firewall prompts stay C8's.
+- **Off until turned on.** At the maintainer's request, collaboration is off by default: `[collaboration] enabled = true` in the user settings file (never a workspace file, which someone else may have written) turns it on. Until then its commands are hidden from the menus and the palette, Share and Join refuse, and nothing listens or connects; a session already running can always be stopped or left. With no session, its cost to normal use is a lookup in an empty table per edit and a pump step that returns at once.
+- **Not done here:** the manual checks with two instances of the app on one or two computers (Share, Join, roles, a drop and Reconnect, Stop Sharing) wait for the maintainer.
+
 ## 15. References
 
 - Epic #686.

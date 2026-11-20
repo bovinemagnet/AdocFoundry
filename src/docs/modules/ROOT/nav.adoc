@@ -14,6 +14,7 @@
 ** xref:epub-export.adoc[Exporting to EPUB]
 ** xref:docbook-export.adoc[Exporting to DocBook]
 ** xref:read-only-exports.adoc[Read-only exports]
+** xref:collaboration.adoc[Working together]
 ** xref:keyboard-shortcuts.adoc[Keyboard shortcuts]
 ** xref:settings.adoc[Settings]
 * xref:antora-support.adoc[Antora support]

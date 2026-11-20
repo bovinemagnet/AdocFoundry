@@ -62,6 +62,22 @@ It never names `adoc-audit` or `adoc-impact` directly; they come through `adoc-e
 
 See xref:adoc-engine.adoc[adoc-engine] for what the views read and the commands they send.
 
+[#collaboration]
+== Collaboration
+
+Sharing a workspace and joining a session (COLLAB 6/8, issue #693) are in the app, and the engine decides everything the session does.
+The app holds only what the engine may not:
+
+* `src/collaboration.rs` holds the transport from xref:adoc-share.adoc[adoc-share]: the `Host` while sharing, or the `GuestControl` while joined.
+It offers the addresses to listen on (this computer only, and the local network), starts hosting only once the person has chosen one, makes invitations, and stops the transport on a background task, since stopping waits for its thread.
+* `src/workspace_view/collaboration.rs` has the dialogs (Share Workspace, Join Session and the safety code) and the Session panel, a sidebar tab shown while a session runs.
+Each action invokes a `collaboration.*` command; a command that needs the transport returns `CommandOutcome::Collaboration(CollaborationStep)`, which the view then carries out.
+* A shared tab's name ends in "(shared)" for a guest, and the status bar shows the shared state of the active page.
+* A source editor follows `sync_readonly`, which makes the widget read only while the page is shared and this participant may not edit it.
+The engine refuses such edits whatever the widget does, so an edit the widget made anyway is reconciled at once, putting the engine's text back.
+
+See xref:developer:engine.adoc#collaborative-session[the session] for the commands, and xref:ROOT:collaboration.adoc[Working together] for the user's view.
+
 == Testing
 
 [source,sh]

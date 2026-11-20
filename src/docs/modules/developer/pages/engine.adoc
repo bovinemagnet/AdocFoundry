@@ -827,7 +827,7 @@ The inverse of a step is the source edits that restore the text before it.
 
 The `collab` Cargo feature (COLLAB 3/8, issue #690) lets the engine share an open document with other participants.
 It is on by default for the crate and off in `[workspace.dependencies]`, so a front end names it.
-Only the app may, and it does not yet (COLLAB 6/8); `cargo xtask layers` holds the language server, the MCP server and the command line to building neither `adoc-collab` nor `yrs` (`COLLAB_FREE` in `xtask/src/layers.rs`).
+Only the app may, and it does from COLLAB 6/8; `cargo xtask layers` holds the language server, the MCP server and the command line to building neither `adoc-collab` nor `yrs` (`COLLAB_FREE` in `xtask/src/layers.rs`).
 The engine has no network code: the transport (xref:crates:adoc-share.adoc[adoc-share], COLLAB 4/8) carries the updates, and xref:#collaborative-session[the session] below decides what each message does.
 The design is in `docs/design/DESIGN-AdocFoundry_Collaboration.md` in the repository.
 The code is `crates/adoc-engine/src/collab.rs`, with hooks marked `#[cfg(feature = "collab")]` in the engine, the workspace and the writer.
@@ -889,6 +889,40 @@ The engine owns the `Link` (see xref:crates:adoc-collab.adoc#link[adoc-collab]),
 Sending never waits: a peer that cannot keep up is disconnected by the transport.
 When a pump stops at the limit, the session is due again at once, and so is a session with a shared document that has updates to send; `next_due` reports both (`due_session`), so nothing else is due for ever.
 `EngineEvent::SessionChanged` follows any change to who is in the session or what they may do, and `participants`, `session_knocks`, `session_manifest` and `peer_selections` read the state.
+
+==== Commands
+
+The app and any other front end drive the session through commands (COLLAB 6/8, issue #693), registered by `register_collaboration`:
+
+`collaboration.share_workspace`, `collaboration.join`, `collaboration.copy_invitation`::
+Return `CommandOutcome::Collaboration(CollaborationStep)`, naming `Share`, `Join` or `CopyInvitation`.
+The engine has no network code, so these only check that the step is allowed and leave the front end, which holds the transport, to carry it out: to ask what to share and listen, to ask for an invitation and connect, or to make an invitation.
+Share and Join are refused while a session is running, and Copy Invitation unless this engine is the host.
+
+`collaboration.stop_sharing`, `collaboration.leave`::
+End the session and return `CollaborationStep::Ended`, so the front end closes its transport.
+Stop Sharing is for the host, Leave for a guest.
+
+`collaboration.admit`, `collaboration.deny`, `collaboration.grant_edit`, `collaboration.revoke_edit`, `collaboration.remove`::
+Act on the session itself and return `CommandOutcome::Done`.
+Each names a participant in `CommandArgs::Custom` as `{"peer": <number>}`.
+
+`collaboration.open_file`::
+Takes `{"file": <number>}`.
+A file already open is made active and returned as `CommandOutcome::Opened`; otherwise it asks the host for the file, and the document opens when the snapshot arrives.
+
+A guest's `document.save` asks the host (`request_shared_save`) instead of writing.
+
+`share_plan(root)` gives a `SharePlan` (`root`, `files` and `left_out`): the indexed AsciiDoc files `host_session` would accept, and a count of those left out, so that a front end can show what Share would offer before anything listens.
+
+==== Who is in the session
+
+The host sends each admitted guest a `Roster` message: the name of the folder shared and the members, the host first, whenever it changes and not again while it is the same.
+Names are for showing only.
+A guest keeps it, and `participants`, `session_workspace` and `session_me` read it.
+
+`EngineEvent::PresenceChanged(DocumentId)` follows a change to the selections others have in a shared document (`peer_selections`), so a view can redraw them.
+`EngineEvent::SessionChanged` still follows changes to who is in and what they may do.
 
 ==== What the host offers
 

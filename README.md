@@ -151,6 +151,12 @@ The project is built in phases: (1) a source editor with Antora support and link
 - File › Delete File… (also in a tab's menu, and Delete… in the Files panel's) deletes any file of the workspace, asking first and listing what removing it would break, worked out by Inspect Impact while it asks: the pages that include it, the references to it and where each is written, the navigation that lists it and the PDF profiles that publish it. The file is moved aside into the app's state folder, not destroyed: the notification's Undo, or Edit › Undo Delete, puts back the latest deletion and reopens it. File › Restore Deleted File… lists every deletion still kept for the workspace's files, from this session or an earlier one, newest first, and puts back the one chosen, making any folders it was in and opening it if it is a page; like Undo Delete, it refuses while a file is at that path. Deletions are removed after `[history] keep_days`.
 - A replace or rename is undone and redone only as a whole. If one of its pages was edited afterwards, undo says which; undo that page's later edits first.
 
+**Working together**
+
+- Collaboration is off until `[collaboration] enabled = true` is in the user settings file; until then nothing about it shows in the menus or the palette, and nothing listens or connects.
+- File › Share Workspace… shares the first workspace folder's AsciiDoc pages and partials with people on your network, editing the same pages at once; the app is the server, with no account and no cloud. It shows what it would share and where it would listen (this computer only, or its local network address), and nothing listens until you choose. Copy Invitation puts a single-use invitation, valid for ten minutes, on the clipboard to send by a channel you trust. Whoever uses it compares a safety code with yours and waits for you to admit them, as a Viewer; the Session panel lets them edit, makes them a Viewer again, removes them, or stops sharing. Only you save the files; nothing about the workspace is sent before you admit someone.
+- File › Join Session… takes an invitation, checks that the host is the one it names before sending anything, and shows the safety code to compare. The host's pages open from the Session panel in tabs marked "(shared)": they are the host's files, never saved on your computer, and Save asks the host. The status bar says whether you may edit and whether the page is saved; if the connection drops you cannot edit until Reconnect brings it back.
+
 **The link graph**
 
 - View › Show Graph (Cmd/Ctrl-K G) opens the workspace's link graph in a window of its own: its pages, partials and navigation files, joined by xrefs (solid), includes (dashed) and navigation entries (dotted, following the navigation's tree), with several links between two files drawn as one heavier edge. Broken links can be shown as ghost nodes, and pages with no links at all (orphans) shown or hidden.
@@ -459,6 +465,7 @@ With `--http 127.0.0.1:8765` (any other loopback address, or port 0 for a free o
 - Editing included content in place, plugins.
 - Merging, rebasing, conflicts and history: use a Git client.
 - Accessible labels for the graph's nodes: GPUI has no accessibility tree yet.
+- In collaboration: other participants' carets and selections, keeping an input method's composition through a participant's edit, images for guests, and sharing beyond a local network or VPN.
 - Verified IME composition and frame timing on every platform, the packages on macOS and Windows, and the preview and the graph checked by hand on each platform: see [`docs/qa/phase7.md`](docs/qa/phase7.md), [`docs/qa/phase1.md`](docs/qa/phase1.md), [`docs/qa/phase2.md`](docs/qa/phase2.md), [`docs/qa/phase3.md`](docs/qa/phase3.md), [`docs/qa/phase4.md`](docs/qa/phase4.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).
 
 ## Developing
