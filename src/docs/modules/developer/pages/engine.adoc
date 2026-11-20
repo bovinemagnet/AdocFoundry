@@ -860,15 +860,15 @@ It returns a `SharedReceipt`:
 `Rebuilt { epoch }`:: The host rebuilt its replica from its own text, because a guest's update left it waiting or inconsistent.
 The transport drops that guest and sends everyone a new snapshot.
 
-=== Undo, saving and refusals
+=== Undo and refusals
 
 Undo and redo of a shared document belong to the replica, so they undo only the local author's work.
 The engine refuses these:
 
 * A guest without editing rights cannot edit or undo.
-* A guest cannot save.
-* A shared document is never reloaded from disk.
-A change on disk to it is reported as `DocumentChangedOnDisk` and not applied.
+* A guest cannot save: its own `save` is refused, and it asks the host instead (see xref:#collaborative-saving[saving and conflicts]).
+* A shared document is never reloaded from disk as an edit.
+For a host's document a change on disk is a conflict the host resolves (see xref:#collaborative-saving[saving and conflicts]), and is never applied.
 * One command's edits to several files are refused while one of them is shared.
 
 `EngineEvent::DocumentChanged` carries an `origin: EditOrigin` for every document, shared or not.
@@ -946,10 +946,81 @@ A guest's update that leaves the host's replica waiting or wrong (`Rebuilt` or `
 
 ==== Saving and leaving
 
-A guest's `SaveRequest` is answered by the host with a `SaveOutcome`: `PermissionDenied` unless the guest is an Editor, `Failed` if the file's epoch has moved on, otherwise the result of the host saving the file (`Saved`, `Conflict` or `Failed`).
+A guest's `SaveRequest` is answered by the host with a `SaveOutcome`: `PermissionDenied` unless the guest is an Editor, `Stale` if the request names an epoch the file has moved on from, otherwise the result of the host saving the file (`Saved`, `Conflict` or `Failed`).
+See xref:#collaborative-saving[saving and conflicts] for what a save does.
 A `Leave` removes the participant.
 Ending a session leaves the shared documents open, no longer shared, with empty undo histories.
 The tests are in `crates/adoc-engine/tests/collab_session.rs`, and `crates/adoc-share/tests/transport.rs` runs the same session over real connections.
+
+[#collaborative-saving]
+=== Saving and conflicts
+
+Saving shared files is COLLAB 5/8 (issue #692).
+The tests are in `crates/adoc-engine/tests/collab_save.rs`.
+
+==== Who saves
+
+Only the host writes.
+A guest has no file for a shared document, and its own `save` is refused with "a shared document is saved by its host".
+It calls `request_shared_save(id)` instead, which sends a `SaveRequest` and returns the request's number, and reads the answer with `shared_save_result(id)`, which gives that number and a `SaveOutcome`:
+
+`Saved { revision }`:: The file holds the text with that revision.
+`Conflict`:: A change made outside the session waits for the host to resolve it.
+`PermissionDenied`:: The guest is not an Editor.
+`Stale`:: The request named an epoch the file has moved on from.
+`Failed { reason }`:: The save failed; the file and the shared text are as they were.
+
+The host makes the save at once and waits for it, as it does for its own Save, through the ordinary save and its conflict check.
+A request for a file that is already saved writes nothing and answers with the revision on disk.
+A guest's request is refused while it is not connected.
+
+==== Revisions
+
+A revision is the SHA-256 of the saved text, in hexadecimal (`revision_of`).
+It is not taken from the replica's state vector, because a deletion does not move a state vector.
+Each save records the revision of the snapshot it writes, by the document version that snapshot was.
+When the save finishes, that revision becomes the file's, even if the text moved on while it was written, and the document stays unsaved.
+A failed save changes nothing.
+
+==== File state
+
+`shared_save_state(id)` gives a `SharedSaveState`:
+
+`Saved { revision }`:: The file holds this text.
+`Unsaved`:: The shared text has changes the file lacks.
+`Conflict`:: The file changed outside the session, and nothing is saved until the host resolves it.
+`Unknown`:: A guest is out of touch with the host, so whether anything is saved is not known.
+
+The host announces each open file's state to the guests that have it open in a `FileState { saved, conflict }` message, after every snapshot and whenever the state changes since it last told them; `next_due` reports a change not yet announced (`due_session`).
+Only the host may send one: a guest that sends `FileState` is removed for breaching the protocol.
+A guest is `Saved` only while it is connected and the SHA-256 of its own text equals the revision it was last told; while disconnected, waiting for a resynchronisation or resuming, it is `Unknown`, whatever it was told before.
+The announcement is dropped when it names another epoch than the guest's.
+
+==== Changes on disk
+
+A change on disk to a host's shared file, reported by the watcher or found by a save, is a conflict and never an edit, so no participant receives it as one.
+So is the file being removed.
+The engine reports `DocumentChangedOnDisk` and `SessionChanged`.
+
+* While the file is in conflict, no save is made and the request is answered `Conflict`.
+The host's `overwrite` still writes, as its own choice.
+* If the file goes back to the text that was saved, the conflict clears.
+* A guest's copy takes its conflict flag from the host's `FileState`.
+
+The host settles a conflict with `resolve_disk_conflict(id, DiskResolution)`:
+
+`KeepShared`:: What is on disk becomes the base the next save expects, and the shared text stays, unsaved.
+The next save writes the shared text over the file, and a further change on disk is a conflict again.
+`ReloadDisk`:: The file's text replaces the shared text in a new epoch, and every guest starts again from it.
+It is refused if the file is no longer there or is now larger than `MAX_SHARED_FILE`.
+
+Only the host resolves, and only while there is a conflict.
+
+==== Guests keep nothing
+
+A guest's shared documents have no file of their own.
+They get no recovery record (`write_record` forgets one for a guest's document), and, having no file, they are not kept in the window session.
+The host's shared documents keep their recovery records while dirty, as any page does.
 
 == The pump and worker indexing
 

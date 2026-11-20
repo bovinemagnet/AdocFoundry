@@ -168,7 +168,11 @@ A part holds at most `MANIFEST_PART` files, so a long manifest is sent in parts.
 The host forwards a guest's with `peer` set to the guest.
 
 |`SaveRequest`, `SaveResult`
-|A guest asks the host to save a file, and the `SaveOutcome`.
+|A guest asks the host to save a file, and the `SaveOutcome`: `Saved` with the revision written, `Queued`, `Conflict`, `PermissionDenied`, `Stale` (the request named an epoch the file has moved on from) or `Failed`.
+
+|`FileState`
+|Host only: a file's saved revision (the SHA-256 of the saved text, in hexadecimal, or none while the shared text has unsaved changes) and whether a change made outside the session waits for the host to resolve it.
+A guest that sends one is refused.
 
 |`RoleChanged`
 |A participant's new role; never `Owner`.

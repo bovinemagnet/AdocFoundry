@@ -355,6 +355,18 @@ The transport is the new L4 crate `crates/adoc-share`; the protocol's messages, 
 - **Messages added:** `CloseFile`; `Heartbeat`; `Manifest` in parts, since a large workspace's list would not fit a two-byte control length; `Awareness` names its participant, set by the host when forwarding.
 - **Saving** answers an Editor's `SaveRequest` with the host's ordinary save (`Saved` with no revision yet, `Conflict`, `Failed`) and a Viewer's with `PermissionDenied`; revisions and conflict states are C5's.
 
+### C5 (COLLAB 5/8, #692)
+
+Saving and conflicts are the engine's (`src/collab.rs`, the hooks in `writer.rs`, `workspace.rs` and `recovery.rs`, the session's answers in `src/collab_session.rs`). Where it departs from #692 or the design, the design changed in the same pull request:
+
+- **A revision is the saved text's hash,** not the replica's state vector, as the design had it. A deletion does not move a `yrs` state vector (`a_deletion_leaves_the_state_vector_as_it_was`), so two texts would share a revision. Hashing the text also lets a guest tell for itself whether its text is the one saved.
+- **The host announces each file's state** (`FileState`, a new message) rather than guests inferring it from save answers, which reach only the guest that asked. A guest's own `Unsaved`, `Saved`, `Conflict` or `Unknown` follows from it and its own text.
+- **A guest's save request is made at once,** through the host's ordinary save, and waited for, as the host's own Save is; `Queued` is not used yet. An Editor's repeated requests for a saved file write nothing.
+- **A stale request** is answered `Stale`, a new `SaveOutcome`, rather than `Failed`.
+- **Copying the shared text beside the file** is not an engine resolution: keep and reload are, and the app offers a copy with the file commands it has (C6).
+- **Rename, move and delete of a shared file** are refused at the gateway already when they edit shared text (C3); refusing them before they start is C7's (`collab_structural_commands_refused`).
+- **A guest's update for a file the host closed and can no longer open** (gone, or now leading outside the folder) is answered `Error { stale }`; C4 had treated it as the guest's breach and dropped it.
+
 ## 15. References
 
 - Epic #686.

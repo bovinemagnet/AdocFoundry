@@ -134,7 +134,8 @@ An unknown kind, malformed JSON, or a field outside its limit closes the connect
 | `UpdateAck` | host | File id, epoch, the highest sequence number applied |
 | `Awareness` | both | File id, epoch, the participant's `PeerId` (the host sets it to the sender's when forwarding, whatever the guest wrote), the selection as two encoded sticky indexes; throttled to one per `AWARENESS_INTERVAL` |
 | `SaveRequest` | guest | File id, epoch, a request id |
-| `SaveResult` | host | Request id; `Saved { revision }`, `Queued`, `Conflict`, `PermissionDenied` or `Failed { reason }` |
+| `SaveResult` | host | Request id; `Saved { revision }`, `Queued`, `Conflict`, `PermissionDenied`, `Stale` (the request named an epoch the file has moved on from) or `Failed { reason }` |
+| `FileState` | host | File id, epoch, the revision on disk while the shared text is that text (else none), and whether a change made outside the session waits for the host; sent after every `Snapshot` and whenever it changes |
 | `RoleChanged` | host | A peer's new role |
 | `Resync` | guest | File id, epoch, the sender's state vector; the host answers with a checked `Snapshot` (§6), never a diff, and never asks a guest for one |
 | `Leave` | both | A reason; the connection closes after it |
@@ -203,13 +204,16 @@ An unknown kind, malformed JSON, or a field outside its limit closes the connect
   - On leaving, the replica's history goes with it and the file starts a new, empty `UndoStack`.
   - Commands that edit several files as one group (rename, move, New Page's navigation entry) are refused while any file they touch is shared.
 - **Saving:**
-  - Only the host writes files, through `Engine::save` and the writer, with their conflict checks. Host auto-save writes the merged text.
-  - A save takes the text and the replica's state vector together on the engine's thread, and reports that state vector's hash as the saved `revision`. Edits arriving during the save leave the file dirty.
-  - A guest's `SaveRequest` is answered by the host's rules; v1 allows Editors to request saves.
+  - Only the host writes files, through `Engine::save` and the writer, with their conflict checks. Host auto-save writes the merged text. A guest's own Save is refused; it asks the host (`Engine::request_shared_save`).
+  - A revision is the SHA-256 of the saved text, in hexadecimal (`revision_of`). COLLAB 5/8 changed this from the replica's state vector: a deletion does not move a state vector, so two texts would share one. A guest computes the same hash from its own text.
+  - A save takes its text on the engine's thread as the writer's snapshot, and records that snapshot's revision. When the write succeeds, the file holds that revision, whatever was typed since; edits that arrived during the write leave the document unsaved, and no answer claims them.
+  - A guest's `SaveRequest` is answered by the host's rules: only an Editor, only for the file's current epoch (`Stale` otherwise), never in a conflict (`Conflict`). A file already saved is not written again (`Saved` with its revision), so repeating a request changes nothing. The host makes the save at once and waits for it, as its own Save does.
+  - The host announces each file's state (`FileState`) when it changes. A guest is saved only while it is connected and its own text hashes to the revision last announced; out of touch it knows nothing (`Unknown`), whatever it was told before.
 - **Changes on disk:**
   - A shared file changed on disk (Git, another editor, a tool) is never reloaded or overwritten automatically, and the change never flows in as an edit.
-  - The file enters a conflict state, and the host chooses: keep the shared text, reload from disk (a new epoch: every peer gets a `Snapshot`), or save the shared text as a copy beside it.
-- **Recovery:** recovery records keep accepted, unsaved shared text as they keep any dirty buffer. Restarting the host recovers the text without restarting sharing.
+  - The file enters a conflict state, reported by the file watcher or found by a save's own check; the file being removed is one too. Nothing is saved while it lasts (but an overwrite the host itself chooses), and it clears if the file goes back to what was saved.
+  - The host chooses (`Engine::resolve_disk_conflict`): keep the shared text (what is on disk becomes the base the next save expects, so the next save writes the shared text, and a further change conflicts again), or reload from disk (a new epoch: every peer gets a `Snapshot`). Saving the shared text as a copy beside it is the app's to offer (COLLAB 6/8), with the file commands it already has.
+- **Recovery:** recovery records keep accepted, unsaved shared text on the host as they keep any dirty buffer. Restarting the host recovers the text without restarting sharing. A guest keeps nothing: its shared documents have no recovery records and are not in the window session.
 
 ## 11. Scope, previews and media
 
@@ -231,7 +235,7 @@ The PRD's §10 names the tests; this adds those the spike's findings call for.
 | C2 `adoc-collab` | `collab_replicas_converge` (one and two guests in the star, 1,000 seeds each); `collab_edits_are_byte_exact`; `collab_local_undo_keeps_remote_edits`; `collab_malformed_update_changes_nothing`; `collab_offsets_inside_a_character_are_refused`; `collab_pending_update_asks_for_resync`; `collab_authors_are_read_before_applying`; `collab_limits_hold_at_their_bounds`; `duplicates_and_reordering_are_refused_unread`; `an_update_splitting_a_character_poisons_the_replica`; `counts_claiming_more_than_follows_are_refused`; `a_guest_update_left_pending_makes_the_host_rebuild`; the fuzz target `collab_update` in `fuzz/` (both senders) |
 | C3 engine bridge | `collab_engines_converge`; `collab_remote_edit_is_not_echoed`; `collab_visual_edits_share_the_bridge`; `collab_off_changes_nothing`; `collab_projection_failure_fails_closed`; `collab_undo_groups_follow_the_engine` |
 | C4 transport | In `adoc-share`'s `tests/transport.rs`, over loopback TLS with raw peers that break the protocol: `collab_loopback_session_syncs`; `collab_unauthorised_requests_are_refused`; `collab_wrong_fingerprint_sends_nothing`; `collab_slow_peer_never_blocks_host`; `collab_nothing_is_sent_before_admit`; `collab_frame_limits_close_the_connection`. In the engine's `tests/collab_session.rs`, over an in-memory link that encodes every frame and can lose what is in flight: `collab_forged_author_is_refused`, `collab_unauthorised_requests_are_refused`, `collab_nothing_is_sent_before_admit`, `a_reconnected_guest_delivers_each_edit_once`, `a_role_taken_away_while_edits_are_in_flight`, `collab_manifest_offers_only_what_may_be_shared`. `adoc-collab`'s `tests/protocol.rs` and the fuzz target `collab_frame` |
-| C5 saving | `collab_save_writes_converged_text`; `collab_external_change_is_a_conflict`; `collab_stale_epoch_is_refused` |
+| C5 saving | In the engine's `tests/collab_save.rs`: `collab_save_writes_converged_text`; `collab_external_change_is_a_conflict`; `collab_stale_epoch_is_refused`; `an_edit_during_a_save_is_not_claimed_saved`; `a_change_the_watcher_reports_is_a_conflict_never_an_edit`; `reloading_from_disk_starts_everyone_again_in_a_new_epoch`; `a_failed_save_keeps_the_file_and_the_shared_text`; `a_guest_out_of_touch_does_not_know_what_is_saved`; `a_guests_text_is_never_kept_for_recovery_but_the_hosts_is` |
 | C6 interface | `collab_share_needs_confirmation`; `collab_viewer_cannot_edit`; `collab_remote_carets_follow_edits` |
 | C7 scope | `collab_pages_converge_independently`; `collab_scope_never_leaks`; `collab_structural_commands_refused` |
 | C8 release | `collab_simulation_converges`; `collab_two_process_release_suite`; budgets from the record's measurements; `docs/qa/collab.md` |
