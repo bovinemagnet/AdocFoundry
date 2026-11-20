@@ -43,6 +43,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("adocfoundry-cli", 4),
     ("adoc-ls", 4),
     ("adoc-mcp", 4),
+    ("adoc-share", 4),
 ];
 
 /// Same-layer dependencies that are permitted, as `(dependent, dependency)`.
@@ -113,6 +114,14 @@ pub const NETWORK_ALLOWED: &[&str] = &["adocfoundry"];
 /// features: the MCP server's Streamable HTTP transport.
 pub const NETWORK_SERVER_ALLOWED: &[&str] = &["adoc-mcp"];
 
+/// TLS and certificate crates: collaboration's transport, `adoc-share`, and the app that runs
+/// it. Nothing else listens, or speaks TLS of its own.
+pub const TLS_CRATES: &[&str] = &["rustls", "tokio-rustls", "rcgen"];
+
+/// Workspace crates that may reach [`TLS_CRATES`]: the app reaches them through `adoc-share`,
+/// and through GPUI's HTTP client.
+pub const TLS_ALLOWED: &[&str] = &["adoc-share", "adocfoundry"];
+
 /// External AsciiDoc parser crates, permitted only in `adoc-dom` so the parser stays swappable.
 pub const PARSER_CRATES: &[&str] = &["acdc-parser", "asciidoc-parser"];
 
@@ -147,6 +156,18 @@ const ADOC_KINDLE_FORBIDDEN_PATHS: &[&str] = &[
     "std::net",
     "TcpStream",
     "UdpSocket",
+];
+
+/// What `adoc-share`, collaboration's transport, must never name: it moves bytes between the
+/// network and the engine's thread, and reads no file and runs no program (COLLAB design §5:
+/// the host's identity is made in memory and never written).
+const ADOC_SHARE_FORBIDDEN_PATHS: &[&str] = &[
+    "std::fs",
+    "File::open",
+    "File::create",
+    "OpenOptions",
+    "std::process",
+    "Command::new",
 ];
 
 #[derive(Debug, Eq, PartialEq)]
@@ -296,6 +317,7 @@ pub fn check_sources(name: &str, files: &BTreeMap<PathBuf, String>) -> Vec<Strin
         // processes, network or threads; the engine owns its replicas and the transport moves
         // their bytes.
         "adoc-collab" => ADOC_AUDIT_FORBIDDEN_PATHS,
+        "adoc-share" => ADOC_SHARE_FORBIDDEN_PATHS,
         _ => return Vec::new(),
     };
     let mut violations = Vec::new();
@@ -409,6 +431,69 @@ fn build_features(root: &Path, package: &str) -> Result<BTreeSet<String>, String
         .map(|line| line.trim_end_matches(" (*)").to_owned())
         .filter(|line| line.contains(" feature \""))
         .collect())
+}
+
+/// Every workspace crate outside [`TLS_ALLOWED`] that reaches one of [`TLS_CRATES`] through
+/// normal or build dependencies, from `cargo metadata`'s resolved graph, as
+/// [`network_violations`] reads it.
+pub fn tls_violations(metadata: &serde_json::Value) -> Vec<String> {
+    let names: BTreeMap<&str, &str> = metadata["packages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|package| Some((package["id"].as_str()?, package["name"].as_str()?)))
+        .collect();
+    let dependencies: BTreeMap<&str, Vec<&str>> = metadata["resolve"]["nodes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|node| {
+            let shipped = node["deps"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|dependency| {
+                    dependency["dep_kinds"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|kind| kind["kind"].as_str() != Some("dev"))
+                })
+                .filter_map(|dependency| dependency["pkg"].as_str())
+                .collect();
+            Some((node["id"].as_str()?, shipped))
+        })
+        .collect();
+    let mut violations = Vec::new();
+    for member in metadata["workspace_members"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+    {
+        let name = names.get(member).copied().unwrap_or(member);
+        if TLS_ALLOWED.contains(&name) {
+            continue;
+        }
+        let mut seen = BTreeSet::new();
+        let mut stack = vec![member];
+        let mut reached = BTreeSet::new();
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            if let Some(dependency) = names.get(id).filter(|name| TLS_CRATES.contains(name)) {
+                reached.insert(*dependency);
+            }
+            stack.extend(dependencies.get(id).into_iter().flatten());
+        }
+        violations.extend(
+            reached
+                .into_iter()
+                .map(|tls| format!("{name} reaches {tls}; only adoc-share and the app speak TLS")),
+        );
+    }
+    violations
 }
 
 /// A violation for each client feature of [`HTTP_CRATES`] that `package`, a crate allowed to
@@ -720,7 +805,7 @@ const COLLAB_FREE: &[&str] = &["adoc-ls", "adoc-mcp", "adocfoundry-cli"];
 
 /// A violation for each collaboration crate `package`'s default build compiles.
 fn collab_violations(package: &str, packages: &BTreeSet<String>) -> Vec<String> {
-    ["adoc-collab", "yrs"]
+    ["adoc-collab", "adoc-share", "yrs"]
         .iter()
         .filter(|name| packages.contains(**name))
         .map(|name| format!("{package} builds {name}; only the app takes part in collaboration"))
@@ -751,7 +836,9 @@ pub fn run(root: &Path) -> Result<Vec<String>, String> {
         collect_sources(&directory.join("src"), &mut sources);
         violations.extend(check_sources(&manifest.name, &sources));
     }
-    violations.extend(network_violations(&cargo_metadata(root)?));
+    let metadata = cargo_metadata(root)?;
+    violations.extend(network_violations(&metadata));
+    violations.extend(tls_violations(&metadata));
     for package in NETWORK_SERVER_ALLOWED {
         violations.extend(server_violations(package, &build_features(root, package)?));
     }
@@ -774,6 +861,7 @@ pub fn run(root: &Path) -> Result<Vec<String>, String> {
     violations.extend(epub_licence_violations(&licences(root, "adoc-epub")?));
     violations.extend(docbook_licence_violations(&licences(root, "adoc-docbook")?));
     violations.extend(collab_licence_violations(&licences(root, "adoc-collab")?));
+    violations.extend(collab_licence_violations(&licences(root, "adoc-share")?));
     for package in COLLAB_FREE {
         violations.extend(collab_violations(
             package,
@@ -998,6 +1086,27 @@ libc = "=0.2.0"
         assert_eq!(
             network_violations(&graph),
             ["adoc-engine reaches network client ureq; only adocfoundry may"]
+        );
+    }
+
+    #[test]
+    fn tls_is_confined_to_the_transport_and_the_app() {
+        let graph = metadata(
+            &["adoc-share", "adocfoundry", "adoc-engine", "adoc-mcp"],
+            &[
+                ("adoc-share", &[("tokio-rustls", None), ("rcgen", None)]),
+                ("tokio-rustls", &[("rustls", None)]),
+                ("rustls", &[]),
+                ("rcgen", &[]),
+                ("adocfoundry", &[("adoc-share", None)]),
+                ("adoc-engine", &[("rustls", None)]),
+                // A dev-dependency is not shipped.
+                ("adoc-mcp", &[("adoc-share", Some("dev"))]),
+            ],
+        );
+        assert_eq!(
+            tls_violations(&graph),
+            ["adoc-engine reaches rustls; only adoc-share and the app speak TLS"]
         );
     }
 

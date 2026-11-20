@@ -50,6 +50,7 @@ adoc-graph = { path = "crates/adoc-graph" }
 adoc-index = { path = "crates/adoc-index" }
 adoc-kindle = { path = "crates/adoc-kindle" }
 adoc-mcp = { path = "crates/adoc-mcp" }
+adoc-share = { path = "crates/adoc-share" }
 adoc-lang = { path = "crates/adoc-lang" }
 adoc-math = { path = "crates/adoc-math" }
 adoc-model = { path = "crates/adoc-model" }
@@ -188,6 +189,13 @@ typst-svg = "=0.15.1"
 # The CRDT behind collaborative editing (adoc-collab); `sync` so a replica is `Send`, as the
 # COLLAB 1/8 spike found (`docs/qa/spike-collab.md`).
 yrs = { version = "=0.28.2", default-features = false, features = ["sync"] }
+# Collaboration's transport (crates/adoc-share): TLS 1.3 only (no `tls12`), with ring as the one
+# provider, named in every configuration rather than taken from a process default. Already in the
+# lock file through GPUI's HTTP client, though no shipped build compiled them before.
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"] }
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring"] }
+# The host's certificate, made in memory per session.
+rcgen = { version = "=0.14.10", default-features = false, features = ["ring"] }
 unicode-segmentation = "=1.13.3"
 url = "=2.5.8"
 
