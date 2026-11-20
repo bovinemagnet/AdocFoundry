@@ -326,20 +326,48 @@ fn a_reconnected_guest_delivers_each_edit_once() {
 }
 
 #[test]
-fn a_file_closed_by_the_host_is_shared_again_in_a_new_epoch() {
-    let mut session = Session::new(&[("page.adoc", "= Page\n")]);
+fn a_page_a_guest_opens_stays_in_the_hosts_background() {
+    let mut session = Session::new(&[("page.adoc", "= Page\n"), ("other.adoc", "= Other\n")]);
+    // The host is working on another page when Ada opens this one.
+    let path = session.directory.path().join("other.adoc");
+    let other = session.host.open(&path).unwrap();
     let ada = session.guest(1, true);
     let id = session.host_doc();
+    assert!(
+        !session.host.has_tab(id),
+        "opened for the guest, not the host"
+    );
+    assert_eq!(session.host.active(), Some(other));
+
+    // The host opens it, then closes its tab: it stays shared for Ada, in the background.
+    session
+        .host
+        .open(&session.directory.path().join("page.adoc"))
+        .unwrap();
+    assert!(session.host.has_tab(id));
     session.host.close(id).unwrap();
+    assert!(!session.host.has_tab(id));
     guest_types(&mut session, ada, 0, "x");
     session.settle();
-    // The update of the old epoch is spent; both start again from the host's file.
-    assert_eq!(session.host_text(), "= Page\n");
-    assert_eq!(session.guest_text(ada), "= Page\n");
+    assert_eq!(session.host_text(), "x= Page\n");
+    assert_eq!(session.host.shared_file(id).unwrap().1, 1, "no new epoch");
     assert!(session.removed().is_empty());
-    guest_types(&mut session, ada, 0, "y");
-    session.settle();
-    assert_eq!(session.host_text(), "y= Page\n");
+
+    // When sharing stops, a page with changes not saved comes forward as a tab; a saved one
+    // closes.
+    session.host.end_session();
+    assert!(session.host.has_tab(id));
+    assert!(session.host.document(id).unwrap().dirty);
+}
+
+#[test]
+fn a_saved_page_in_the_background_closes_when_sharing_stops() {
+    let mut session = Session::new(&[("page.adoc", "= Page\n")]);
+    let _ada = session.guest(1, true);
+    let id = session.host_doc();
+    assert!(!session.host.has_tab(id));
+    session.host.end_session();
+    assert!(session.host.document(id).is_none());
 }
 
 #[test]

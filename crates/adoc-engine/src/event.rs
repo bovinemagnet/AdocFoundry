@@ -31,6 +31,9 @@ pub enum EngineEvent {
     /// Who is in the collaboration session, what they may do or where their selections are
     /// changed, or a guest's link went down or came back (`Engine::participants`).
     SessionChanged,
+    /// A host's shared document left the tab strip but stays open, shared in the background,
+    /// since a guest has it open (COLLAB 7/8): views drop its tab, not the document.
+    TabHidden(DocumentId),
     /// Another participant's selection in a shared document moved (`Engine::peer_selections`):
     /// presence only, often, so views redraw carets without rebuilding anything else.
     PresenceChanged(DocumentId),

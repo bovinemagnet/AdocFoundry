@@ -402,9 +402,15 @@ fn an_editor_is_not_dropped_when_the_host_closed_a_file_that_is_gone() {
     let mut session = Session::new(&[("page.adoc", "= Page\n")]);
     let ada = session.guest(1, true);
     let id = session.host_doc();
+    // Nobody has it open any more: the host closes it, and the file goes.
+    let guest = guest_doc(&mut session, ada);
+    session.engine(ada).close(guest).unwrap();
+    session.settle();
     session.host.close(id).unwrap();
+    assert!(session.host.document(id).is_none());
     fs::remove_file(page(&session)).unwrap();
-    guest_types(&mut session, ada, 0, "x");
+    // Opening it again is refused, plainly, without dropping the Editor.
+    session.engine(ada).open_session_file(1).unwrap();
     session.settle();
     assert!(session.removed().is_empty());
     assert!(session.sent_to(ada).iter().any(|message| matches!(

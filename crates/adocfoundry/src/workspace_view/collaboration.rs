@@ -620,7 +620,37 @@ impl WorkspaceView {
                 let state = engine
                     .shared_save_state(id)
                     .map_or("", |state| save_state_label(&state));
-                panel = panel.child(div().text_xs().child(format!("{} · {state}", entry.path)));
+                let background = !engine.has_tab(id);
+                let file = entry.file;
+                panel = panel.child(
+                    h_flex()
+                        .gap_2()
+                        .child(div().flex_1().text_xs().child(format!(
+                            "{} · {state}{}",
+                            entry.path,
+                            if background {
+                                " · in the background"
+                            } else {
+                                ""
+                            }
+                        )))
+                        .when(background, |row| {
+                            row.child(
+                                Button::new(("session-show", file as usize))
+                                    .label("Show")
+                                    .small()
+                                    .debug_selector(move || format!("session-show-{file}"))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.show_opened(
+                                            TabItem::Document(id),
+                                            SourceRange::default(),
+                                            window,
+                                            cx,
+                                        );
+                                    })),
+                            )
+                        }),
+                );
             }
         } else if engine.in_session() {
             let connected = engine.session_connected();

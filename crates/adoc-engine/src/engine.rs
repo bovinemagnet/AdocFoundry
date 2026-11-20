@@ -513,6 +513,12 @@ impl Engine {
 
     /// Closes document `id`, discarding unsaved edits. The index reverts to the file on disk.
     pub fn close(&mut self, id: DocumentId) -> Result<(), EngineError> {
+        // A host's page a guest has open stays, in the background, rather than restart them.
+        #[cfg(feature = "collab")]
+        if self.session_keeps(id) {
+            self.hide_shared_tab(id);
+            return Ok(());
+        }
         let document = self
             .documents
             .remove(&id)
@@ -682,6 +688,10 @@ impl Engine {
         if self.documents.contains_key(&id)
             && (self.active != Some(id) || self.images.active.is_some())
         {
+            // A document kept in the background (a host's shared page) gets its tab back.
+            if !self.tabs.order.contains(&crate::TabItem::Document(id)) {
+                self.tabs.order.push(crate::TabItem::Document(id));
+            }
             self.images.active = None;
             let left = self.active.replace(id).filter(|left| *left != id);
             if let Some(left) = left {

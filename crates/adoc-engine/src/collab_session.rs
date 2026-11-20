@@ -348,6 +348,25 @@ impl Engine {
         };
         match &session.side {
             Side::Host(host) => {
+                // Pages kept in the background for guests: those with changes not saved come
+                // forward as tabs, so nothing is lost out of sight; the rest close.
+                let background: Vec<DocumentId> = host
+                    .offered
+                    .values()
+                    .filter_map(|offered| offered.document)
+                    .filter(|id| !self.tabs.order.contains(&crate::TabItem::Document(*id)))
+                    .collect();
+                for id in background {
+                    if self
+                        .documents
+                        .get(&id)
+                        .is_some_and(|document| document.dirty)
+                    {
+                        self.tabs.order.push(crate::TabItem::Document(id));
+                    } else {
+                        let _ = self.close(id);
+                    }
+                }
                 let peers: Vec<PeerId> = host
                     .peers
                     .keys()
@@ -1229,6 +1248,9 @@ impl Engine {
         }
         let text = self.read_text(path)?;
         let id = self.insert_document(path.to_path_buf(), &text, false);
+        // Opened for a guest, not the host: kept in the background, out of the host's tabs,
+        // until the host opens it (the maintainer's choice for COLLAB 7/8).
+        self.forget_tab(crate::TabItem::Document(id));
         self.emit(EngineEvent::DocumentOpened(id));
         Ok(id)
     }
@@ -2134,6 +2156,43 @@ impl Engine {
             }
         }
         plan
+    }
+}
+
+impl Engine {
+    /// Whether host document `id` is open for a guest, so closing its tab keeps it shared in
+    /// the background.
+    pub(crate) fn session_keeps(&self, id: DocumentId) -> bool {
+        let Some(Side::Host(host)) = self.collab_session.as_ref().map(|session| &session.side)
+        else {
+            return false;
+        };
+        host.offered
+            .iter()
+            .filter(|(_, offered)| offered.document == Some(id))
+            .any(|(file, _)| {
+                host.peers
+                    .values()
+                    .any(|peer| peer.files.contains_key(file))
+            })
+    }
+
+    /// Takes a host's shared page out of the tab strip, keeping it open and shared.
+    pub(crate) fn hide_shared_tab(&mut self, id: DocumentId) {
+        let at = self.forget_tab(crate::TabItem::Document(id));
+        if self.active == Some(id) {
+            self.active = None;
+            self.activate_neighbour(at.unwrap_or(usize::MAX));
+            self.emit(EngineEvent::NavigationChanged);
+        }
+        self.sync_preview_target();
+        self.emit(EngineEvent::TabHidden(id));
+    }
+
+    /// Whether document `id` is open in a tab, rather than kept in the background.
+    #[must_use]
+    pub fn has_tab(&self, id: DocumentId) -> bool {
+        self.tabs.order.contains(&crate::TabItem::Document(id))
     }
 }
 

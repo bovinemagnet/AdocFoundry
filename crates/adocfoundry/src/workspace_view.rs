@@ -902,7 +902,8 @@ impl WorkspaceView {
             }
             // The active tab may have moved out of view.
             EngineEvent::TabsReordered => self.reveal_active_tab(cx),
-            EngineEvent::DocumentClosed(id) => {
+            // A host's shared page kept in the background loses its tab as a closed page does.
+            EngineEvent::DocumentClosed(id) | EngineEvent::TabHidden(id) => {
                 self.tabs
                     .retain(|tab| tab.item(cx) != TabItem::Document(*id));
                 self.visuals.remove(id);
