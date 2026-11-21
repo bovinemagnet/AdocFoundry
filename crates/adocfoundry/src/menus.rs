@@ -75,6 +75,12 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::PROJECT_NEW),
             Command(ids::PROJECT_BUILD_SITE),
             Separator,
+            Command(ids::COLLAB_SHARE),
+            Command(ids::COLLAB_JOIN),
+            Command(ids::COLLAB_COPY_INVITATION),
+            Command(ids::COLLAB_STOP),
+            Command(ids::COLLAB_LEAVE),
+            Separator,
             Command(ids::DOCUMENT_SAVE),
             Command(ids::DOCUMENT_SAVE_ALL),
             Command(ids::DOCUMENT_RELOAD),
@@ -352,6 +358,12 @@ pub(crate) fn menus(engine: &Engine) -> Vec<Menu> {
                         else {
                             continue;
                         };
+                        // Collaboration's commands are hidden, not disabled, while it is off.
+                        if command.spec().when == adoc_engine::CommandContext::Collaboration
+                            && !engine.command_available(id)
+                        {
+                            continue;
+                        }
                         Item::Action {
                             label: menu_title(id, command.spec().title).into(),
                             action,
@@ -542,6 +554,25 @@ mod tests {
     use adoc_engine::Settings;
 
     use super::*;
+
+    #[test]
+    fn collaboration_is_hidden_until_turned_on() {
+        let file = |settings: Settings| {
+            let engine = Engine::new(settings);
+            let menus = menus(&engine);
+            labels(&menus[0])
+        };
+        let off = file(Settings::default());
+        assert!(!off.iter().any(|label| label.contains("Share Workspace")));
+        assert!(!off.iter().any(|label| label.contains("Join Session")));
+        let mut settings = Settings::default();
+        settings.collaboration.enabled = true;
+        let on = file(settings);
+        assert!(on.iter().any(|label| label.contains("Share Workspace")));
+        assert!(on.iter().any(|label| label.contains("Join Session")));
+        // Nothing to invite to or stop yet: shown, disabled.
+        assert!(on.iter().any(|label| label.contains("Stop Sharing")));
+    }
 
     fn labels(menu: &Menu) -> Vec<String> {
         menu.items

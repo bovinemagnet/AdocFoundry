@@ -59,6 +59,9 @@ pub enum CommandContext {
     /// A workspace is open and deleted files are kept (there is a state folder), so one kept
     /// from this session or an earlier one can be restored.
     KeptDeletions,
+    /// Collaboration is turned on (`[collaboration] enabled`), or a session is running. Front
+    /// ends hide such a command, rather than disable it, while it is unavailable.
+    Collaboration,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -153,8 +156,24 @@ pub enum CommandArgs {
     },
 }
 
+/// What a collaboration command asks of the front end, which holds the transport and so alone
+/// can listen, connect or hand out invitations (COLLAB 6/8).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CollaborationStep {
+    /// Ask what to share, and only then listen.
+    Share,
+    /// Ask for an invitation and connect.
+    Join,
+    /// Copy a new invitation to the clipboard.
+    CopyInvitation,
+    /// The session ended here: close the transport.
+    Ended,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum CommandOutcome {
+    /// A collaboration command's step for the front end.
+    Collaboration(CollaborationStep),
     Done,
     Opened(DocumentId),
     /// An image opened, or activated, in an image tab.

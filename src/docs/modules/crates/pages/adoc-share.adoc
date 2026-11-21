@@ -1,0 +1,214 @@
+= adoc-share
+Paul Snow
+:revnumber: 0.0.0
+:description: Collaboration's transport: framed TLS 1.3 between a host and its guests, invitations, certificate pinning and the link the engine drains.
+
+`adoc-share` carries a collaboration session between a host and its guests.
+It authenticates connections and moves frames, and decides nothing about the workspace: which files are offered, who may edit and what each message does are the engine's to decide, over the `Link` that this crate supplies.
+It is at layer L4 and depends on `adoc-collab` (for the protocol and the `Link` trait), `rustls`, `tokio-rustls`, `rcgen`, `sha2`, `getrandom` and `tokio`.
+The design is `docs/design/DESIGN-AdocFoundry_Collaboration.md` in the repository, which is not part of this site.
+
+NOTE: The crate is COLLAB 4/8 (issue #691) of the collaboration epic #686.
+The app runs it from COLLAB 6/8 (issue #693): it holds the `Host`, or the guest's `GuestControl`, and gives the transport the pump's waker so that an event wakes the pump.
+The command line and the MCP server do not share sessions.
+Its tests drive it with engines over loopback.
+See xref:adocfoundry.adoc#collaboration[adocfoundry] for how the app holds it.
+
+== What it does and does not do
+
+It does:
+
+* listen on one chosen address, with a certificate made for the session;
+* hand out single-use invitations and report each guest who shows one as a knock;
+* complete TLS 1.3, a `Hello` and an `Authenticate` within a time limit, holding the frames to a small size until then;
+* read and write the frames of the xref:adoc-collab.adoc#session-protocol[session protocol], hold every queue to a bound and heartbeat quiet links;
+* take a dropped guest back when it shows its resume token.
+
+It does not:
+
+* read any file, or run any program (`ADOC_SHARE_FORBIDDEN_PATHS` in `xtask/src/layers.rs`);
+* decide who is admitted, what they may open or edit, or the order of updates, all of which the engine decides in xref:developer:engine.adoc#collaborative-session[the session];
+* listen on every interface, look up a host name or use a server of anyone else's.
+
+== Running a host
+
+[source,rust]
+----
+let (mut host, link) = Host::start(bind, "AdocFoundry 0.0.0", Timings::default(), Some(waker))?;
+let invitation = host.invite()?;
+println!("{invitation}  safety code {}", host.safety_code());
+engine.host_session(Box::new(link), &root, &files)?;
+----
+
+`Host::start(bind, app, timings, waker)` returns the application's `Host` and the engine's `HostLink`.
+`bind` must name one interface's address (port 0 lets the system choose); an unspecified address such as `0.0.0.0` is refused with `ShareError::Address`.
+The `waker` is called, from the transport's thread, whenever an event arrives for the engine, and should only wake the front end, which then pumps the engine.
+
+The `Host` offers:
+
+`address`::
+The address and port listened on.
+`invite`::
+A new `Invitation`, valid for `Timings::invite_lifetime`.
+Each is used once.
+`fingerprint` and `safety_code`::
+The identity of the session's certificate, for comparing with a guest.
+`stop`::
+Forgets every invitation, closes every connection and the listener, and waits for the transport's thread.
+After it, `invite` fails with `ShareError::Stopped`.
+
+The transport runs on a thread of its own with a current-thread runtime.
+The engine's thread only queues frames and takes events, and never waits for it.
+
+== Joining as a guest
+
+[source,rust]
+----
+let connecting = connect(&invitation, Timings::default())?;
+println!("safety code {}", connecting.safety_code());
+// the person compares it with the host's
+let (link, control) = connecting.authenticate("Ada", "AdocFoundry 0.0.0", Some(waker))?;
+engine.join_session(Box::new(link))?;
+----
+
+`connect(&invitation, timings)` opens TLS to the invitation's address and accepts only the certificate whose fingerprint the invitation names.
+If the host presents another, it fails with `ShareError::Fingerprint` and nothing was sent.
+The returned `Connecting` has sent nothing at all.
+
+`Connecting::safety_code` is the code to compare with the host's by voice or in person.
+`Connecting::authenticate(name, app, waker)` sends the guest's name and the invitation's secret only after that, and runs the connection on a thread of its own.
+It returns a `GuestLink` for the engine and a `GuestControl` for the application:
+
+`resume`::
+Reconnects after a drop, with the resume token the host's last `Join` carried.
+The token is held in memory only.
+`drop_connection`::
+Closes the connection as a network failure would, keeping the token.
+`connected`::
+Whether the connection is up.
+
+The host's `Join`, or its refusal, arrives on the link.
+
+== Invitations and identity
+
+An `Invitation` is one line that the host copies and sends by a channel it trusts:
+
+----
+adocfoundry:join?v=1&host=<address>&port=<port>&fp=<fingerprint>&secret=<secret>
+----
+
+It names an address, never a host name to look up, the host certificate's fingerprint as 64 hexadecimal digits and a 256-bit secret.
+`Invitation` implements `Display` and `FromStr`.
+Reading is strict: every field must appear exactly once, the version must be 1, the port must be non-zero and nothing else may follow.
+Anything else is `ShareError::Invitation`.
+Its `Debug` leaves the secret out.
+
+The host keeps only the SHA-256 of each secret, until it is used or expires.
+
+`HostIdentity` is a key pair (ECDSA P-256) and a self-signed certificate, made in memory when sharing starts, never written anywhere and gone when sharing stops.
+`Fingerprint` is the SHA-256 of the certificate's DER encoding, with `to_hex` and `from_hex`.
+`SafetyCode` is its first 64 bits as four groups of five digits, shown as `01234 56789 01234 56789`.
+
+== How a connection proceeds
+
+. The guest connects over TCP and completes TLS 1.3.
+Its verifier (`tls::client_config`) accepts only the certificate with the invitation's fingerprint, and still verifies the handshake's signature with it, so a server that holds the certificate but not its key fails.
+TLS 1.2 is refused, and the crypto provider is ring in every configuration.
+. The guest sends `Hello` with the versions it speaks and its application version.
+The host answers with its own, naming version 1; if the versions do not overlap it answers `Error` with `Incompatible` and closes.
+. The guest sends `Authenticate`, with its display name and either the invitation's secret or a resume token.
+A credential that is wrong, used or expired is answered with `Error` and `Denied`.
+. With an invitation, the host reports `LinkEvent::Knock` and the engine decides.
+The guest receives nothing meanwhile, and anything it sends, or closing, abandons the knock.
+When the engine calls `Link::admit`, the transport sends `Join` with a resume token that only that guest holds; every message after that is the engine's.
+If the engine calls `Link::remove`, the guest is refused with `Denied`.
+. With a resume token, the host puts the guest back and reports `LinkEvent::Resumed`.
+The token is replaced on every resumption, and the old connection, if any, is closed.
+
+A knock that the engine does not answer within `Timings::admit_wait` is turned away.
+The host keeps an admitted guest after its connection drops, so that it may resume, until the engine removes it or sharing stops.
+
+== The link
+
+`HostLink` and `GuestLink` implement `adoc_collab::Link`, the seam between the transport and the engine, described in xref:adoc-collab.adoc#link[adoc-collab].
+Every method returns at once.
+Received messages are already decoded and held to the protocol's limits; `Hello`, `Authenticate` and heartbeats are the transport's and never reach the engine.
+
+Each admitted connection has a reader task and a writer task:
+
+* The reader hands each message to the engine's bounded event queue.
+When it is full the reader waits, so the backpressure falls on the peer that sent too much.
+* The writer sends the frames the engine queued, sends a heartbeat when the link is quiet, and sends an `Error` before closing.
+* `Link::send` queues a frame without waiting.
+When a peer's queue passes `MAX_QUEUED_FRAMES` frames or `MAX_QUEUED_BYTES` bytes, the connection is closed with `Slow` and the send is refused with `LinkError::Slow`.
+A host that has a guest that does not read is therefore never held up.
+
+== Frames
+
+The `frames` module reads and writes frames over any async stream.
+The length prefix is checked before anything is allocated, and until a connection has authenticated frames are held to `HANDSHAKE_FRAME`.
+A frame that is not of the protocol, or is over its limit, closes the connection.
+
+== Limits and times
+
+[cols="2,1,3",options="header"]
+|===
+|Name |Value |Meaning
+
+|`frames::HANDSHAKE_FRAME`
+|4 KiB
+|The largest frame read before a connection has authenticated.
+
+|`MAX_PENDING`
+|8
+|Connections a host holds that have not been admitted; more are closed at once.
+
+|`EVENT_QUEUE`
+|256
+|Events waiting for the engine.
+
+|`Timings::handshake`
+|10 s
+|From connecting to authenticating.
+
+|`Timings::heartbeat`
+|15 s
+|How often a quiet link sends a heartbeat.
+
+|`Timings::link_timeout`
+|45 s
+|How long a link may be silent before it is down.
+
+|`Timings::invite_lifetime`
+|10 min
+|How long an invitation stays valid.
+
+|`Timings::admit_wait`
+|10 min
+|How long a knock waits for the engine to admit it.
+|===
+
+The times default to the protocol's constants; tests shorten them.
+The protocol's other limits, such as `MAX_FRAME`, `MAX_QUEUED_FRAMES` and `MAX_QUEUED_BYTES`, are listed with xref:adoc-collab.adoc#session-protocol[the protocol].
+
+`ShareError` says why something failed: `Io`, `Tls`, `Fingerprint`, `Invitation`, `Name` (a display name the protocol does not allow), `Address`, `TimedOut` and `Stopped`.
+
+== Where it sits
+
+* It reads no file and runs no program.
+* The TLS and certificate crates (`rustls`, `tokio-rustls`, `rcgen`) are reachable only from this crate and the app (`TLS_CRATES` and `TLS_ALLOWED` in `xtask/src/layers.rs`).
+* The language server, the MCP server and the command line build neither this crate nor `adoc-collab` (`COLLAB_FREE`).
+* It depends on `adoc-engine` only in its tests, as a development dependency with the `collab` feature.
+
+== Tests
+
+The tests are in `crates/adoc-share/tests/transport.rs`.
+They run engines over loopback, and raw peers that break the protocol on purpose.
+They include `collab_loopback_session_syncs`, `collab_wrong_fingerprint_sends_nothing`, `collab_unauthorised_requests_are_refused`, `collab_nothing_is_sent_before_admit`, `a_knock_not_answered_in_time_is_turned_away`, `collab_frame_limits_close_the_connection`, `collab_slow_peer_never_blocks_host`, `stopping_closes_every_connection` and `the_host_listens_only_where_told`.
+The invitation and identity tests are unit tests in the crate.
+
+== Related
+
+* xref:adoc-collab.adoc[adoc-collab], the replica, the protocol and the `Link` trait
+* xref:adoc-engine.adoc[adoc-engine], which runs the session
+* xref:index.adoc[Crates]

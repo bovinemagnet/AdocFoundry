@@ -151,6 +151,14 @@ The project is built in phases: (1) a source editor with Antora support and link
 - File › Delete File… (also in a tab's menu, and Delete… in the Files panel's) deletes any file of the workspace, asking first and listing what removing it would break, worked out by Inspect Impact while it asks: the pages that include it, the references to it and where each is written, the navigation that lists it and the PDF profiles that publish it. The file is moved aside into the app's state folder, not destroyed: the notification's Undo, or Edit › Undo Delete, puts back the latest deletion and reopens it. File › Restore Deleted File… lists every deletion still kept for the workspace's files, from this session or an earlier one, newest first, and puts back the one chosen, making any folders it was in and opening it if it is a page; like Undo Delete, it refuses while a file is at that path. Deletions are removed after `[history] keep_days`.
 - A replace or rename is undone and redone only as a whole. If one of its pages was edited afterwards, undo says which; undo that page's later edits first.
 
+**Working together**
+
+- Collaboration is off until `[collaboration] enabled = true` is in the user settings file; until then nothing about it shows in the menus or the palette, and nothing listens or connects.
+- File › Share Workspace… shares the first workspace folder's AsciiDoc pages and partials with people on your network, editing the same pages at once; the app is the server, with no account and no cloud. It shows what it would share and where it would listen (this computer only, or its local network address), and nothing listens until you choose. Copy Invitation puts a single-use invitation, valid for ten minutes, on the clipboard to send by a channel you trust. Whoever uses it compares a safety code with yours and waits for you to admit them, as a Viewer; the Session panel lets them edit, makes them a Viewer again, removes them, or stops sharing. Only you save the files; nothing about the workspace is sent before you admit someone.
+- File › Join Session… takes an invitation, checks that the host is the one it names before sending anything, and shows the safety code to compare. The host's pages open from the Session panel in tabs marked "(shared)": they are the host's files, never saved on your computer, and Save asks the host. The status bar says whether you may edit and whether the page is saved; if the connection drops you cannot edit until Reconnect brings it back.
+- In a shared page each participant's caret and selection show in the source editor in their own colour, with a mark in the gutter, following the text as anyone types; the Session panel names each one beside their colour and says which page and line their caret is on. An input method's composition carries on when someone else edits elsewhere in the page.
+- A shared page's links and includes lead only to other shared files, resolved with the host's Antora component names and versions (never its attributes or navigation), and never to a guest's own copy of the project; following one asks the host for it. A guest's preview shows a picture's alternative text, and no diagram program (Graphviz, PlantUML, D2) runs on a guest's shared page, nor on any page while hosting. Shared pages stay out of search, Quick Open and the graph. Pages a guest opens stay in the host's background until shown from the Session panel. While sharing, commands that change several files or the folder's structure (rename, move, delete, New Page, navigation edits, Replace) are refused, and a guest cannot rename, delete or export a shared page. Nothing the host sends names a path on its computer.
+
 **The link graph**
 
 - View › Show Graph (Cmd/Ctrl-K G) opens the workspace's link graph in a window of its own: its pages, partials and navigation files, joined by xrefs (solid), includes (dashed) and navigation entries (dotted, following the navigation's tree), with several links between two files drawn as one heavier edge. Broken links can be shown as ghost nodes, and pages with no links at all (orphans) shown or hidden.
@@ -459,6 +467,7 @@ With `--http 127.0.0.1:8765` (any other loopback address, or port 0 for a free o
 - Editing included content in place, plugins.
 - Merging, rebasing, conflicts and history: use a Git client.
 - Accessible labels for the graph's nodes: GPUI has no accessibility tree yet.
+- In collaboration: other participants' carets in the visual editor, images and navigation for guests, sharing beyond a local network or VPN, and the manual checks on two machines (`docs/qa/collab.md`).
 - Verified IME composition and frame timing on every platform, the packages on macOS and Windows, and the preview and the graph checked by hand on each platform: see [`docs/qa/phase7.md`](docs/qa/phase7.md), [`docs/qa/phase1.md`](docs/qa/phase1.md), [`docs/qa/phase2.md`](docs/qa/phase2.md), [`docs/qa/phase3.md`](docs/qa/phase3.md), [`docs/qa/phase4.md`](docs/qa/phase4.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).
 
 ## Developing
@@ -478,6 +487,7 @@ The workspace is a ladder of crates, each depending only on those below it:
 
 ```text
 L4  adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)   adoc-mcp (MCP)
+    adoc-share      collaboration's transport: TLS between host and guests
 L3  adoc-engine     documents, commands, undo, workspace, watcher, settings, search, preview, visual model, graph
 L2  adoc-render     the view tree and HTML
     adoc-diagrams   diagrams
@@ -488,6 +498,7 @@ L2  adoc-render     the view tree and HTML
     adoc-ebook      the book model Kindle and EPUB export write
     adoc-epub       EPUB export
     adoc-docbook    DocBook export
+    adoc-collab     collaborative editing's core: shared text replicas, the session protocol
     adoc-kindle     Kindle export (AZW3 and KFX)
     adoc-audit      the documentation quality audit
     adoc-impact     documentation impact analysis

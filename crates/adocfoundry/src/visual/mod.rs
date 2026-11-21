@@ -233,9 +233,9 @@ impl VisualView {
             }
             EngineEvent::SettingsChanged => cx.notify(),
             // An edit from elsewhere moves the selection with the text.
-            EngineEvent::DocumentChanged { id, version, edits }
-                if *id == self.document && *version > self.version =>
-            {
+            EngineEvent::DocumentChanged {
+                id, version, edits, ..
+            } if *id == self.document && *version > self.version => {
                 let edits: Vec<SourceEdit> = edits
                     .iter()
                     .map(|edit| SourceEdit::new(edit.range, edit.replacement.clone()))

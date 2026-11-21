@@ -21,8 +21,8 @@ use crate::{
     undo::Typing,
     workspace::{FileWatcher, WorkerMessage},
     Clock, CommandArgs, CommandContext, CommandId, CommandOutcome, CommandRegistry, DocumentId,
-    EditorMode, EngineError, EngineEvent, OpenDocument, Settings, SystemClock, TextEdit, UndoEntry,
-    UndoGroup, UndoStack,
+    EditOrigin, EditorMode, EngineError, EngineEvent, OpenDocument, Settings, SystemClock,
+    TextEdit, UndoEntry, UndoGroup, UndoStack,
 };
 
 /// The headless editor engine: the single owner of workspace and document state.
@@ -103,6 +103,16 @@ pub struct Engine {
     /// The documents taking part in each applied preview's group, which is undone and redone
     /// only as a whole.
     pub(crate) group_documents: BTreeMap<UndoGroup, Vec<DocumentId>>,
+    /// Documents shared in a collaboration session, by document (`src/collab.rs`).
+    #[cfg(feature = "collab")]
+    pub(crate) shared: BTreeMap<DocumentId, crate::collab::SharedDocument>,
+    /// The undo group of the last change to a shared document: a command changing several
+    /// files at once is refused at the other files too.
+    #[cfg(feature = "collab")]
+    pub(crate) shared_group: Option<UndoGroup>,
+    /// The collaboration session this engine hosts or takes part in (`src/collab_session.rs`).
+    #[cfg(feature = "collab")]
+    pub(crate) collab_session: Option<crate::collab_session::Session>,
     /// Documents whose typed edits are parsed but not yet in the index, with the time after
     /// which `pump` indexes them.
     pub(crate) pending_index: BTreeMap<DocumentId, std::time::Instant>,
@@ -168,7 +178,7 @@ const TYPING_COMMANDS: [CommandId; 5] = [
 
 /// One keystroke's edit: a single replacement of at most a character (up to four bytes) by at
 /// most one character.
-fn is_small(edits: &[TextEdit]) -> bool {
+pub(crate) fn is_small(edits: &[TextEdit]) -> bool {
     matches!(edits, [edit] if edit.range.len() <= 4 && edit.replacement.chars().count() <= 1)
 }
 
@@ -242,6 +252,12 @@ impl Engine {
             impact_generation: 0,
             impact: crate::impact_analysis::ImpactCache::default(),
             group_documents: BTreeMap::new(),
+            #[cfg(feature = "collab")]
+            shared: BTreeMap::new(),
+            #[cfg(feature = "collab")]
+            shared_group: None,
+            #[cfg(feature = "collab")]
+            collab_session: None,
             pending_index: BTreeMap::new(),
             settling: crate::index_settle::Settling::default(),
             typing: false,
@@ -283,6 +299,14 @@ impl Engine {
             self.set_active(id);
             return Ok(id);
         }
+        // Another shared page, followed from a link in one: the host sends it.
+        #[cfg(feature = "collab")]
+        if shared_page_path(&path) {
+            self.open_shared_path(&path)?;
+            return Err(EngineError::Refused(
+                "the host is sending the shared page; it opens when it arrives".to_owned(),
+            ));
+        }
         let text = self.read_text(&path)?;
         let id = self.insert_document(path, &text, false);
         self.set_active(id);
@@ -306,6 +330,13 @@ impl Engine {
     /// and at most [`MAX_TEXT_FILE`] bytes of it, however it grows while being read.
     pub(crate) fn read_text(&self, path: &Path) -> Result<String, EngineError> {
         use std::io::Read as _;
+
+        // A guest's shared page is the host's: whatever is at its path here is never read.
+        if shared_page_path(path) {
+            return Err(EngineError::Refused(
+                "a shared page is the host's and is not read from this computer".to_owned(),
+            ));
+        }
 
         let not_text = || {
             EngineError::Refused(format!(
@@ -497,11 +528,19 @@ impl Engine {
 
     /// Closes document `id`, discarding unsaved edits. The index reverts to the file on disk.
     pub fn close(&mut self, id: DocumentId) -> Result<(), EngineError> {
+        // A host's page a guest has open stays, in the background, rather than restart them.
+        #[cfg(feature = "collab")]
+        if self.session_keeps(id) {
+            self.hide_shared_tab(id);
+            return Ok(());
+        }
         let document = self
             .documents
             .remove(&id)
             .ok_or(EngineError::UnknownDocument(id))?;
         self.states.remove(&id);
+        #[cfg(feature = "collab")]
+        self.shared.remove(&id);
         let closed_at = self.forget_tab(crate::TabItem::Document(id));
         self.pending_index.remove(&id);
         self.forget_preview(id);
@@ -613,6 +652,12 @@ impl Engine {
 
     /// Replaces document `id`'s text with its file's, as one undo step, leaving it clean.
     pub fn reload(&mut self, id: DocumentId) -> Result<(), EngineError> {
+        #[cfg(feature = "collab")]
+        if self.shared.contains_key(&id) {
+            return Err(EngineError::Refused(
+                "a shared document is not reloaded from disk while it is shared".to_owned(),
+            ));
+        }
         let document = self
             .documents
             .get(&id)
@@ -658,6 +703,10 @@ impl Engine {
         if self.documents.contains_key(&id)
             && (self.active != Some(id) || self.images.active.is_some())
         {
+            // A document kept in the background (a host's shared page) gets its tab back.
+            if !self.tabs.order.contains(&crate::TabItem::Document(id)) {
+                self.tabs.order.push(crate::TabItem::Document(id));
+            }
             self.images.active = None;
             let left = self.active.replace(id).filter(|left| *left != id);
             if let Some(left) = left {
@@ -682,6 +731,11 @@ impl Engine {
             .registry
             .shared(command)
             .ok_or(EngineError::UnknownCommand(command))?;
+        // A session refuses what it cannot carry (COLLAB 7/8).
+        #[cfg(feature = "collab")]
+        if let Some(reason) = self.session_refuses(command, &args) {
+            return Err(EngineError::Refused(reason));
+        }
         // Typing reads nothing from the index, so what earlier typing left pending stays so.
         let typing = TYPING_COMMANDS.contains(&command);
         if !typing {
@@ -736,6 +790,11 @@ impl Engine {
             CommandContext::Deletion => self.active_item().is_some() && self.can_delete_files(),
             CommandContext::DeletedFile => self.last_deleted().is_some(),
             CommandContext::KeptDeletions => !self.roots.is_empty() && self.can_delete_files(),
+            #[cfg(feature = "collab")]
+            CommandContext::Collaboration => self.collaboration_offered(),
+            // Without collaboration no command asks for it.
+            #[cfg(not(feature = "collab"))]
+            CommandContext::Collaboration => false,
         }
     }
 
@@ -756,6 +815,10 @@ impl Engine {
     /// is undone in all of them, and not at all while one of them was edited after it (see
     /// [`Engine::check_group`]).
     pub fn undo(&mut self, id: DocumentId) -> bool {
+        #[cfg(feature = "collab")]
+        if self.shared.contains_key(&id) {
+            return self.shared_undo(id, false);
+        }
         let Some(group) = self
             .states
             .get(&id)
@@ -775,7 +838,7 @@ impl Engine {
                 continue;
             };
             if self
-                .edit_document(document, entry.inverse.clone(), false)
+                .edit_document(document, entry.inverse.clone(), false, EditOrigin::Undo)
                 .is_ok()
             {
                 if let Some(state) = self.states.get_mut(&document) {
@@ -793,6 +856,10 @@ impl Engine {
     /// Redoes the most recently undone group of `id`, across every document it spans, and not
     /// at all once one of them was edited after its undo (see [`Engine::check_group`]).
     pub fn redo(&mut self, id: DocumentId) -> bool {
+        #[cfg(feature = "collab")]
+        if self.shared.contains_key(&id) {
+            return self.shared_undo(id, true);
+        }
         let Some(group) = self
             .states
             .get(&id)
@@ -812,7 +879,7 @@ impl Engine {
                 continue;
             };
             if self
-                .edit_document(document, entry.forward.clone(), false)
+                .edit_document(document, entry.forward.clone(), false, EditOrigin::Redo)
                 .is_ok()
             {
                 if let Some(state) = self.states.get_mut(&document) {
@@ -838,7 +905,7 @@ impl Engine {
             else {
                 continue;
             };
-            let _ = self.edit_document(document, entry.inverse, false);
+            let _ = self.edit_document(document, entry.inverse, false, EditOrigin::Undo);
         }
     }
 
@@ -904,7 +971,20 @@ impl Engine {
             _ => None,
         };
         let defer = typed.is_some() || (self.typing && is_small(&edits));
-        let applied = self.edit_document(id, edits, defer)?;
+        // A shared document's edits go through its replica first, and its undo is the
+        // replica's (`src/collab.rs`).
+        #[cfg(feature = "collab")]
+        if self.shared.contains_key(&id) {
+            return self.apply_shared_edits(id, edits, mode, typed, defer);
+        }
+        #[cfg(feature = "collab")]
+        if matches!(mode, UndoMode::Group(group) if self.shared_group == Some(group)) {
+            return Err(EngineError::Refused(
+                "a change to several files at once is not made while one of them is shared"
+                    .to_owned(),
+            ));
+        }
+        let applied = self.edit_document(id, edits, defer, EditOrigin::Local)?;
         if self.states.get(&id).is_some_and(|state| state.client_owned) {
             // The client keeps the undo history of its own buffer; nothing would read this one.
             return Ok(());
@@ -944,11 +1024,12 @@ impl Engine {
     /// Applies edits without touching undo history: updates the rope, bumps the version,
     /// re-parses and publishes the change. With `defer_index`, re-indexing and diagnostics wait
     /// for [`INDEX_SETTLE`].
-    fn edit_document(
+    pub(crate) fn edit_document(
         &mut self,
         id: DocumentId,
         edits: Vec<TextEdit>,
         defer_index: bool,
+        origin: EditOrigin,
     ) -> Result<AppliedEdits, EngineError> {
         let document = self
             .documents
@@ -960,17 +1041,34 @@ impl Engine {
         document.version += 1;
         // Parsed again when something next reads it.
         document.parsed = std::cell::OnceCell::new();
-        document.dirty = !self
-            .states
+        // A guest's shared document is the host's to save: never unsaved here, so nothing asks
+        // to save it or keeps it (`Engine::shared_save_state` says how it stands).
+        #[cfg(feature = "collab")]
+        let guest = self
+            .shared
             .get(&id)
-            .is_some_and(|state| state.is_saved(&document.text));
+            .is_some_and(crate::collab::SharedDocument::is_guest);
+        #[cfg(not(feature = "collab"))]
+        let guest = false;
+        document.dirty = !guest
+            && !self
+                .states
+                .get(&id)
+                .is_some_and(|state| state.is_saved(&document.text));
         let version_after = document.version;
         let path = document.path.clone();
         let untitled = document.untitled;
         let indexed = document.indexed();
         // What the change could re-diagnose, as the index stood before it.
         let mut before = None;
-        if untitled {
+        // A guest's shared page, edited a little: diagnosed once typing pauses, as an indexed
+        // page is indexed, not parsed whole on every keystroke or update from the host.
+        let settle_untitled = untitled && guest && defer_index;
+        if settle_untitled {
+            let deadline = self.clock.now() + INDEX_SETTLE;
+            self.pending_index.insert(id, deadline);
+        } else if untitled {
+            self.pending_index.remove(&id);
             document.diagnostics = document.parsed().diagnostics.clone();
         } else if !indexed {
             // Text that is not AsciiDoc: nothing to index or diagnose.
@@ -989,6 +1087,7 @@ impl Engine {
             id,
             version: version_after,
             edits: forward.clone(),
+            origin,
         });
         self.words_changed(id);
         self.spelling_edited(id, &forward);
@@ -1002,7 +1101,7 @@ impl Engine {
         if !untitled {
             self.schedule_hunks(id, defer_index);
         }
-        if untitled {
+        if untitled && !settle_untitled {
             self.emit(EngineEvent::DiagnosticsUpdated { path });
         } else if let Some(before) = before.filter(|_| !self.applying) {
             self.refresh_diagnosed_with(&path, before);
@@ -1046,9 +1145,27 @@ impl Engine {
         ready.sort();
         ready.dedup();
         for id in &ready {
-            self.index_now(*id);
+            if !self.diagnose_untitled(*id) {
+                self.index_now(*id);
+            }
         }
         ready.len()
+    }
+
+    /// Diagnoses untitled document `id` from its own parse, which no index holds; whether it is
+    /// one.
+    fn diagnose_untitled(&mut self, id: DocumentId) -> bool {
+        let Some(document) = self
+            .documents
+            .get_mut(&id)
+            .filter(|document| document.untitled)
+        else {
+            return false;
+        };
+        document.diagnostics = document.parsed().diagnostics.clone();
+        let path = document.path.clone();
+        self.emit(EngineEvent::DiagnosticsUpdated { path });
+        true
     }
 
     /// Hands the pending documents whose deadline is at or before `due` to workers, which
@@ -1062,7 +1179,9 @@ impl Engine {
             .collect();
         for id in &ready {
             self.pending_index.remove(id);
-            self.start_settle(*id);
+            if !self.diagnose_untitled(*id) {
+                self.start_settle(*id);
+            }
         }
         ready.len()
     }
@@ -1200,11 +1319,11 @@ impl Engine {
     }
 }
 
-struct AppliedEdits {
-    forward: Vec<TextEdit>,
-    inverse: Vec<TextEdit>,
-    version_before: u64,
-    version_after: u64,
+pub(crate) struct AppliedEdits {
+    pub(crate) forward: Vec<TextEdit>,
+    pub(crate) inverse: Vec<TextEdit>,
+    pub(crate) version_before: u64,
+    pub(crate) version_after: u64,
 }
 
 /// Writes `text` to `path` through a temporary file in the same directory, renamed over the
@@ -1266,5 +1385,38 @@ mod tests {
         write_replacing(&written, "= Again\n").unwrap();
         assert_eq!(mode(&written), 0o640);
         assert_eq!(fs::read_to_string(&written).unwrap(), "= Again\n");
+    }
+}
+
+/// Whether `path` is a guest's shared page's, under a session's virtual folder: never read
+/// from this computer's disk.
+pub(crate) fn shared_page_path(path: &Path) -> bool {
+    #[cfg(feature = "collab")]
+    return crate::collab_session::is_shared_path(path);
+    #[cfg(not(feature = "collab"))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+impl Engine {
+    /// Whether a diagram program (Graphviz, PlantUML, D2) may draw the page at `path`: never
+    /// over text another participant may have written, so not on a guest's shared page, nor on
+    /// any page while hosting, since one may include a shared partial.
+    pub(crate) fn diagram_programs_for(&self, path: &Path) -> bool {
+        #[cfg(feature = "collab")]
+        return !shared_page_path(path) && !self.hosting();
+        #[cfg(not(feature = "collab"))]
+        {
+            let _ = path;
+            true
+        }
+    }
+
+    /// Without collaboration every page resolves in this computer's workspace.
+    #[cfg(not(feature = "collab"))]
+    pub(crate) fn workspace_for(&self, _: &Path) -> &adoc_lang::WorkspaceState {
+        &self.workspace
     }
 }

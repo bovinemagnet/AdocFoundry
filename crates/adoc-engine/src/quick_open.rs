@@ -43,6 +43,10 @@ pub(crate) struct RecentFiles(Vec<PathBuf>);
 
 impl RecentFiles {
     pub(crate) fn touch(&mut self, path: &Path) {
+        // A guest's shared page is the host's, gone once the session ends: never a recent file.
+        if crate::engine::shared_page_path(path) {
+            return;
+        }
         self.0.retain(|recent| recent != path);
         self.0.insert(0, path.to_path_buf());
         self.0.truncate(RECENT_FILES);

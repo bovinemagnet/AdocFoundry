@@ -22,7 +22,21 @@ pub enum EngineEvent {
         id: DocumentId,
         version: u64,
         edits: Vec<TextEdit>,
+        /// What made the change; anything but a shared document's is `Local`, `Undo` or `Redo`.
+        origin: EditOrigin,
     },
+    /// A shared document has updates of the local author's changes for the transport to send
+    /// (`Engine::take_shared_updates`).
+    SharedUpdates(DocumentId),
+    /// Who is in the collaboration session, what they may do or where their selections are
+    /// changed, or a guest's link went down or came back (`Engine::participants`).
+    SessionChanged,
+    /// A host's shared document left the tab strip but stays open, shared in the background,
+    /// since a guest has it open (COLLAB 7/8): views drop its tab, not the document.
+    TabHidden(DocumentId),
+    /// Another participant's selection in a shared document moved (`Engine::peer_selections`):
+    /// presence only, often, so views redraw carets without rebuilding anything else.
+    PresenceChanged(DocumentId),
     DocumentSaved(DocumentId),
     DocumentClosed(DocumentId),
     /// `new` took the preview tab's place from `old`, which is closed next.
@@ -153,4 +167,17 @@ pub enum EngineEvent {
     SiteBuildFinished {
         result: Result<Option<PathBuf>, String>,
     },
+}
+
+/// What made a change to a document's text.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EditOrigin {
+    /// An edit made here: typing, a command, a reload.
+    Local,
+    /// The local author's undo.
+    Undo,
+    /// The local author's redo.
+    Redo,
+    /// Another participant's edit to a shared document, received through collaboration.
+    Remote,
 }

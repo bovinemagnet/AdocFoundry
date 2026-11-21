@@ -87,6 +87,13 @@ jobs:
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
           df -h /
+      # The macOS runner fills up the same way once the collaboration crates' tests are added
+      # (ld: write() failed, errno=28): its Android SDK, .NET and CodeQL go first too.
+      - name: Free disk space
+        if: runner.os == 'macOS'
+        run: |
+          sudo rm -rf "$HOME/Library/Android" "$HOME/.dotnet" /usr/local/share/dotnet "$HOME/.ghcup" "$RUNNER_TOOL_CACHE/CodeQL"
+          df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -121,6 +128,12 @@ jobs:
         run: cargo install cargo-nextest --version 0.9.151 --locked
       - if: runner.os == 'Windows'
         run: cargo nextest run --workspace --exclude adocfoundry --profile ci
+      # ring, collaboration's TLS provider, builds C and assembly with clang for Windows on
+      # ARM, which only a release builds otherwise: checked here on every pull request.
+      - if: runner.os == 'Windows'
+        run: rustup target add aarch64-pc-windows-msvc
+      - if: runner.os == 'Windows'
+        run: cargo build -p adoc-share --target aarch64-pc-windows-msvc
       # The app's tests run on GPUI's test platform; on macOS it builds without a display server.
       - name: App tests
         if: runner.os == 'macOS'
@@ -131,7 +144,7 @@ jobs:
       - run: cargo build -p adoc-ls
       - run: cargo build -p adoc-ls --all-features
       - name: Disk space left
-        if: always() && runner.os == 'Linux'
+        if: always() && runner.os != 'Windows'
         run: df -h /
 
   bench:

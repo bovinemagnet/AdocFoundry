@@ -12,6 +12,7 @@
   <key>CFBundleVersion</key><string>@VERSION@</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSLocalNetworkUsageDescription</key><string>AdocFoundry reaches computers on your local network only when you share a workspace or join a session.</string>
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>

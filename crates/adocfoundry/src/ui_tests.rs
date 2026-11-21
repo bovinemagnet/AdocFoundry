@@ -11960,3 +11960,323 @@ fn docbook_app_exports_through_engine(cx: &mut TestAppContext) {
         tabs
     );
 }
+
+// --- collaboration (COLLAB 6/8) -------------------------------------------------------------
+
+/// Share asks first, showing what it would offer: nothing listens and no session starts until a
+/// place to listen is chosen.
+#[gpui::test]
+fn collab_share_needs_confirmation(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    std::fs::write(root.join("page.adoc"), "= Page\n").unwrap();
+    // As the app reads it: from the user settings file, which opening a folder reads again.
+    let user = directory.path().join("settings.toml");
+    std::fs::write(&user, "[collaboration]\nenabled = true\n").unwrap();
+    let settings = Settings::load(Some(&user), None).unwrap().with_git_opt_in();
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (_workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    redraw(&app, &mut cx);
+
+    cx.dispatch_action(crate::editor::bindings::ShareWorkspace);
+    redraw(&app, &mut cx);
+    assert!(
+        cx.debug_bounds("share-confirm").is_some(),
+        "Share asks first"
+    );
+    assert!(cx.debug_bounds("share-start-0").is_some());
+    assert!(cx.update(|_, cx| {
+        let app = app.read(cx);
+        !app.engine.in_session() && app.collaboration.is_idle()
+    }));
+    // Closing the dialog shares nothing.
+    cx.simulate_keystrokes("escape");
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("share-confirm").is_none());
+    assert!(cx.update(|_, cx| !app.read(cx).engine.in_session()));
+}
+
+/// A host engine and the app's engine as a guest, over the in-memory link, with the guest let
+/// in as a Viewer and the shared page open in a source editor.
+struct GuestSetup {
+    _directory: tempfile::TempDir,
+    net: std::sync::Arc<std::sync::Mutex<adoc_collab::testing::Net>>,
+    host: Engine,
+    app: Entity<AppState>,
+    editor: Entity<SourceEditorView>,
+    cx: VisualTestContext,
+}
+
+fn pump_both(setup: &mut GuestSetup) {
+    for _ in 0..20 {
+        setup.host.pump();
+        let app = setup.app.clone();
+        setup
+            .cx
+            .update(|_, cx| app.update(cx, |app, cx| app.drain(cx)));
+        setup.cx.run_until_parked();
+    }
+}
+
+fn guest_setup(cx: &mut TestAppContext) -> GuestSetup {
+    use adoc_collab::testing::{GuestLink, HostLink, Net};
+    use adoc_engine::{protocol::PeerId, LinkEvent};
+
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("page.adoc"), "= Page\n").unwrap();
+    let net = std::sync::Arc::new(std::sync::Mutex::new(Net::default()));
+    let mut host = Engine::new(Settings::default().with_git_opt_in());
+    host.host_session(
+        Box::new(HostLink(net.clone())),
+        directory.path(),
+        &["page.adoc".into()],
+        "Host",
+    )
+    .unwrap();
+    let peer = PeerId(1);
+    let mut guest = Engine::new(Settings::default().with_git_opt_in());
+    guest
+        .join_session(Box::new(GuestLink {
+            net: net.clone(),
+            me: peer,
+        }))
+        .unwrap();
+    net.lock().unwrap().to_host.push_back(LinkEvent::Knock {
+        peer,
+        name: "Ada".to_owned(),
+    });
+    host.pump();
+    host.admit_peer(peer).unwrap();
+    host.pump();
+    for _ in 0..5 {
+        guest.pump();
+        host.pump();
+    }
+    guest.open_session_file(1).unwrap();
+    for _ in 0..5 {
+        guest.pump();
+        host.pump();
+    }
+    let document = guest.session_document(1).expect("the shared page arrived");
+    let app = app_with(guest, cx);
+    let (editor, window) = editor_window(&app, document, cx);
+    let cx = VisualTestContext::from_window(window.into(), cx);
+    GuestSetup {
+        _directory: directory,
+        net,
+        host,
+        app,
+        editor,
+        cx,
+    }
+}
+
+fn guest_text(setup: &mut GuestSetup) -> String {
+    let app = setup.app.clone();
+    setup.cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        engine
+            .document(engine.session_document(1).unwrap())
+            .unwrap()
+            .text_string()
+    })
+}
+
+fn host_text(setup: &GuestSetup) -> String {
+    let id = setup.host.session_document(1).unwrap();
+    setup.host.document(id).unwrap().text_string()
+}
+
+/// A Viewer sees the shared page and its changes but cannot change it: typing changes neither
+/// the engine nor the widget, and nothing reaches the host. Made an Editor, typing does.
+#[gpui::test]
+fn collab_viewer_cannot_edit(cx: &mut TestAppContext) {
+    let mut setup = guest_setup(cx);
+    let editor = setup.editor.clone();
+    let app = setup.app.clone();
+    setup.cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(7, 7), window, cx)
+        });
+    });
+    setup.cx.simulate_keystrokes("x y z");
+    setup.cx.run_until_parked();
+    pump_both(&mut setup);
+    assert_eq!(guest_text(&mut setup), "= Page\n");
+    assert_eq!(widget_text(&editor, &mut setup.cx), "= Page\n");
+    assert_eq!(host_text(&setup), "= Page\n");
+    // The page is not this computer's to save, and is never marked unsaved here.
+    assert!(setup.cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        !engine
+            .document(engine.session_document(1).unwrap())
+            .unwrap()
+            .dirty
+    }));
+
+    // The host's own edits arrive.
+    let id = setup.host.session_document(1).unwrap();
+    setup
+        .host
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(0, 0),
+                text: "// ".to_owned(),
+            },
+        )
+        .unwrap();
+    pump_both(&mut setup);
+    assert_eq!(widget_text(&editor, &mut setup.cx), "// = Page\n");
+
+    // Let edit, the guest's typing reaches the host.
+    setup
+        .host
+        .set_peer_role(
+            adoc_engine::protocol::PeerId(1),
+            adoc_engine::protocol::Role::Editor,
+        )
+        .unwrap();
+    pump_both(&mut setup);
+    setup.cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(10, 10), window, cx)
+        });
+    });
+    setup.cx.simulate_keystrokes("o k");
+    setup.cx.run_until_parked();
+    pump_both(&mut setup);
+    assert_eq!(host_text(&setup), "// = Page\nok");
+    assert_eq!(widget_text(&editor, &mut setup.cx), "// = Page\nok");
+    assert!(setup.net.lock().unwrap().removed.is_empty());
+}
+
+/// The host's caret and selection are drawn in the guest's editor and follow the host's edits
+/// (PRD §10 `collab_remote_carets_follow_edits`); the guest's own selection reaches the host.
+#[gpui::test]
+fn collab_remote_carets_follow_edits(cx: &mut TestAppContext) {
+    let mut setup = guest_setup(cx);
+    let editor = setup.editor.clone();
+    let id = setup.host.session_document(1).unwrap();
+    setup.host.share_selection(id, 2, 6);
+    pump_both(&mut setup);
+    let shown = setup.cx.update(|_, cx| {
+        editor
+            .read(cx)
+            .shown_carets()
+            .iter()
+            .map(|caret| (caret.name.clone(), caret.anchor, caret.head))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(shown, [("Host".to_owned(), 2, 6)]);
+
+    // The host types before them: the selection moves with its text.
+    setup
+        .host
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(0, 0),
+                text: "// ".to_owned(),
+            },
+        )
+        .unwrap();
+    pump_both(&mut setup);
+    let shown = setup.cx.update(|_, cx| {
+        editor
+            .read(cx)
+            .shown_carets()
+            .first()
+            .map(|caret| (caret.anchor, caret.head))
+    });
+    assert_eq!(shown, Some((5, 9)));
+
+    // The guest's own caret reaches the host.
+    setup.cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(3, 3), window, cx)
+        });
+    });
+    setup.cx.run_until_parked();
+    pump_both(&mut setup);
+    let carets = setup.host.peer_carets(id);
+    assert_eq!(carets.len(), 1);
+    assert_eq!((carets[0].name.as_str(), carets[0].head), ("Ada", 3));
+}
+
+/// An input method's composition goes on through another participant's edit before it, marked
+/// again where the edit moved it, and commits to the right place for both.
+#[gpui::test]
+fn a_composition_survives_a_remote_edit_before_it(cx: &mut TestAppContext) {
+    use gpui::EntityInputHandler as _;
+
+    let mut setup = guest_setup(cx);
+    setup
+        .host
+        .set_peer_role(
+            adoc_engine::protocol::PeerId(1),
+            adoc_engine::protocol::Role::Editor,
+        )
+        .unwrap();
+    pump_both(&mut setup);
+    let editor = setup.editor.clone();
+    let state = setup
+        .cx
+        .update(|_, cx| editor.read(cx).state_for_test().clone());
+    // Ada starts composing at the end of the page.
+    setup.cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.set_selected_range(7..7, cx);
+            for stage in ["に", "にほ"] {
+                let marked = state.marked_text_range(window, cx);
+                state.replace_and_mark_text_in_range(marked, stage, None, window, cx);
+            }
+        });
+    });
+    setup.cx.run_until_parked();
+    pump_both(&mut setup);
+
+    // The host types at the start meanwhile.
+    let id = setup.host.session_document(1).unwrap();
+    setup
+        .host
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(0, 0),
+                text: "// ".to_owned(),
+            },
+        )
+        .unwrap();
+    pump_both(&mut setup);
+    assert_eq!(widget_text(&editor, &mut setup.cx), "// = Page\nにほ");
+    let marked = setup
+        .cx
+        .update(|window, cx| state.update(cx, |state, cx| state.marked_text_range(window, cx)));
+    assert_eq!(
+        marked,
+        Some(10..12),
+        "still composing, moved by the host's edit"
+    );
+
+    // Committed, the composition lands where it is, for both.
+    setup.cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            let marked = state.marked_text_range(window, cx);
+            state.replace_text_in_range(marked, "日本", window, cx);
+        });
+    });
+    setup.cx.run_until_parked();
+    pump_both(&mut setup);
+    assert_eq!(widget_text(&editor, &mut setup.cx), "// = Page\n日本");
+    assert_eq!(guest_text(&mut setup), "// = Page\n日本");
+    assert_eq!(host_text(&setup), "// = Page\n日本");
+}

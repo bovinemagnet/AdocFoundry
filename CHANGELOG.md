@@ -2,6 +2,19 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- Collaborative editing (#686). File › Share Workspace… shares the first workspace folder's AsciiDoc pages and partials with people on your network, who edit the same pages at once; File › Join Session… joins someone else's. The app is the server: no account, no cloud. Off until `[collaboration] enabled = true` is in the user settings file, and nothing listens until you choose where.
+  - **Trust:** single-use invitations valid for ten minutes, TLS 1.3 with the host's certificate pinned, a safety code to compare, and the host admitting each person as a Viewer before letting them edit. Nothing about the workspace is sent before that, and no path on the host's computer is ever sent.
+  - **Editing:** every participant's caret and selection show in the source editor in their own colour. Undo undoes only your own edits. Input method compositions carry on through others' edits.
+  - **Saving:** only the host writes files. The status bar says whether the host's file holds the text, and a change made on disk during a session is a conflict the host settles.
+  - **Scope:** a guest's links and includes lead only to shared files, resolved with the host's Antora component names and versions. Pictures are not shared, and no diagram program runs on shared text. Commands that change several files or the folder's structure are refused while sharing.
+  - **Reliability:** a dropped connection resumes with its edits, and a page reloaded from disk starts everyone again from its text. A seeded simulation of three engines with dropped links, held deliveries, role changes, reloads and duplicated updates checks that everyone converges. A test runs the guest in a second process over loopback TLS.
+  - **Not yet:** the manual checks on two machines (`docs/qa/collab.md`), carets in the visual editor, shared pictures and navigation, and sharing beyond a local network or VPN.
+  - **For developers:** new crates `adoc-collab` (the replica over `yrs` and the session protocol) and `adoc-share` (the TLS transport). `adoc-engine` gains the `collab` feature, which only the app names; the release workflow builds the app apart from the other binaries.
+
 ## 0.13.0 — 2026-11-19
 
 ### Added

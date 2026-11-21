@@ -413,7 +413,10 @@ The engine publishes `EngineEvent` values to subscribers through `std::sync::mps
 |Indexing finished for the roots, with the number of files.
 
 |`DocumentOpened`, `DocumentChanged`, `DocumentSaved`, `DocumentClosed`
-|Document lifecycle. `DocumentChanged` carries the version and the edits.
+|Document lifecycle. `DocumentChanged` carries the version, the edits and an `origin` (`EditOrigin::Local`, `Undo`, `Redo` or `Remote`).
+
+|`SharedUpdates`
+|A shared document has encoded updates waiting for the transport (`Engine::take_shared_updates`). Only with the `collab` feature.
 
 |`GraphChanged`
 |The link graph changed. It carries the new revision, and is published at most once a `pump`.
@@ -819,6 +822,270 @@ A visual edit is a source edit, so there is no second history.
 A run of visual typing coalesces like source typing, and every other visual command is its own undo group.
 Undo and redo apply to the document whichever editor invoked them, and the model is rebuilt before they return.
 The inverse of a step is the source edits that restore the text before it.
+
+== Collaborative editing
+
+The `collab` Cargo feature (COLLAB 3/8, issue #690) lets the engine share an open document with other participants.
+It is on by default for the crate and off in `[workspace.dependencies]`, so a front end names it.
+Only the app may, and it does from COLLAB 6/8; `cargo xtask layers` holds the language server, the MCP server and the command line to building neither `adoc-collab` nor `yrs` (`COLLAB_FREE` in `xtask/src/layers.rs`).
+The engine has no network code: the transport (xref:crates:adoc-share.adoc[adoc-share], COLLAB 4/8) carries the updates, and xref:#collaborative-session[the session] below decides what each message does.
+The design is in `docs/design/DESIGN-AdocFoundry_Collaboration.md` in the repository.
+The code is `crates/adoc-engine/src/collab.rs`, with hooks marked `#[cfg(feature = "collab")]` in the engine, the workspace and the writer.
+
+=== Hosting and joining
+
+`share_document(id, SharedFileId, ReplicaId)` shares an open document as the host, and drops its undo history.
+`open_shared(name, file, epoch, snapshot, me, can_edit)` opens a document with no file on disk, as a guest, from the host's snapshot.
+`reset_shared` restarts a guest from a new snapshot, and `stop_sharing` ends the sharing.
+`shared_snapshot(id)` gives the host's snapshot of a shared document and its epoch, for a guest joining or resynchronising.
+A snapshot checks itself by building a replica from what it encoded: when that would give another text (an altered update can leave such a state while every participant already connected agrees), or the replica waits for an update, the host first rebuilds the replica from its own text in a new epoch and snapshots that.
+A changed epoch tells the transport that every guest needs the new snapshot.
+
+=== Local edits
+
+`apply_edits` hands the edits of a shared document to `apply_shared_edits`.
+It checks them against the rope, applies them to the replica and then to the rope, and keeps the resulting update for the transport.
+The transport collects it with `take_shared_updates`, and `EngineEvent::SharedUpdates` says one is waiting.
+Typing coalesces as it does for any document, and the edits of one command are one undo group.
+The visual editor's edits reach the replica through the same bridge (`collab_visual_edits_share_the_bridge`).
+
+=== Remote updates
+
+`apply_shared_update(id, epoch, update, Sender)` applies another participant's update.
+It reaches the rope as one patch with `EditOrigin::Remote`, is never echoed back and never enters the local undo history.
+It returns a `SharedReceipt`:
+
+`Applied`:: The update is in.
+`NeedsResync`:: A guest could not apply it and needs a new snapshot.
+`Rebuilt { epoch }`:: The host rebuilt its replica from its own text, because a guest's update left it waiting or inconsistent.
+The transport drops that guest and sends everyone a new snapshot.
+
+=== Undo and refusals
+
+Undo and redo of a shared document belong to the replica, so they undo only the local author's work.
+The engine refuses these:
+
+* A guest without editing rights cannot edit or undo.
+* A guest cannot save: its own `save` is refused, and it asks the host instead (see xref:#collaborative-saving[saving and conflicts]).
+* A shared document is never reloaded from disk as an edit.
+For a host's document a change on disk is a conflict the host resolves (see xref:#collaborative-saving[saving and conflicts]), and is never applied.
+* One command's edits to several files are refused while one of them is shared.
+
+`EngineEvent::DocumentChanged` carries an `origin: EditOrigin` for every document, shared or not.
+`collab_off_changes_nothing` holds that a document that is not shared behaves as before.
+The tests are in `crates/adoc-engine/tests/collab.rs`, among them `collab_engines_converge` and `collab_remote_edit_is_not_echoed`.
+
+[#collaborative-session]
+=== The session
+
+The session (COLLAB 4/8, issue #691) is the code in `crates/adoc-engine/src/collab_session.rs`.
+The transport authenticates connections and moves frames.
+Everything a message may do is decided here, against the session's own state, whatever the peer claims.
+
+==== The link and the pump
+
+`host_session(link, root, files)` and `join_session(link)` start a session, and `end_session` ends it.
+The engine owns the `Link` (see xref:crates:adoc-collab.adoc#link[adoc-collab]), and `pump` drains at most `SESSION_EVENTS_PER_PUMP` (64) events from it, so a flooding peer never holds the engine.
+Sending never waits: a peer that cannot keep up is disconnected by the transport.
+When a pump stops at the limit, the session is due again at once, and so is a session with a shared document that has updates to send; `next_due` reports both (`due_session`), so nothing else is due for ever.
+`EngineEvent::SessionChanged` follows any change to who is in the session or what they may do, and `participants`, `session_knocks`, `session_manifest` and `peer_selections` read the state.
+
+==== Commands
+
+The app and any other front end drive the session through commands (COLLAB 6/8, issue #693), registered by `register_collaboration`:
+
+`collaboration.share_workspace`, `collaboration.join`, `collaboration.copy_invitation`::
+Return `CommandOutcome::Collaboration(CollaborationStep)`, naming `Share`, `Join` or `CopyInvitation`.
+The engine has no network code, so these only check that the step is allowed and leave the front end, which holds the transport, to carry it out: to ask what to share and listen, to ask for an invitation and connect, or to make an invitation.
+Share and Join are refused while a session is running, and Copy Invitation unless this engine is the host.
+
+`collaboration.stop_sharing`, `collaboration.leave`::
+End the session and return `CollaborationStep::Ended`, so the front end closes its transport.
+Stop Sharing is for the host, Leave for a guest.
+
+`collaboration.admit`, `collaboration.deny`, `collaboration.grant_edit`, `collaboration.revoke_edit`, `collaboration.remove`::
+Act on the session itself and return `CommandOutcome::Done`.
+Each names a participant in `CommandArgs::Custom` as `{"peer": <number>}`.
+
+`collaboration.open_file`::
+Takes `{"file": <number>}`.
+A file already open is made active and returned as `CommandOutcome::Opened`; otherwise it asks the host for the file, and the document opens when the snapshot arrives.
+
+A guest's `document.save` asks the host (`request_shared_save`) instead of writing.
+
+`share_plan(root)` gives a `SharePlan` (`root`, `files` and `left_out`): the indexed AsciiDoc files `host_session` would accept, and a count of those left out, so that a front end can show what Share would offer before anything listens.
+
+==== Who is in the session
+
+The host sends each admitted guest a `Roster` message: the name of the folder shared and the members, the host first, whenever it changes and not again while it is the same.
+Names are for showing only.
+A guest keeps it, and `participants`, `session_workspace` and `session_me` read it.
+
+`EngineEvent::PresenceChanged(DocumentId)` follows a change to the selections others have in a shared document (`peer_selections`), so a view can redraw them.
+`EngineEvent::SessionChanged` still follows changes to who is in and what they may do.
+
+==== Presence
+
+`share_selection(id, anchor, head)` shows this participant's selection in a shared document to the others.
+The offsets are bytes, and the engine turns them into a `RelativeSelection`, which follows the text through edits.
+Messages are paced by an `AwarenessThrottle` per shared file: one is sent at once, or when `AWARENESS_INTERVAL` (50 ms) has passed since the last, and a selection that has to wait is replaced by any later one, so the latest wins.
+`next_due` includes the deadline of a waiting selection, and `pump` sends it then.
+
+The host sends its own presence to each live guest that has the file open, and forwards each guest's selection to the others, with the guest's own peer id.
+A guest sends its selection to the host only.
+
+`peer_carets(id)` gives a `PeerCaret` (`peer`, `name`, `anchor`, `head`) for each other participant, resolved in the document's current text through `shared_resolve`, so it is correct after any edit.
+The name comes from the roster.
+`EngineEvent::PresenceChanged(id)` follows a change to the selections, and a view redraws from `peer_carets`.
+
+==== What the host offers
+
+`host_session` checks every file before it offers any, and one that may not be offered refuses the whole call, so the host is never left sharing less than it chose without knowing.
+A file must be:
+
+* an `.adoc` file;
+* inside the shared folder, both as written and with its links followed;
+* reached through no hidden or ignored folder (the `workspace.ignore` list);
+* a file, within `MAX_SHARED_FILE`;
+* a path that `display_path` allows.
+
+Each file is given a number for the session, and files under a `partials` folder are offered as partials.
+The manifest holds the display path, never the real one.
+A guest finds a file only by its number, never by a path.
+The path is confined again when a guest first opens the file.
+Nothing is sent until a guest is admitted.
+
+==== Admission and roles
+
+A guest with a valid invitation arrives as a knock (`session_knocks`).
+`admit_peer` lets it in as a Viewer, up to `MAX_PARTICIPANTS`, and sends it the manifest in parts of `MANIFEST_PART` files; `remove_peer` turns a knock away or removes a participant, who cannot then resume.
+`set_peer_role` makes a guest an Editor or a Viewer, and never an Owner.
+A guest opens a file with `open_session_file`, which asks the host and opens a document without a file when the snapshot arrives.
+
+==== Client ids and sequence numbers
+
+The host gives each guest a new `yrs` client id for each file, with every snapshot, and never gives out one twice in a session, the host's own included.
+An update is applied as `Sender::Guest(client)`, so a guest cannot write as anyone else.
+
+Sequence numbers count each sender's updates for a file, from 1 after every snapshot the host sends that peer.
+A snapshot replaces whatever the receiver had, so what was in flight before it means nothing after.
+The host therefore discards a guest's updates for a file after a snapshot until one numbered 1 arrives, and discards those of another epoch.
+Any other number out of order is a breach of the protocol, and the guest is dropped.
+
+==== A role taken away in flight
+
+Taking editing away applies to every update processed from now on, whenever it was sent.
+When an update from a guest that is no longer an Editor arrives, the host refuses it with `Unauthorised` and sends the guest a new snapshot, so the guest starts again from the host's text.
+
+==== Resumption
+
+The host keeps an admitted guest whose connection drops, with its files, until it is removed or sharing stops.
+When it resumes with its token:
+
+. If a file's epoch is unchanged, the host tells the guest the last of its updates it applied (`UpdateAck`), and waits.
+. The guest sends again the updates after that, which it kept until they were acknowledged, and asks to be resynchronised with `Resync`.
+. The host answers with a checked snapshot.
+. If the epoch changed meanwhile, the host sends the new epoch's snapshot at once.
+
+A guest does not edit a file while it is disconnected, waiting for a resynchronisation, resuming, or too far ahead of the host's acknowledgements (`MAX_QUEUED_FRAMES`).
+A guest that receives an update out of order, or that it cannot apply, asks for a resynchronisation in the same way.
+
+A guest's update that leaves the host's replica waiting or wrong (`Rebuilt` or `NeedsResync`) drops that guest, and the host sends every guest with the file open a new snapshot in the new epoch.
+
+==== Stale updates and resuming
+
+* An `Update` from a guest names, as `base`, the `client` of the snapshot it was made on.
+The host discards an update whose epoch or base is not the peer's latest.
+It was sent before that snapshot, and the peer starts again from the snapshot without it.
+Numbers alone cannot tell, since they start again with each snapshot, and a change that only deletes names no author.
+* The host also discards, without removing the guest, an update from the document's previous epoch when the host has started the file again (reloaded or rebuilt) and not yet told the guest.
+The new snapshot follows in the same pump.
+* An update numbered below what the host expects was applied already.
+A guest sends again, after reconnecting, the updates after the first acknowledgement it receives, and an acknowledgement may cross them.
+The host discards such an update.
+One numbered above what the host expects is out of order, and the guest is removed.
+* A guest away when the host starts a file again in a new epoch keeps its old epoch recorded, so resuming sends it the new snapshot.
+A resynchronisation request from an earlier epoch is answered with a snapshot too.
+* A guest's resynchronisation sends its edits not yet sent first, so the snapshot answering holds them.
+* A snapshot that arrives while the guest is resuming is followed by a resynchronisation request, since the host may then answer with an acknowledgement and wait to be asked.
+
+==== Saving and leaving
+
+A guest's `SaveRequest` is answered by the host with a `SaveOutcome`: `PermissionDenied` unless the guest is an Editor, `Stale` if the request names an epoch the file has moved on from, otherwise the result of the host saving the file (`Saved`, `Conflict` or `Failed`).
+See xref:#collaborative-saving[saving and conflicts] for what a save does.
+A `Leave` removes the participant.
+Ending a session leaves the shared documents open, no longer shared, with empty undo histories.
+The tests are in `crates/adoc-engine/tests/collab_session.rs`, and `crates/adoc-share/tests/transport.rs` runs the same session over real connections.
+
+[#collaborative-saving]
+=== Saving and conflicts
+
+Saving shared files is COLLAB 5/8 (issue #692).
+The tests are in `crates/adoc-engine/tests/collab_save.rs`.
+
+==== Who saves
+
+Only the host writes.
+A guest has no file for a shared document, and its own `save` is refused with "a shared document is saved by its host".
+It calls `request_shared_save(id)` instead, which sends a `SaveRequest` and returns the request's number, and reads the answer with `shared_save_result(id)`, which gives that number and a `SaveOutcome`:
+
+`Saved { revision }`:: The file holds the text with that revision.
+`Conflict`:: A change made outside the session waits for the host to resolve it.
+`PermissionDenied`:: The guest is not an Editor.
+`Stale`:: The request named an epoch the file has moved on from.
+`Failed { reason }`:: The save failed; the file and the shared text are as they were.
+
+The host makes the save at once and waits for it, as it does for its own Save, through the ordinary save and its conflict check.
+A request for a file that is already saved writes nothing and answers with the revision on disk.
+A guest's request is refused while it is not connected.
+
+==== Revisions
+
+A revision is the SHA-256 of the saved text, in hexadecimal (`revision_of`).
+It is not taken from the replica's state vector, because a deletion does not move a state vector.
+Each save records the revision of the snapshot it writes, by the document version that snapshot was.
+When the save finishes, that revision becomes the file's, even if the text moved on while it was written, and the document stays unsaved.
+A failed save changes nothing.
+
+==== File state
+
+`shared_save_state(id)` gives a `SharedSaveState`:
+
+`Saved { revision }`:: The file holds this text.
+`Unsaved`:: The shared text has changes the file lacks.
+`Conflict`:: The file changed outside the session, and nothing is saved until the host resolves it.
+`Unknown`:: A guest is out of touch with the host, so whether anything is saved is not known.
+
+The host announces each open file's state to the guests that have it open in a `FileState { saved, conflict }` message, after every snapshot and whenever the state changes since it last told them; `next_due` reports a change not yet announced (`due_session`).
+Only the host may send one: a guest that sends `FileState` is removed for breaching the protocol.
+A guest is `Saved` only while it is connected and the SHA-256 of its own text equals the revision it was last told; while disconnected, waiting for a resynchronisation or resuming, it is `Unknown`, whatever it was told before.
+The announcement is dropped when it names another epoch than the guest's.
+
+==== Changes on disk
+
+A change on disk to a host's shared file, reported by the watcher or found by a save, is a conflict and never an edit, so no participant receives it as one.
+So is the file being removed.
+The engine reports `DocumentChangedOnDisk` and `SessionChanged`.
+
+* While the file is in conflict, no save is made and the request is answered `Conflict`.
+The host's `overwrite` still writes, as its own choice.
+* If the file goes back to the text that was saved, the conflict clears.
+* A guest's copy takes its conflict flag from the host's `FileState`.
+
+The host settles a conflict with `resolve_disk_conflict(id, DiskResolution)`:
+
+`KeepShared`:: What is on disk becomes the base the next save expects, and the shared text stays, unsaved.
+The next save writes the shared text over the file, and a further change on disk is a conflict again.
+`ReloadDisk`:: The file's text replaces the shared text in a new epoch, and every guest starts again from it.
+It is refused if the file is no longer there or is now larger than `MAX_SHARED_FILE`.
+
+Only the host resolves, and only while there is a conflict.
+
+==== Guests keep nothing
+
+A guest's shared documents have no file of their own.
+They get no recovery record (`write_record` forgets one for a guest's document), and, having no file, they are not kept in the window session.
+The host's shared documents keep their recovery records while dirty, as any page does.
 
 == The pump and worker indexing
 
@@ -1693,7 +1960,7 @@ See xref:building-and-releasing.adoc#notices[cargo xtask notices] for how the no
 
 == Engine features
 
-The engine has Cargo features `typst`, `docx`, `kindle`, `epub`, `docbook`, `git` and the `export` pipeline the formats share.
+The engine has Cargo features `typst`, `docx`, `kindle`, `epub`, `docbook`, `collab`, `git` and the `export` pipeline the formats share.
 They are on by default for the crate and off in `[workspace.dependencies]`, so each front end names the ones it wants.
 Without `git`, the engine behaves as with `[git] enabled = false`.
 Without `typst`, the PDF export commands are not registered and `export_blocking` fails; likewise the DOCX, Kindle, EPUB and DocBook commands without `docx`, `kindle`, `epub` and `docbook`.

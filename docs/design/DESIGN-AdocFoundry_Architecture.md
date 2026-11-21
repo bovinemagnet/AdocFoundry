@@ -35,7 +35,9 @@ AdocFoundry is a native desktop editor for AsciiDoc documentation sites laid out
 | 6 | Signed releases and updates | Inline STEM typeset in the text flow; MCP over Streamable HTTP on loopback with a token; Developer ID signing and notarisation, Authenticode through Azure Trusted Signing; an update check, and updating in place on macOS and Windows | Delta updates, update channels, package-manager publishing |
 | 7 | Graph view | An interactive graph of pages, partials and navigation files joined by xrefs, includes and navigation entries, kept current as pages change; the whole workspace in its own window, and the active page's neighbourhood in the sidebar; a `graph` CLI command and MCP tool | Images as nodes, saved layouts, editing links from the graph |
 
-Non-goals for now: a web or mobile build, collaborative editing, hosting or publishing the site (Antora itself does that), and bit-for-bit output parity with Asciidoctor. The editor targets the Asciidoctor dialect of AsciiDoc that Antora consumes, so Antora-built sites and AdocFoundry agree on what a document means.
+Non-goals for now: a web or mobile build, hosting or publishing the site (Antora itself does that), and bit-for-bit output parity with Asciidoctor. The editor targets the Asciidoctor dialect of AsciiDoc that Antora consumes, so Antora-built sites and AdocFoundry agree on what a document means.
+
+Collaborative editing, once a non-goal, is now planned: epic #686, `docs/prd/PRD-AdocFoundry_COLAB.md`, with its decisions and contracts in `docs/design/DESIGN-AdocFoundry_Collaboration.md` (a CRDT per shared file with `yrs`, a host-only filesystem, an authenticated private-network transport in its own L4 crate).
 
 Cross-cutting requirements: one binary per platform with no runtime dependency on Ruby, Node or Java; sub-16 ms keystroke-to-paint in the editor; parse and re-render a page under 50 ms on save for the preview; no telemetry.
 
@@ -164,7 +166,7 @@ GPUI is viable outside Zed, but only through third-party snapshot crates, and Ze
 | Source buffer | [ropey](https://docs.rs/ropey/2.0.0-beta.1/ropey/) 2.0.0-beta.1 (byte-indexed; gpui-kit already pins it). [crop](https://github.com/nomad/crop) 0.4.3 is 3 to 4x faster on edit traces but LF/CRLF only | Byte offsets match `adoc-core`'s `SourceRange`; Zed's rope is GPL |
 | Incremental syntax | tree-sitter 0.27.1 with the fork's block + inline grammars | Highlighting, folding, outline at keystroke speed |
 | Shaping | Whatever the framework uses (cosmic-text 0.19 on GPUI/Linux, Core Text/DirectWrite elsewhere) | Do not add a second shaping stack |
-| Structured document model (Phase 3) | Own `adoc-model` crate: typed node tree + ProseMirror-style steps and position mapping. Evaluate [prosemirror-rs](https://docs.rs/crate/prosemirror/0.5.0) 0.5 (Jun 2026, MIT) first | Transactions with inverse steps give undo, selection mapping and collaborative-ready history. CRDTs (loro 1.17, automerge 0.12) only if collaboration ever becomes a goal |
+| Structured document model (Phase 3) | Own `adoc-model` crate: typed node tree + ProseMirror-style steps and position mapping. Evaluate [prosemirror-rs](https://docs.rs/crate/prosemirror/0.5.0) 0.5 (Jun 2026, MIT) first | Transactions with inverse steps give undo, selection mapping and collaborative-ready history. Collaborative editing uses `yrs` (Yjs-compatible, MIT), chosen by the COLLAB 1/8 spike over `loro` and `automerge` (`docs/qa/spike-collab.md`) |
 
 ### Preview rendering
 
@@ -201,13 +203,13 @@ Mermaid needs a DOM and font metrics in JavaScript, so embedding a JS engine is 
 AdocFoundry is one Cargo workspace at [bovinemagnet/AdocFoundry](https://github.com/bovinemagnet/AdocFoundry) that adopted the five `adoc-*` crates from zed-asciidoc, added a document-model layer above them, and keeps every front end (GPUI app, CLI, LSP, MCP) as a thin consumer of one engine. The ladder and layout below are the workspace as shipped. The Phase 1 proposal had the same five layers with three front ends; the later phases added crates to each layer.
 
 ```text
-Front ends        adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)   adoc-mcp (MCP)
+Front ends        adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)   adoc-mcp (MCP)   adoc-share (collaboration's transport)
                           |                      |               |               |
                           v                      v               v               v
 Engine            adoc-engine: sessions, documents, command registry, undo, watcher, settings, events
                           |
                           v
-Document services adoc-render   adoc-diagrams   adoc-model   adoc-git   adoc-pdf   adoc-docx   adoc-ebook   adoc-epub   adoc-docbook   adoc-kindle   adoc-audit   adoc-impact
+Document services adoc-render   adoc-diagrams   adoc-model   adoc-git   adoc-pdf   adoc-docx   adoc-ebook   adoc-epub   adoc-docbook   adoc-collab   adoc-kindle   adoc-audit   adoc-impact
                           |
                           v
 Language layer    adoc-parser   adoc-dom   adoc-antora   adoc-index   adoc-lang   adoc-math   adoc-spell   adoc-graph   adoc-theme
@@ -216,9 +218,9 @@ Language layer    adoc-parser   adoc-dom   adoc-antora   adoc-index   adoc-lang 
 Core              adoc-core: Document, LineIndex, SourceRange, Section, Anchor, Reference, Diagnostic
 ```
 
-*Crate ladder: 5 layers, 4 front ends. Arrows are the only permitted dependency direction.*
+*Crate ladder: 5 layers, 4 front ends and collaboration's transport. Arrows are the only permitted dependency direction.*
 
-Arrows show the only permitted dependency direction; a crate never imports a crate above it, and only `adocfoundry` imports GPUI. `cargo xtask layers` checks the ladder in CI from `LAYERS` in `xtask/src/layers.rs`, with a few same-layer pairs allowed (`adoc-index` and `adoc-lang` on `adoc-parser`; `adoc-lang` on `adoc-index` and `adoc-antora`; `adoc-pdf`, `adoc-docx`, `adoc-ebook` and `adoc-kindle` on `adoc-render`; `adoc-kindle` and `adoc-epub` on `adoc-ebook`; `adoc-epub` and `adoc-docbook` on `adoc-render`). Front ends reach `adoc-audit` and `adoc-impact` only through the engine.
+Arrows show the only permitted dependency direction; a crate never imports a crate above it, and only `adocfoundry` imports GPUI. `cargo xtask layers` checks the ladder in CI from `LAYERS` in `xtask/src/layers.rs`, with a few same-layer pairs allowed (`adoc-index` and `adoc-lang` on `adoc-parser`; `adoc-lang` on `adoc-index` and `adoc-antora`; `adoc-pdf`, `adoc-docx`, `adoc-ebook` and `adoc-kindle` on `adoc-render`; `adoc-kindle` and `adoc-epub` on `adoc-ebook`; `adoc-epub` and `adoc-docbook` on `adoc-render`; `adocfoundry` on `adoc-share`). Front ends reach `adoc-audit` and `adoc-impact` only through the engine.
 
 **Workspace layout** (Typst/Zed pattern: `crates/*`, shared `[workspace.package]`, `default-members` on the app binary):
 
@@ -245,6 +247,7 @@ AdocFoundry/
     adoc-ebook               L2  the reflowable ebook model: pages mapped to one Book, its pictures embedded; read by Kindle and EPUB export
     adoc-epub                L2  EPUB export: one book written as an EPUB 3.3 container, in process (PRD-AdocFoundry_EPUB_Export.md)
     adoc-docbook             L2  DocBook export: an article or a book as DocBook 5.2 XML, in process (PRD-AdocFoundry_DocBook_Export.md)
+    adoc-collab              L2  collaborative editing's core: a yrs replica per shared file, byte edits, per-author undo, the session protocol (DESIGN-AdocFoundry_Collaboration.md)
     adoc-kindle              L2  Kindle export: AZW3 and KFX from one book, in process (PRD-AdocFoundry_Kindle_Export.md)
     adoc-audit               L2  documentation quality audit: rules, reports, policy
     adoc-impact              L2  documentation impact analysis: rules over two revisions, report
@@ -253,6 +256,7 @@ AdocFoundry/
     adocfoundry-cli          L4  headless binary
     adoc-ls                  L4  LSP binary (from zed-asciidoc), on the engine since Phase 5
     adoc-mcp                 L4  Phase 5: MCP server over stdio, and Streamable HTTP since Phase 6
+    adoc-share               L4  collaboration's transport: framed TLS 1.3 between host and guests, invitations (DESIGN-AdocFoundry_Collaboration.md)
   grammars/                  tree-sitter-asciidoc, a git submodule on its master branch
   vendor/                    evalexpr stand-in, patched comemo and notify (see vendor/README.md)
   xtask/                     layers, package, run, notices, bump

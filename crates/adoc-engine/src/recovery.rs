@@ -248,6 +248,12 @@ impl Engine {
     /// Writes `id`'s text as its record, replacing the one before, on the writer. A failure
     /// costs only the chance to recover it.
     fn write_record(&mut self, id: DocumentId) {
+        // A guest's shared document is the host's to keep: it lives in memory only.
+        #[cfg(feature = "collab")]
+        if self.is_shared_guest(id) {
+            self.forget_recovery(id);
+            return;
+        }
         let Some(document) = self.documents.get(&id).filter(|document| document.dirty) else {
             self.forget_recovery(id);
             return;

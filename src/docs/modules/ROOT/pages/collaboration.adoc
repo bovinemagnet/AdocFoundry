@@ -1,0 +1,352 @@
+= Working together
+Paul Snow
+:revnumber: 0.0.0
+:description: Share a workspace from your computer and let others edit its pages with you, or join someone else's session.
+
+AdocFoundry lets two or more people edit the same AsciiDoc pages at the same time.
+One person shares a workspace, and the others join it from their own copy of the app.
+This page describes both sides.
+
+There is no account to make and nothing is stored in the cloud.
+The host's app is the server: it listens for connections, decides who comes in and holds the files.
+Guests see and edit the host's pages, and the host's computer is the only one that saves them.
+
+Collaboration is off until you set `[collaboration] enabled = true` in your user settings file.
+Until then nothing about it appears in the menus or the command palette, and nothing listens or connects.
+A workspace settings file cannot turn it on.
+See xref:settings.adoc[Settings].
+
+Every action here is a command, so it also appears in the command palette and in the *File* menu.
+
+== Sharing a workspace
+
+Choose *Share Workspace…* from the *File* menu or the command palette.
+A dialog shows what would be shared before anything happens.
+
+What is offered:: The `.adoc` pages and partials under the first folder of the workspace.
+The dialog counts them, and says how many AsciiDoc files are left out.
+Files are left out when they are in a hidden folder or an ignored folder (see `workspace.ignore` in xref:settings.adoc[Settings]), lead outside the folder through a link, or are too large.
+
+What is never offered:: Images, settings, the `.git` folder and any other file that is not an AsciiDoc page or partial.
+
+Where it listens:: You choose.
+*This computer only* is for trying it out, or for people using the same computer.
+*Local network* shows your address on the local network, for people on the same network or a VPN.
+Nothing listens until you press one of these buttons, and each person you invite still waits for you to admit them.
+
+After you choose, the *Session* panel opens in the sidebar.
+It shows the folder shared, the address listened on, the safety code, who is waiting, who is in and the shared files that are open.
+
+NOTE: You can share one workspace at a time, and you cannot share while you are in someone else's session.
+
+=== Inviting someone
+
+Press *Copy Invitation* in the *Session* panel, or choose it from the *File* menu.
+The invitation is one line of text, which begins `adocfoundry:join`, placed on your clipboard.
+
+* It can be used once, by one person.
+* It lasts ten minutes. The panel says how long the last one has left.
+* It is never saved. Copy another whenever you need one.
+
+Send it to the person by a channel you trust, such as a direct message or a conversation in person.
+Anyone who has the invitation within those ten minutes can knock at the door, so do not post it somewhere others can read it.
+
+=== The safety code
+
+The *Session* panel shows a safety code for your session, written as four groups of five digits.
+It identifies your session's certificate.
+When someone joins, their app shows a code too, and the two must be the same.
+Compare them by voice or in person, not by the channel that carried the invitation.
+If the codes differ, the guest should not go on.
+
+=== Letting people in
+
+When someone has connected and compared the code, they appear under *Waiting* in the *Session* panel as "asks to join".
+You choose:
+
+*Admit*:: They join as a Viewer.
+*Turn Away*:: They are refused.
+
+A waiting request that you do not answer is turned away after ten minutes.
+
+Each participant under *Participants* has a role:
+
+Viewer:: May read and copy, and cannot edit.
+Editor:: May edit the shared pages.
+
+Use *Let Edit* to make a Viewer an Editor, and *Make Viewer* to take editing away again.
+Taking editing away applies at once, to everything that person sends from then on.
+*Remove* sends someone out of the session; a removed person cannot resume.
+
+=== While you are sharing
+
+A file a guest opens does not appear in your tabs.
+It stays open in the background.
+Choose *Show*, beside a shared file in the *Session* panel, to open it in a tab.
+Closing a shared tab hides it again.
+It does not close the file for your guests.
+
+Commands that change more than one file, or the structure of the folder, are refused while you share:
+
+* renaming, moving or deleting files;
+* New Page, New Module and New Project;
+* adding a page to navigation;
+* Replace across the workspace;
+* pasting or dropping images;
+* opening another folder.
+
+Stop sharing to use them.
+
+While you share, diagrams drawn by other programs (Graphviz, PlantUML and D2) are not drawn on any page, since a page may include a partial a guest has written.
+Diagrams already drawn before are still shown, and Mermaid diagrams are drawn as usual.
+
+Guests are never told where your files are on your computer.
+The messages they see name no paths.
+
+On a guest's side, renaming or deleting a shared page, its local history and every export are refused.
+
+=== Stopping
+
+*Stop Sharing* in the *Session* panel or the *File* menu closes every connection and stops listening.
+Your pages stay open as ordinary pages of your workspace.
+A background page with unsaved changes opens as a tab, so that you can save it.
+The other background pages close.
+
+== Joining a session
+
+Choose *Join Session…* from the *File* menu or the command palette.
+
+. Paste the invitation you were sent, check your name (it starts as your account's name, and the host sees it), and choose *Connect*.
+. The app connects and checks that the host holds the certificate the invitation names.
+If it does not, nothing is sent and the app says so.
+. A dialog shows the safety code.
+Compare it with the code in the host's *Session* panel, and choose *Join* only if they are the same.
+Your name and the invitation's secret are sent only after you choose.
+. The *Session* panel says "Waiting to be let in…" until the host admits you.
+You join as a Viewer, until the host lets you edit.
+
+=== Opening shared files
+
+Once you are in, the *Session* panel lists the shared files under *Shared files*, partials marked as such.
+Choose *Open* beside a file to open it in a tab.
+It opens once the host's text arrives.
+
+A shared tab is marked with "(shared)" after its name.
+It is the host's file, not one on your computer:
+
+* it has no file on your disk and is never saved there;
+* *Save* asks the host to save it, which works only if you are an Editor;
+* if you are a Viewer, or the connection is down, the page is read only.
+
+The *Session* panel says whether you may edit, and lists everyone in the session, with "(you)" beside yourself.
+
+Links and includes in a shared page lead only to other files the host shares.
+Antora resource ids, such as `+xref:other.adoc[]+` and `+include::partial$note.adoc[]+`, resolve among the shared files.
+They use the host's component names and versions.
+Your own copy of the same project is never mixed in, even if it is open in the same window.
+
+An include shows in the preview once the included shared file is open.
+Until then it shows as unresolved.
+Open the partial from the *Session* panel.
+
+Following a link to another shared file asks the host for it.
+Use Go to Definition, or click the link in the preview.
+The file opens in a tab when it arrives.
+
+Some things are not shared:
+
+* Pictures are not shared. The preview shows a picture's alternative text instead.
+* Diagrams drawn by other programs (Graphviz, PlantUML and D2) are not drawn for a shared page. Mermaid diagrams are.
+* The host shares only the names and versions of its Antora components, never their attributes or navigation. Attributes set in `antora.yml` are not known on your side.
+* Shared pages do not appear in search, Quick Open, recent files or the link graph.
+
+== What the status bar says
+
+While a shared page is active, the status bar shows who it is shared by, what you may do and whether it is saved, for example "Shared · Editor · Saved".
+
+[cols="1,3",options="header"]
+|===
+|Shows |Meaning
+
+|Shared by you
+|You are the host.
+
+|Shared · Editor
+|You joined, and may edit.
+
+|Shared · read only
+|You joined as a Viewer, or you may not edit just now.
+
+|Shared · disconnected
+|You may not edit and the connection to the host is down.
+|===
+
+The second part is the save state:
+
+[cols="1,3",options="header"]
+|===
+|Shows |Meaning
+
+|Saved
+|The host's file on disk holds this text.
+
+|Unsaved changes
+|The shared text differs from the host's file.
+
+|Changed on disk
+|The host's file was changed outside the session, and the host must decide which to keep.
+
+|Not known saved
+|Your connection is down, so you cannot tell.
+|===
+
+== When the connection drops
+
+If a guest's connection drops, a notification says so, and the *Session* panel shows "Disconnected: not known saved".
+You cannot edit until the connection is back.
+Choose *Reconnect* in the panel to connect again; the host keeps your place until it removes you or stops sharing.
+When you are back, the app brings your pages up to date with the host's.
+
+*Leave Session* closes your connection for good.
+Your shared tabs stay open, but they are no longer shared and are not saved on your computer.
+
+If the host stops sharing, the session ends in the same way.
+
+Edits you made just before the connection dropped, which had not yet reached the host, are sent again when you reconnect.
+Nothing you typed is lost by a short drop.
+
+There is one exception.
+If the host reloaded the page from disk, or started it again, while you were away, you start again from the host's new text.
+Edits of yours that had not reached the host are gone.
+The *Session* panel and the status bar show the host's text and save state as they are.
+
+The host having your edit is not the same as it being saved.
+"Saved" in the status bar means the host's file on disk holds the text.
+Until the host saves, edits are only in the shared text.
+
+== If something goes wrong
+
+The host's file on disk is the reference.
+A guest's tabs are never saved on the guest's computer.
+
+If a page looks wrong on a guest's side, for example it does not match what the host sees:
+
+. Copy anything you want to keep.
+. Choose *Leave Session*.
+. Join again with a new invitation.
+
+Your pages start again from the host's text.
+
+If the host's page looks wrong, the host can save it, stop sharing and check it as usual.
+After *Stop Sharing*, pages with unsaved changes stay open in tabs so they can be saved.
+Local history keeps earlier saves.
+
+If a file was changed on disk during a session, the status bar says "Changed on disk", and the host chooses which text to keep.
+See <<_what_the_status_bar_says,what the status bar says>>.
+
+== Firewalls
+
+When you share on the local network, your operating system may ask whether to allow AdocFoundry to accept incoming connections.
+Allow it for the network you are on, or guests cannot connect.
+Sharing on *This computer only* never needs this.
+
+The host listens on a port the operating system chooses each time you share.
+The invitation names it.
+Nothing listens while you are not sharing.
+
+On macOS, the first time you share on the local network, or join someone on it, macOS may ask whether AdocFoundry may find devices on your local network.
+Allow it, or the connection cannot be made.
+
+== Seeing each other
+
+In a shared page, the source editor shows where the other participants are.
+Each person has a colour, the same in every view.
+
+* A selection is filled in the person's colour.
+* Their caret is a frame round the character it is on.
+* A mark in the gutter, in their colour, shows the line their caret is on.
+
+Colour is never the only sign of who is who.
+The *Session* panel names each participant, shows their colour and says where their caret is, for example "page.adoc, line 12".
+
+Carets follow the text.
+When anyone edits, the carets and selections after the edit move with the words they were on, so they stay in the right place.
+Your own caret and selection are sent to the others at most every 50 milliseconds, the latest one winning, so typing and moving about are never held up.
+When someone leaves, or their connection drops, their caret and selection disappear.
+
+If you are using an input method to compose text, such as Japanese or Chinese, or accents, your composition carries on when someone else edits elsewhere in the page.
+It is marked again where their edit moved it.
+
+== Sharing a session or sharing a repository
+
+There are two ways for people to work on the same documentation.
+A live session, which this page describes, has everyone edit one copy of the files.
+Sharing a repository has everyone edit their own copy and exchange work through Git.
+They suit different moments, and it helps to know which one you are in.
+
+=== A live session
+
+Everyone edits the host's own working copy, as the host's app holds it.
+
+* Only the host's files change, and only the host saves.
+* A guest's shared tabs are in memory only.
+They are never written to the guest's disk, not even as crash recovery, and a guest's *Save* asks the host.
+* A guest who also has a clone of the same repository finds it untouched by the session.
+* Only the host commits, so a change made in the session is committed once, from one place.
+* The host's commits carry everyone's edits under the host's name.
+Co-authorship, with a `Co-authored-by:` line for each participant who changed a committed file, is planned and is not built yet.
+
+If Git or another tool changes a shared file on the host's disk, for example in a checkout or a pull, it becomes a conflict for the host to resolve, and the file is never silently overwritten.
+The host keeps the shared text or reloads the file's.
+See "Changed on disk" under <<_what_the_status_bar_says,what the status bar says>>.
+
+=== Each person's own clone
+
+Everyone edits their own copy of the repository and shares work through Git: commits, pushes, pulls and merges.
+You do not see each other's edits as they are typed.
+Each person's commits are their own, and conflicts are resolved by merging.
+
+=== Comparing them
+
+[cols="2,3,3",options="header"]
+|===
+| |A live session |Each person's own clone
+
+|Who writes files
+|Only the host
+|Each person, in their own copy
+
+|Who commits
+|Only the host
+|Each person
+
+|When others see changes
+|Live, as they are typed
+|After the work is pushed and pulled
+
+|Authorship
+|The host's name on every commit; co-authorship is planned
+|Each person's own commits
+
+|Conflicts
+|A file changed on the host's disk is a conflict for the host to resolve
+|Resolved by merging in Git
+|===
+
+=== Using both
+
+* Do not edit the same files in your own clone during a session and in the session at once.
+The app cannot see edits made outside it, so both versions could end up committed and conflicting.
+* When a session ends, the host commits, and pushes if the work is to be shared, what was shared.
+The others then pull.
+
+== What is not there yet
+
+* Other participants' carets and selections are drawn in the source editor only, not yet in the visual editor.
+* Images and other media are not shared, and guests have no navigation (the trees of navigation files) for shared components.
+* There is no relay server, so sharing works across a local network or a VPN, not across the internet through a network you do not control.
+
+== Related
+
+* xref:using-the-editor.adoc[Using the editor]
+* xref:settings.adoc[Settings]

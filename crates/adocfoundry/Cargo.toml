@@ -8,9 +8,11 @@ repository.workspace = true
 
 [dependencies]
 adoc-core.workspace = true
-adoc-engine = { workspace = true, features = ["typst", "git", "docx", "kindle", "epub", "docbook"] }
+adoc-engine = { workspace = true, features = ["typst", "git", "docx", "kindle", "epub", "docbook", "collab"] }
 adoc-index.workspace = true
 adoc-render.workspace = true
+# Collaboration's transport (COLLAB 6/8): Share and Join run it; the engine runs the session.
+adoc-share.workspace = true
 # The in-place update hands its Windows installer step to PowerShell as `-EncodedCommand`.
 base64.workspace = true
 gpui.workspace = true
@@ -38,6 +40,8 @@ embed-resource.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+# The in-memory link the collaboration tests meet over.
+adoc-collab = { workspace = true, features = ["test-support"] }
 adoc-core = { workspace = true, features = ["probe"] }
 adoc-git = { workspace = true, features = ["test-support"] }
 # PDF export highlights source blocks as the preview does; `preview::highlight_tests` checks it.

@@ -542,6 +542,7 @@ impl Engine {
             self.due_problems(),
             self.due_audit(),
             self.due_graph(),
+            self.due_collaboration(),
         ]
         .into_iter()
         .flatten()
@@ -608,6 +609,23 @@ impl Engine {
             + self.update_due_problems()
             + self.update_due_audit()
             + self.update_due_graph()
+            + self.pump_collaboration()
+    }
+
+    /// When the collaboration session next needs a pump: at once while events wait or local
+    /// changes are unsent.
+    fn due_collaboration(&self) -> Option<Instant> {
+        #[cfg(feature = "collab")]
+        return self.due_session();
+        #[cfg(not(feature = "collab"))]
+        None
+    }
+
+    fn pump_collaboration(&mut self) -> usize {
+        #[cfg(feature = "collab")]
+        return self.pump_session();
+        #[cfg(not(feature = "collab"))]
+        0
     }
 
     /// Blocks until every running worker has reported back, or `timeout` passes, applying the
@@ -1113,6 +1131,13 @@ impl Engine {
         }
         if self.states.get(&id).is_some_and(|state| state.client_owned) {
             return; // The client's buffer, which only the client changes.
+        }
+        // A host's shared document's text is the session's: a change on disk, or the file going,
+        // never flows in as an edit every participant would receive; it is a conflict the host
+        // resolves (COLLAB 5/8).
+        #[cfg(feature = "collab")]
+        if self.shared_changed_on_disk(id, on_disk.as_deref()) {
+            return;
         }
         let Some(document) = self.documents.get(&id) else {
             return;

@@ -56,6 +56,7 @@ use crate::{
 };
 
 mod build_site;
+mod collaboration;
 mod delete_file;
 mod file_actions;
 mod font_picker;
@@ -131,6 +132,8 @@ enum SidebarTab {
     Build,
     /// Shown once an impact analysis has been asked for.
     Impact,
+    /// Shown while a collaboration session runs.
+    Session,
 }
 
 /// What a tab shows: a page's source editor, or an image.
@@ -218,6 +221,10 @@ pub struct WorkspaceView {
     build_scroll: gpui::UniformListScrollHandle,
     /// The playbook folders whose build the user agreed to run in this window.
     trusted_builds: HashSet<PathBuf>,
+    /// A shared file a guest asked to open, shown once its text arrives.
+    pending_shared_open: Option<u64>,
+    /// Whether the guest's link was up when last shown, so a drop is told once.
+    shown_connected: Option<bool>,
     /// The folder the missing-playbook notice was last shown for, so it shows once per folder.
     playbook_notice_shown: Option<PathBuf>,
     /// The component version the Impact panel shows, or all.
@@ -693,6 +700,8 @@ impl WorkspaceView {
             tab_reveals: std::cell::Cell::new(0),
             build_scroll: gpui::UniformListScrollHandle::new(),
             trusted_builds: HashSet::new(),
+            pending_shared_open: None,
+            shown_connected: None,
             playbook_notice_shown: None,
             impact_filter: None,
             tab_menu_target: Rc::default(),
@@ -893,7 +902,8 @@ impl WorkspaceView {
             }
             // The active tab may have moved out of view.
             EngineEvent::TabsReordered => self.reveal_active_tab(cx),
-            EngineEvent::DocumentClosed(id) => {
+            // A host's shared page kept in the background loses its tab as a closed page does.
+            EngineEvent::DocumentClosed(id) | EngineEvent::TabHidden(id) => {
                 self.tabs
                     .retain(|tab| tab.item(cx) != TabItem::Document(*id));
                 self.visuals.remove(id);
@@ -950,6 +960,9 @@ impl WorkspaceView {
                 failed,
             } => Self::pages_exported(folder, written, failed, window, cx),
             EngineEvent::SiteBuildOutput => self.site_build_output(cx),
+            EngineEvent::SessionChanged | EngineEvent::DocumentOpened(_) => {
+                self.session_changed(window, cx);
+            }
             EngineEvent::SiteBuildFinished { result } => {
                 Self::site_build_finished(result, window, cx);
             }
@@ -2467,13 +2480,21 @@ impl WorkspaceView {
     }
 
     fn document_name(&self, id: DocumentId, cx: &App) -> String {
-        self.app
-            .read(cx)
-            .engine
+        let engine = &self.app.read(cx).engine;
+        let name = engine
             .document(id)
             .and_then(|document| document.path.file_name())
             .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "document".to_owned())
+            .unwrap_or_else(|| "document".to_owned());
+        // A guest's tab is the host's file, never one of this computer's.
+        if matches!(
+            engine.shared_file(id),
+            Some((_, _, adoc_engine::SharedRole::Guest { .. }))
+        ) {
+            format!("{name} (shared)")
+        } else {
+            name
+        }
     }
 
     // --- settings and theme ------------------------------------------------------------------
@@ -5544,6 +5565,9 @@ impl WorkspaceView {
         if self.app.read(cx).engine.site_build().is_some() {
             panels.push((SidebarTab::Build, "Build".to_owned()));
         }
+        if self.app.read(cx).engine.in_session() {
+            panels.push((SidebarTab::Session, "Session".to_owned()));
+        }
         let selected = panels
             .iter()
             .position(|(tab, _)| *tab == self.sidebar_tab)
@@ -5577,6 +5601,7 @@ impl WorkspaceView {
             SidebarTab::Graph => self.graph.clone().into_any_element(),
             SidebarTab::Build => self.render_build(cx),
             SidebarTab::Impact => self.render_impact(cx),
+            SidebarTab::Session => self.render_session(cx),
         };
         v_flex()
             .size_full()
@@ -6139,6 +6164,27 @@ impl WorkspaceView {
         // The component version of the active page: `product@2.0 · main`.
         let badge = file.as_deref().and_then(|path| engine.version_badge(path));
         let indexing = engine.is_indexing();
+        // A shared page: whose it is, what this participant may do, and whether it is saved.
+        let shared = self.active_editor().and_then(|editor| {
+            let id = editor.read(cx).document();
+            let (_, _, role) = engine.shared_file(id)?;
+            let who = match role {
+                adoc_engine::SharedRole::Host => "Shared by you",
+                adoc_engine::SharedRole::Guest { can_edit: true } => "Shared · Editor",
+                adoc_engine::SharedRole::Guest { can_edit: false } => {
+                    if engine.session_connected() {
+                        "Shared · read only"
+                    } else {
+                        "Shared · disconnected"
+                    }
+                }
+            };
+            let state = engine
+                .shared_save_state(id)
+                .map(|state| collaboration::save_state_label(&state))
+                .unwrap_or_default();
+            Some(format!("{who} · {state}"))
+        });
         StatusBar::new()
             .left(
                 div()
@@ -6166,6 +6212,14 @@ impl WorkspaceView {
                         .debug_selector(move || selector)
                         .text_xs()
                         .child(label),
+                )
+            })
+            .when_some(shared, |bar, shared| {
+                bar.left(
+                    div()
+                        .debug_selector(|| "status-shared".to_owned())
+                        .text_xs()
+                        .child(shared),
                 )
             })
             .when(indexing, |bar| bar.left(div().text_xs().child("Indexing…")))
@@ -6373,6 +6427,11 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_show_diagnostics))
             .on_action(cx.listener(Self::on_show_documentation))
             .on_action(cx.listener(Self::on_show_about))
+            .on_action(cx.listener(Self::on_share_workspace))
+            .on_action(cx.listener(Self::on_join_session))
+            .on_action(cx.listener(Self::on_copy_invitation))
+            .on_action(cx.listener(Self::on_stop_sharing))
+            .on_action(cx.listener(Self::on_leave_session))
             .on_action(cx.listener(Self::on_recover_unsaved))
             .on_action(cx.listener(Self::on_local_history))
             .on_action(cx.listener(Self::on_reload_settings))

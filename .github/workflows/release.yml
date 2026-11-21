@@ -76,8 +76,13 @@ jobs:
           submodules: recursive
       - run: rustup toolchain install
       - run: rustup target add "$TARGET"
+      # The app alone, then the other three together: built with the app, they would take its
+      # features (collaboration, `yrs`) through Cargo's feature unification, which the design
+      # keeps out of them (COLLAB design §3).
       - name: Build
-        run: cargo build --release --target "$TARGET" -p adocfoundry -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
+        run: |
+          cargo build --release --target "$TARGET" -p adocfoundry
+          cargo build --release --target "$TARGET" -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
       # The executables against the design's 40 MB budget, in the job's summary.
       - name: Sizes
         run: python3 packaging/binary-sizes.py 40 "target/$TARGET/release/"{adocfoundry,adocfoundry-cli,adoc-ls,adoc-mcp}
@@ -224,7 +229,11 @@ jobs:
       - run: rustup target add ${{ matrix.target }}
       # Pinned versions, their dependencies locked and checked against the registry's checksums.
       - run: cargo install cargo-wix --version 0.3.9 --locked
-      - run: cargo build --release --target ${{ matrix.target }} -p adocfoundry -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
+      # The app alone, then the other three together: built with the app, they would take its
+      # features (collaboration, `yrs`) through Cargo's feature unification, which the design
+      # keeps out of them (COLLAB design §3).
+      - run: cargo build --release --target ${{ matrix.target }} -p adocfoundry
+      - run: cargo build --release --target ${{ matrix.target }} -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
       - name: Sizes
         shell: bash
         run: |
@@ -328,7 +337,11 @@ jobs:
             libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev file
       - run: cargo install cargo-deb --version 3.8.0 --locked
       - run: cargo install cargo-generate-rpm --version 0.21.1 --locked
-      - run: cargo build --release -p adocfoundry -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
+      # The app alone, then the other three together: built with the app, they would take its
+      # features (collaboration, `yrs`) through Cargo's feature unification, which the design
+      # keeps out of them (COLLAB design §3).
+      - run: cargo build --release -p adocfoundry
+      - run: cargo build --release -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
       - name: Sizes
         run: python3 packaging/binary-sizes.py 40 target/release/{adocfoundry,adocfoundry-cli,adoc-ls,adoc-mcp}
       # The third-party notices, which the deb and rpm take from here.

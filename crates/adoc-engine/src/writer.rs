@@ -180,6 +180,13 @@ impl Engine {
         overwrite: bool,
         background: bool,
     ) -> Result<u64, EngineError> {
+        // A guest's shared document has no file here: only the host saves it.
+        #[cfg(feature = "collab")]
+        if self.is_shared_guest(id) {
+            return Err(EngineError::Refused(
+                "a shared document is saved by its host".to_owned(),
+            ));
+        }
         let document = self
             .documents
             .get(&id)
@@ -195,6 +202,12 @@ impl Engine {
             document.path.clone(),
             document.text.clone(),
         );
+        // A shared document records the revision it is writing, and writes nothing while a
+        // change on disk waits to be resolved.
+        #[cfg(feature = "collab")]
+        if self.shared.contains_key(&id) {
+            self.shared_save_starting(id, version, &text.to_string(), overwrite)?;
+        }
         let expected = if overwrite {
             None
         } else {
@@ -292,6 +305,13 @@ impl Engine {
                 self.writer.saving.remove(&id);
             }
         }
+        #[cfg(feature = "collab")]
+        self.shared_save_finished(
+            id,
+            version,
+            result.is_ok(),
+            matches!(result, Err(SaveFailure::Conflict)),
+        );
         let Some(document) = self.documents.get_mut(&id) else {
             return Ok(()); // Closed while it was written.
         };

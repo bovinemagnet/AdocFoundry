@@ -46,6 +46,15 @@ impl PumpedEngine {
     fn wake(&self) {
         let _ = self.wake.try_send(());
     }
+
+    /// The pump's waker, for collaboration's transport, whose threads bring the engine events.
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) fn share_waker(&self) -> adoc_share::Waker {
+        let wake = self.wake.clone();
+        std::sync::Arc::new(move || {
+            let _ = wake.try_send(());
+        })
+    }
 }
 
 impl Deref for PumpedEngine {
@@ -78,6 +87,8 @@ pub struct AppState {
     _quit: gpui::Subscription,
     /// The workspace window and its view, which Quit asks about unsaved pages.
     pub(crate) main: Option<(gpui::AnyWindowHandle, gpui::WeakEntity<WorkspaceView>)>,
+    /// Collaboration's transport while a session runs (`src/collaboration.rs`).
+    pub(crate) collaboration: crate::collaboration::Collaboration,
     /// How many times the pump task has run.
     #[cfg(test)]
     pub(crate) pumps: usize,
@@ -138,6 +149,7 @@ impl AppState {
             _pump: pump,
             _quit: quit,
             main: None,
+            collaboration: crate::collaboration::Collaboration::default(),
             #[cfg(test)]
             pumps: 0,
         };

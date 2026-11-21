@@ -7,6 +7,7 @@ mod about;
 mod app;
 mod appearance;
 mod attribute_view;
+mod collaboration;
 mod diagnostics;
 mod editor;
 mod files_view;
