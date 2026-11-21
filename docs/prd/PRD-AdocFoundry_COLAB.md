@@ -386,6 +386,7 @@ Share, Join and the Session panel in the app; presence and remote carets are par
   - **Co-authorship** (#761). The host's commits carry every participant's edits under the host's name. Each replica already knows which participant wrote each piece of text, so the host can tell, per file, who changed it since its last commit; a commit then names the participants who changed the files it commits (`Co-authored-by:`), which needs each guest's e-mail address, given when joining. The same authorship could show who wrote each line.
   - **Comments** (#762). Notes on a range of text, anchored by relative positions as selections are; where they are kept after a session (nowhere, a file beside the page, never in the page itself) is to be decided.
   - **Suggested changes** (#763). Edits held aside until accepted or rejected, which would give Viewers a use beyond reading; this needs a model of pending changes over the shared text, with undo and overlapping suggestions settled.
+  - **Following a participant** (#767). Your view follows another participant's page and caret on demand, as Zed's does, until you type, scroll or choose another tab; a command, not a setting, so the host's tabs stay its own otherwise (COLLAB 7/8).
 - **Not done here:** the manual checks with two instances of the app on one or two computers (Share, Join, roles, a drop and Reconnect, Stop Sharing) wait for the maintainer.
 
 ### C6b (COLLAB 6/8 part b, #693)
