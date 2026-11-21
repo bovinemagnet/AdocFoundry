@@ -12460,3 +12460,69 @@ fn click_dynamic(selector: &str, cx: &mut VisualTestContext) {
         .unwrap_or_else(|| panic!("{selector} is not drawn"));
     cx.simulate_click(bounds.center(), gpui::Modifiers::none());
 }
+
+/// Comments (#762, COMMENTS 4/4): the visual editor fills a page's open comments, as the source
+/// editor marks them, and stops once one is resolved.
+#[gpui::test]
+fn the_visual_editor_marks_a_pages_comments(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let page = root.join("page.adoc");
+    let text = "= Page\n\nSome words to comment on.\n";
+    std::fs::write(&page, text).unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.simulate_keystrokes("secondary-k w");
+    settle_engine(&app, &mut cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let visual = cx
+        .update(|_, cx| workspace.read(cx).visual_for_test(id).cloned())
+        .expect("a visual editor");
+    let start = text.find("words").unwrap();
+    let range = adoc_core::SourceRange::new(start, start + "words".len());
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::COMMENTS_ADD,
+                CommandArgs::Comment(adoc_engine::CommentRequest::Add {
+                    id,
+                    range,
+                    text: "Which words?".to_owned(),
+                }),
+                cx,
+            )
+            .unwrap();
+        });
+    });
+    settle_engine(&app, &mut cx);
+    let commented = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let view = visual.read(cx);
+            let shown = view.shown().cloned().unwrap();
+            view.commented(&shown, cx)
+        })
+    };
+    assert_eq!(commented(&mut cx), vec![range]);
+
+    let comment = cx.update(|_, cx| app.read(cx).engine.comments(id)[0].id);
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::COMMENTS_RESOLVE,
+                CommandArgs::Comment(adoc_engine::CommentRequest::Resolve {
+                    id,
+                    comment,
+                    resolved: true,
+                }),
+                cx,
+            )
+            .unwrap();
+        });
+    });
+    settle_engine(&app, &mut cx);
+    assert!(commented(&mut cx).is_empty());
+}

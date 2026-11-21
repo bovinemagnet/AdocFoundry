@@ -584,6 +584,43 @@ pub fn with_underlines(runs: Vec<TextRun>, ranges: &[Range<usize>], colour: Hsla
     out
 }
 
+/// `runs` with `colour` behind the parts in `ranges` (bytes of the same text): a commented
+/// passage. The layout, the caret and the selection are unchanged.
+#[must_use]
+pub fn with_backgrounds(runs: Vec<TextRun>, ranges: &[Range<usize>], colour: Hsla) -> Vec<TextRun> {
+    if ranges.is_empty() {
+        return runs;
+    }
+    let mut out = Vec::with_capacity(runs.len() + ranges.len() * 2);
+    let mut at = 0;
+    for run in runs {
+        let end = at + run.len;
+        let mut cuts: Vec<usize> = ranges
+            .iter()
+            .flat_map(|range| [range.start, range.end])
+            .filter(|cut| *cut > at && *cut < end)
+            .collect();
+        cuts.sort_unstable();
+        cuts.dedup();
+        cuts.push(end);
+        let mut start = at;
+        for cut in cuts {
+            let mut piece = run.clone();
+            piece.len = cut - start;
+            if ranges
+                .iter()
+                .any(|range| range.start <= start && cut <= range.end)
+            {
+                piece.background_color = Some(colour);
+            }
+            out.push(piece);
+            start = cut;
+        }
+        at = end;
+    }
+    out
+}
+
 /// `runs` with syntax highlighting laid over them: each run is split where a highlight starts or
 /// ends, and a highlighted piece takes its colour, weight and style. Both are in bytes of the
 /// same text, so the layout, the caret and the selection are unchanged.
@@ -925,5 +962,31 @@ mod tests {
             .collect();
         assert_eq!(wavy, [false, true, false, true, true, false]);
         assert_eq!(runs[1].underline.unwrap().color, Some(red));
+    }
+
+    #[test]
+    fn comments_fill_the_runs_they_cover() {
+        let run = TextRun {
+            len: 10,
+            font: style().font,
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let amber = gpui::yellow();
+        let runs = with_backgrounds(
+            vec![run.clone(), TextRun { len: 4, ..run }],
+            &[2..5, 9..12],
+            amber,
+        );
+        let lengths: Vec<usize> = runs.iter().map(|run| run.len).collect();
+        assert_eq!(lengths, [2, 3, 4, 1, 2, 2]);
+        let filled: Vec<bool> = runs
+            .iter()
+            .map(|run| run.background_color == Some(amber))
+            .collect();
+        assert_eq!(filled, [false, true, false, true, true, false]);
+        assert_eq!(runs.iter().map(|run| run.len).sum::<usize>(), 14);
     }
 }

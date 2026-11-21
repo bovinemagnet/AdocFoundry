@@ -37,6 +37,8 @@ struct Draw<'a> {
     selection: Hsla,
     marks: crate::editor::changes::MarkColours,
     spelling: Hsla,
+    /// The fill behind commented text (#762), as the source editor draws it.
+    comment: Hsla,
 }
 
 /// What the rows of a frame share, worked out once for the frame.
@@ -49,6 +51,8 @@ pub struct Frame {
     changes: Vec<adoc_engine::Hunk>,
     /// The misspelt words, underlined in `spelling`, in order.
     misspelt: Vec<adoc_core::SourceRange>,
+    /// The open comments' ranges, filled in `comment`, in order (#762).
+    commented: Vec<adoc_core::SourceRange>,
 }
 
 /// A row of the list the visual editor draws: a top-level node, or a section's heading, whose
@@ -110,6 +114,8 @@ pub fn frame(view: &VisualView, document: Arc<VisualDocument>, window: &Window, 
     changes.sort_by_key(|hunk| hunk.range.start);
     let mut misspelt = view.misspelt(&document, cx);
     misspelt.sort_by_key(|range| range.start);
+    let mut commented = view.commented(&document, cx);
+    commented.sort_by_key(|range| range.start);
     let head = view.selection.head;
     let caret_at = document
         .model
@@ -121,6 +127,7 @@ pub fn frame(view: &VisualView, document: Arc<VisualDocument>, window: &Window, 
         focused: view.focus.is_focused(window),
         changes,
         misspelt,
+        commented,
     }
 }
 
@@ -176,6 +183,7 @@ pub fn row(
             deleted: cx.theme().danger,
         },
         spelling: cx.theme().danger,
+        comment: cx.theme().warning.opacity(0.22),
     };
     let mut path = row.path.clone();
     let element = match document.model.node(&row.path) {
@@ -818,6 +826,19 @@ impl VisualView {
             })
             .collect();
         runs = text::with_underlines(runs, &underlined, draw.spelling);
+        // Commented text, its part in this block: comments may span several blocks.
+        let filled: Vec<std::ops::Range<usize>> = draw
+            .frame
+            .commented
+            .iter()
+            .filter(|range| range.start < block.range.end && range.end > block.range.start)
+            .filter_map(|range| {
+                let start = block.display_offset(range.start.max(block.range.start))?;
+                let end = block.display_offset(range.end.min(block.range.end))?;
+                (start < end).then(|| shown.index(start)..shown.index(end))
+            })
+            .collect();
+        runs = text::with_backgrounds(runs, &filled, draw.comment);
         let pending = self.pending.filter(|_| caret_here);
         let caret = caret_display
             .filter(|_| draw.frame.focused && self.selection.is_empty() && pending.is_none())
