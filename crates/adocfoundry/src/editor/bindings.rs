@@ -654,6 +654,15 @@ mod tests {
             ids::COLLAB_REMOVE,
             ids::COLLAB_OPEN_FILE,
             ids::COLLAB_FOLLOW,
+            // Comments are the engine's until the Comments panel (COMMENTS 3/4) drives them.
+            ids::COMMENTS_ADD,
+            ids::COMMENTS_REPLY,
+            ids::COMMENTS_RESOLVE,
+            ids::COMMENTS_REOPEN,
+            ids::COMMENTS_EDIT,
+            ids::COMMENTS_DELETE,
+            ids::COMMENTS_NEXT,
+            ids::COMMENTS_PREVIOUS,
         ];
         let engine = Engine::new(Settings::default());
         let missing: Vec<&str> = engine

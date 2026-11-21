@@ -723,7 +723,12 @@ fn renaming_a_page_moves_its_sidecar_and_undo_moves_it_back() {
     let setup = Setup::new();
     let mut engine = setup.engine();
     let id = engine.open(&setup.page()).unwrap();
-    add(&mut engine, id, SourceRange::new(0, 9), "Written before the move.");
+    add(
+        &mut engine,
+        id,
+        SourceRange::new(0, 9),
+        "Written before the move.",
+    );
     let moved = setup.root.join("modules/ROOT/pages/setup.adoc");
     let moved_sidecar = setup.root.join("modules/ROOT/pages/.setup.adoc.afd");
     rename(&mut engine, id, &moved).unwrap();
@@ -732,7 +737,12 @@ fn renaming_a_page_moves_its_sidecar_and_undo_moves_it_back() {
         .unwrap()
         .contains("Written before the move."));
     // Later comments go to the moved file.
-    add(&mut engine, id, SourceRange::new(0, 9), "Written after the move.");
+    add(
+        &mut engine,
+        id,
+        SourceRange::new(0, 9),
+        "Written after the move.",
+    );
     setup.settle(&mut engine);
     assert!(fs::read_to_string(&moved_sidecar)
         .unwrap()
@@ -778,7 +788,10 @@ fn a_case_only_rename_moves_the_sidecar() {
         .collect();
     assert!(names.contains(&"Install.adoc".to_owned()), "{names:?}");
     assert!(names.contains(&".Install.adoc.afd".to_owned()), "{names:?}");
-    assert!(!names.contains(&".install.adoc.afd".to_owned()), "{names:?}");
+    assert!(
+        !names.contains(&".install.adoc.afd".to_owned()),
+        "{names:?}"
+    );
 }
 
 #[test]
@@ -795,7 +808,12 @@ fn deleting_a_page_keeps_its_sidecar_for_restoring() {
     engine.open_workspace(vec![setup.root.clone()]).unwrap();
     assert!(engine.wait_for_workers(Duration::from_secs(30)));
     let id = engine.open(&setup.page()).unwrap();
-    add(&mut engine, id, SourceRange::new(0, 9), "Kept with the page.");
+    add(
+        &mut engine,
+        id,
+        SourceRange::new(0, 9),
+        "Kept with the page.",
+    );
     engine.delete_file(&setup.page()).unwrap();
     assert!(!setup.page().exists());
     assert!(!setup.sidecar().exists(), "it went with the page");

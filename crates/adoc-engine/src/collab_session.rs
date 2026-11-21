@@ -2715,6 +2715,14 @@ pub const REFUSED_ON_GUEST_PAGES: &[crate::CommandId] = &[
     crate::commands::ids::FILE_DELETE,
     crate::commands::ids::DOCUMENT_LOCAL_HISTORY,
     crate::commands::ids::DOCUMENT_RESTORE_VERSION,
+    // Comments on a guest's page are the host's to keep; until the session carries them
+    // (COMMENTS 2/4), a guest makes none.
+    crate::commands::ids::COMMENTS_ADD,
+    crate::commands::ids::COMMENTS_REPLY,
+    crate::commands::ids::COMMENTS_RESOLVE,
+    crate::commands::ids::COMMENTS_REOPEN,
+    crate::commands::ids::COMMENTS_EDIT,
+    crate::commands::ids::COMMENTS_DELETE,
 ];
 
 impl Engine {
