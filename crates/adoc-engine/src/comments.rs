@@ -655,6 +655,22 @@ impl Engine {
         }
     }
 
+    /// The page at `from` moved to `to`, its metadata file with it: an open page's comments are
+    /// kept there from now on.
+    pub(crate) fn comments_moved(&mut self, from: &Path, to: &Path) {
+        if let Some(id) = self.document_for_path(from) {
+            if let Some(page) = self.page_comments.get_mut(&id) {
+                if page.sidecar.is_some() {
+                    page.sidecar = sidecar_path(to);
+                }
+            }
+        }
+        if let Some(mut page) = self.closing_comments.remove(from) {
+            page.sidecar = sidecar_path(to);
+            self.closing_comments.insert(to.to_path_buf(), page);
+        }
+    }
+
     /// Keeps document `id`'s comments, closed, until their last write is made.
     pub(crate) fn forget_comments(&mut self, id: DocumentId, path: &Path) {
         let Some(mut page) = self.page_comments.remove(&id) else {

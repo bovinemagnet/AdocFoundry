@@ -698,3 +698,119 @@ fn the_comment_author_comes_from_settings_first() {
     assert_eq!(author.name, "Paul Snow");
     assert_eq!(author.email.as_deref(), Some("paul@example.org"));
 }
+
+fn rename(engine: &mut Engine, id: DocumentId, to: &Path) -> Result<(), EngineError> {
+    let CommandOutcome::Preview(preview) = engine.invoke(
+        ids::PAGE_RENAME,
+        CommandArgs::Rename {
+            id,
+            new_path: to.to_path_buf(),
+        },
+    )?
+    else {
+        panic!("a rename previews");
+    };
+    engine
+        .invoke(
+            ids::WORKSPACE_APPLY_PREVIEW,
+            CommandArgs::Custom(serde_json::json!({ "preview_id": preview.id.get() })),
+        )
+        .map(|_| ())
+}
+
+#[test]
+fn renaming_a_page_moves_its_sidecar_and_undo_moves_it_back() {
+    let setup = Setup::new();
+    let mut engine = setup.engine();
+    let id = engine.open(&setup.page()).unwrap();
+    add(&mut engine, id, SourceRange::new(0, 9), "Written before the move.");
+    let moved = setup.root.join("modules/ROOT/pages/setup.adoc");
+    let moved_sidecar = setup.root.join("modules/ROOT/pages/.setup.adoc.afd");
+    rename(&mut engine, id, &moved).unwrap();
+    assert!(!setup.sidecar().exists());
+    assert!(fs::read_to_string(&moved_sidecar)
+        .unwrap()
+        .contains("Written before the move."));
+    // Later comments go to the moved file.
+    add(&mut engine, id, SourceRange::new(0, 9), "Written after the move.");
+    setup.settle(&mut engine);
+    assert!(fs::read_to_string(&moved_sidecar)
+        .unwrap()
+        .contains("Written after the move."));
+    assert!(!setup.sidecar().exists());
+
+    assert!(engine.undo(id));
+    assert!(setup.sidecar().exists(), "undo moves it back");
+    assert!(!moved_sidecar.exists());
+}
+
+#[test]
+fn a_rename_onto_a_sidecar_is_refused() {
+    let setup = Setup::new();
+    let mut engine = setup.engine();
+    let id = engine.open(&setup.page()).unwrap();
+    let left = setup.root.join("modules/ROOT/pages/.setup.adoc.afd");
+    fs::write(&left, "format = 1\n").unwrap();
+    let refused = rename(
+        &mut engine,
+        id,
+        &setup.root.join("modules/ROOT/pages/setup.adoc"),
+    );
+    assert!(
+        matches!(&refused, Err(EngineError::Refused(reason)) if reason.contains("comments file")),
+        "{refused:?}"
+    );
+    assert!(setup.page().exists());
+    assert!(setup.sidecar().exists());
+    assert_eq!(fs::read_to_string(&left).unwrap(), "format = 1\n");
+}
+
+#[test]
+fn a_case_only_rename_moves_the_sidecar() {
+    let setup = Setup::new();
+    let mut engine = setup.engine();
+    let id = engine.open(&setup.page()).unwrap();
+    let moved = setup.root.join("modules/ROOT/pages/Install.adoc");
+    rename(&mut engine, id, &moved).unwrap();
+    let names: Vec<String> = fs::read_dir(setup.root.join("modules/ROOT/pages"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(names.contains(&"Install.adoc".to_owned()), "{names:?}");
+    assert!(names.contains(&".Install.adoc.afd".to_owned()), "{names:?}");
+    assert!(!names.contains(&".install.adoc.afd".to_owned()), "{names:?}");
+}
+
+#[test]
+fn deleting_a_page_keeps_its_sidecar_for_restoring() {
+    let setup = Setup::new();
+    let state = setup.root.parent().unwrap().join("state");
+    let user = setup.root.parent().unwrap().join("settings.toml");
+    fs::write(&user, "[comments]\nname = \"Paul Snow\"\n").unwrap();
+    let settings = Settings::load(Some(&user), None)
+        .unwrap()
+        .with_git_opt_in()
+        .with_state_dir(Some(state));
+    let mut engine = Engine::with_clock(settings, Arc::new(setup.clock.clone()));
+    engine.open_workspace(vec![setup.root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(30)));
+    let id = engine.open(&setup.page()).unwrap();
+    add(&mut engine, id, SourceRange::new(0, 9), "Kept with the page.");
+    engine.delete_file(&setup.page()).unwrap();
+    assert!(!setup.page().exists());
+    assert!(!setup.sidecar().exists(), "it went with the page");
+
+    engine.undo_delete().unwrap();
+    assert!(setup.page().exists());
+    assert!(fs::read_to_string(setup.sidecar())
+        .unwrap()
+        .contains("Kept with the page."));
+    let id = engine.document_for_path(&setup.page()).unwrap();
+    assert_eq!(engine.comments(id).len(), 2);
+
+    // Not put back over another comments file.
+    engine.delete_file(&setup.page()).unwrap();
+    fs::write(setup.sidecar(), "format = 1\n").unwrap();
+    assert!(matches!(engine.undo_delete(), Err(EngineError::Refused(_))));
+    assert!(!setup.page().exists());
+}
