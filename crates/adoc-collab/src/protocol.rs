@@ -342,7 +342,11 @@ pub enum Message {
         selection: Option<RelativeSelection>,
     },
     /// A comment of `file` was deleted.
-    CommentRemoved { file: u64, epoch: u32, comment: u64 },
+    CommentRemoved {
+        file: u64,
+        epoch: u32,
+        comment: u64,
+    },
     /// The host refused a guest's `Comment` request, and why.
     CommentRefused {
         file: u64,
