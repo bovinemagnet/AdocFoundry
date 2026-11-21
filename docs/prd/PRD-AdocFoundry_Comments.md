@@ -280,3 +280,15 @@ Where the implementation departs from this design, or settles what it left open:
   - Ids come from `getrandom`, already in the tree.
 - **A page closed with a write still to make** keeps its comments, by path, until the write is made (`closing_comments`); reopening it meanwhile takes them back. `flush_writes`, which dropping the engine calls, writes every page's comments and retries a conflict before returning.
 - **Commands are available on any active page** (`CommandContext::ActiveDocument`). The app shows none of them until COMMENTS 3/4, and its user guide page comes with that package; the developer guide's engine page and the settings page describe them now.
+
+### COMMENTS 2/4: comments in a session
+
+Where the implementation departs from this design, or settles what it left open:
+
+- **One request message.** A guest's changes are one `Comment` message carrying a `CommentChange` (add, reply, resolve, edit, delete), numbered by `request`, not five messages (§7). The host's answers are `CommentThread`, `CommentRemoved` and `CommentRefused` as designed. A thread's JSON is in the payload, after its selection, so a comment with a hundred long replies fits a frame.
+- **Guests are told names, never e-mail addresses.** The page's comments file may hold commenters' addresses; they stay on the host's side. A guest checks whose a comment is by against its own name, which the host's roster gives it, and the host checks again.
+- **When a guest is told:** after the file's snapshot, and whenever a comment changes, or its place in the shared text would resolve otherwise on the guest's side. The host compares the selection it last sent with its own byte range after every change to the text, and sends a new one when they differ. At most 32 comments are told a guest for a file in a pump, so a page of many long comments never fills its queue at once; the rest follow at once in the next pumps.
+- **Order.** A detached comment's last place is the host's alone, so a guest lists detached comments in its own order; the simulation compares comments by id.
+- **The host's own actions** follow the session's rules on a shared page: it resolves and deletes any comment, but edits only its own. Alone, it may do everything, as before.
+- **Loading.** A page the host offers keeps comments wherever it is, since it was confined when offered: its comments file is read when the page is shared for a guest (`load_offered_comments`).
+- **A guest away** cannot comment: the request is refused at once with "The host cannot be reached", never queued.

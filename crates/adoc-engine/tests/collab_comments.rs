@@ -393,3 +393,27 @@ fn a_guest_cannot_comment_while_the_host_is_away() {
         Err(EngineError::Refused(_))
     ));
 }
+
+#[test]
+fn guests_are_never_told_an_email_address() {
+    let mut settings = adoc_engine::Settings::load(None, None).unwrap();
+    settings.git.enabled = false;
+    settings.comments.name = Some("Hester".to_owned());
+    settings.comments.email = Some("hester@example.org".to_owned());
+    let mut session = Session::with_host(&[("install.adoc", PAGE)], Engine::new(settings));
+    let ada = session.guest(1, true);
+    let host = session.host_doc();
+    add(&mut session.host, host, "With an address.").unwrap();
+    assert_eq!(
+        session.host.comments(host)[0].author.email.as_deref(),
+        Some("hester@example.org")
+    );
+    session.settle();
+    let id = guest_doc(&mut session, ada);
+    assert!(session.engine(ada).comments(id)[0].author.email.is_none());
+    assert!(session.sent_to(ada).iter().all(|message| !matches!(
+        message,
+        Message::CommentThread { thread, .. } if thread.email.is_some()
+            || thread.replies.iter().any(|reply| reply.email.is_some())
+    )));
+}

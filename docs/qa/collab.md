@@ -77,6 +77,9 @@ Each threat, its defence, and the test that holds it. Defects found in `yrs` dur
 | Forged authorship | An update may create items only under the guest's own client id, and only one run from the host's clock for it | `collab_forged_author_is_refused`, `collab_authors_are_read_before_applying` |
 | Updates replayed across snapshots | Each update names the snapshot it was made on; earlier ones are discarded | `a_duplicate_after_a_snapshot_is_discarded` |
 | Where each participant is | Only the shared file's id, or none; a host on a page it does not share is elsewhere, and nothing sent names that page; a guest naming a file not shared closes its connection | `a_host_on_a_page_it_does_not_share_is_elsewhere`, `a_focus_on_a_file_not_shared_closes_the_connection` |
+| A guest changing others' comments (#762) | The host decides every change by the guest's role and the comment's author, refusing with a reason and keeping the connection; a request from an earlier epoch is refused; a guest never reads or writes a comments file | `what_a_participant_may_do_is_the_hosts_to_decide`, `a_request_from_an_earlier_epoch_is_refused`, `a_comment_on_a_file_not_opened_closes_the_connection` |
+| Learning who commented | Guests are told commenters' names, never the e-mail addresses the page's comments file holds | `guests_are_never_told_an_email_address` |
+| Comments flooding a guest | Every comment and reply held to its limits on the wire; at most 500 a file and 32 told a pump | `comments_are_held_to_their_limits` |
 | Guest pages parsed on every update (cost, not a breach) | Parsed once typing pauses | `a_guests_page_is_parsed_once_typing_pauses` |
 | Malformed or hostile CRDT data | A grammar check before `yrs` decodes anything; panics caught; the whole text compared after each remote update; a replica that may be wrong is poisoned and rebuilt in a new epoch | `collab_malformed_update_changes_nothing`, `an_update_splitting_a_character_poisons_the_replica`, `a_hostile_update_makes_the_host_rebuild_and_the_guest_start_again`; fuzz target `collab_update` |
 | Allocation bombs | Every count bounded by the bytes that follow; frames bounded before allocation | `counts_claiming_more_than_follows_are_refused`, `frames_over_the_limit_are_refused_before_reading`; fuzz target `collab_frame` |
@@ -106,6 +109,7 @@ Run with two copies of the app on two machines on one local network, unless the 
 | Change a shared file in another editor; the host is asked which to keep | [ ] | [ ] | [ ] |
 | Screen reader: the Session panel's participants, roles and caret places are read | [ ] | [ ] | [ ] |
 | Follow someone moving between pages and typing: your view goes with them and keeps their caret in view; a click, a scroll or typing ends it (#767) | [ ] | [ ] | [ ] |
+| Comment on a shared page from each side, a Viewer included, while the other types around it; both see the same comments on the same text, and the host's `.afd` file holds them (#762) | [ ] | [ ] | [ ] |
 | Stop Sharing: guests are told, the port is closed | [ ] | [ ] | [ ] |
 | The Flatpak package shares and joins on the local network (Linux only) | | | [ ] |
 

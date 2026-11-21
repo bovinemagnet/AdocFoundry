@@ -74,19 +74,14 @@ fn shown_text(text: &str) -> String {
     }
 }
 
-fn shown_email(email: Option<&String>) -> Option<String> {
-    email
-        .filter(|email| email.len() <= adoc_collab::protocol::MAX_EMAIL)
-        .filter(|email| !email.chars().any(char::is_control))
-        .cloned()
-}
-
-/// A host's comment as a guest is told it.
+/// A host's comment as a guest is told it. E-mail addresses in the page's metadata file stay on
+/// the host's side: a guest is told names only, which is all it shows and all it checks whose a
+/// comment is by.
 fn thread_of(comment: &Comment) -> SharedThread {
     SharedThread {
         id: comment.id.0,
         author: shown_name(&comment.author.name),
-        email: shown_email(comment.author.email.as_ref()),
+        email: None,
         created: seconds(comment.created),
         edited: comment.edited.map(seconds),
         quote: cut(&comment.quote, adoc_collab::protocol::MAX_COMMENT_QUOTE).to_owned(),
@@ -105,7 +100,7 @@ fn thread_of(comment: &Comment) -> SharedThread {
             .map(|reply| SharedReply {
                 id: reply.id.0,
                 author: shown_name(&reply.author.name),
-                email: shown_email(reply.author.email.as_ref()),
+                email: None,
                 created: seconds(reply.created),
                 edited: reply.edited.map(seconds),
                 text: shown_text(&reply.text),
