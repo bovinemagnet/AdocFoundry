@@ -970,6 +970,20 @@ fn a_page_created_on_disk_is_catalogued() {
         .any(|event| matches!(event, EngineEvent::CatalogChanged { .. })));
 }
 
+/// A file whose name begins with a dot is hidden from Antora, as a page's comments file is
+/// (`.new.adoc.afd`): made on disk beside a page, it never becomes a resource.
+#[test]
+fn a_hidden_file_made_in_a_module_is_not_catalogued() {
+    let (directory, mut engine, _events, _index) = linked_component();
+    let pages = directory.path().join("modules/guide/pages");
+    let hidden = pages.join(".new.adoc.afd");
+    let new = pages.join("new.adoc");
+    fs::write(&hidden, "format = 1\n").unwrap();
+    fs::write(&new, "= New\n").unwrap();
+    assert!(pump_until(&mut engine, |engine| catalogued(engine, &new)));
+    assert!(!catalogued(&engine, &hidden));
+}
+
 #[test]
 fn a_workspace_inside_a_folder_named_like_an_ignored_one_follows_changes_on_disk() {
     let directory = tempfile::tempdir().unwrap();

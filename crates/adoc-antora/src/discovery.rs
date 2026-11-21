@@ -246,6 +246,9 @@ fn catalog_component(
                     .strip_prefix(&family_root)
                     .expect("filtered to the family root")
                     .to_path_buf();
+                if is_hidden(&relative_path) {
+                    continue;
+                }
                 let coordinate = AntoraCoordinate {
                     component: component.clone(),
                     version: version.clone(),
@@ -383,6 +386,17 @@ fn collect_files(path: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
     Ok(())
 }
 
+/// Whether a file at `relative`, below its family's folder, is hidden from Antora: a name in it
+/// begins with a dot. Antora 3.2 neither catalogues nor publishes such a file, so a sidecar such
+/// as `.install.adoc.afd` beside a page is never a resource.
+#[must_use]
+pub fn is_hidden(relative: &Path) -> bool {
+    relative.components().any(|part| match part {
+        Component::Normal(name) => name.as_encoded_bytes().first() == Some(&b'.'),
+        _ => false,
+    })
+}
+
 fn sorted_entries(path: &Path) -> io::Result<Vec<fs::DirEntry>> {
     let mut entries = fs::read_dir(path)?.collect::<Result<Vec<_>, _>>()?;
     entries.sort_by_key(fs::DirEntry::file_name);
@@ -432,6 +446,26 @@ mod tests {
 
     /// Only the header is read for `:page-aliases:`: a body that is not text, or an attribute
     /// line after the header, makes no difference.
+    #[test]
+    fn hidden_files_are_not_catalogued() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("antora.yml"), "name: demo\nversion: ~\n").unwrap();
+        let pages = root.path().join("modules/ROOT/pages");
+        std::fs::create_dir_all(pages.join(".drafts")).unwrap();
+        std::fs::write(pages.join("install.adoc"), "= Install\n").unwrap();
+        std::fs::write(pages.join(".install.adoc.afd"), "format = 1\n").unwrap();
+        std::fs::write(pages.join(".draft.adoc"), "= Draft\n").unwrap();
+        std::fs::write(pages.join(".drafts/later.adoc"), "= Later\n").unwrap();
+
+        let discovery = discover_antora_workspace(&[root.path().to_path_buf()]).unwrap();
+        let names: Vec<_> = discovery
+            .catalog
+            .resources()
+            .map(|resource| resource.coordinate.relative_path.clone())
+            .collect();
+        assert_eq!(names, [std::path::PathBuf::from("install.adoc")]);
+    }
+
     #[test]
     fn page_aliases_are_read_from_the_header_alone() {
         let root = tempfile::tempdir().unwrap();

@@ -915,7 +915,7 @@ impl Engine {
     }
 
     /// The coordinate a file at `path` would have in `family`, if it lies in that family's
-    /// directory of a module.
+    /// directory of a module and is not hidden.
     pub(crate) fn coordinate_in(
         &self,
         path: &Path,
@@ -926,6 +926,11 @@ impl Engine {
                 .directories()
                 .iter()
                 .find_map(|directory| path.strip_prefix(module.root.join(directory)).ok())?;
+            // Antora neither catalogues nor publishes a hidden file, such as a page's
+            // comments file.
+            if adoc_antora::is_hidden(relative) {
+                return None;
+            }
             Some(AntoraCoordinate {
                 component: module.component.clone(),
                 version: module.version.clone(),
