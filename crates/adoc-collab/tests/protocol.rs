@@ -118,14 +118,37 @@ fn every_message() -> Vec<Message> {
                     name: "Host".to_owned(),
                     role: Role::Owner,
                     connected: true,
+                    file: None,
+                    following: None,
                 },
                 adoc_collab::protocol::Member {
                     peer: PeerId(3),
                     name: "Ada".to_owned(),
                     role: Role::Viewer,
                     connected: false,
+                    file: None,
+                    following: None,
                 },
             ],
+        },
+        Message::Roster {
+            workspace: "docs".to_owned(),
+            members: vec![adoc_collab::protocol::Member {
+                peer: PeerId(2),
+                name: "Bea".to_owned(),
+                role: Role::Editor,
+                connected: true,
+                file: Some(4),
+                following: Some(PeerId::HOST),
+            }],
+        },
+        Message::Focus {
+            file: Some(3),
+            following: Some(PeerId(2)),
+        },
+        Message::Focus {
+            file: None,
+            following: None,
         },
         Message::FileState {
             file: 1,
@@ -378,6 +401,8 @@ fn fields_outside_their_limits_are_refused() {
             name: String::new(),
             role: Role::Viewer,
             connected: true,
+            file: None,
+            following: None,
         }],
     };
     assert_eq!(unnamed.encode(), Err(FrameError::Invalid("name")));
@@ -389,6 +414,8 @@ fn fields_outside_their_limits_are_refused() {
                 name: "A".to_owned(),
                 role: Role::Viewer,
                 connected: true,
+                file: None,
+                following: None,
             };
             adoc_collab::protocol::MAX_PARTICIPANTS + 1
         ],

@@ -938,6 +938,51 @@ A guest sends its selection to the host only.
 The name comes from the roster.
 `EngineEvent::PresenceChanged(id)` follows a change to the selections, and a view redraws from `peer_carets`.
 
+==== Following a participant
+
+`Engine::follow_participant(peer)`, `stop_following()` and `following()` let this participant follow another one's page (#767).
+The commands are `collaboration.follow`, which takes `{"peer": n}`, and `collaboration.stop_following`.
+
+*Telling where you are*
+
+* Every participant tells the others which shared file it is in, or none.
+* A guest sends the message `Focus` when either changes: the shared file of its active page, or none, and whom it follows.
+* A guest sends `Focus` again after `Join` and after resuming.
+* The host includes each participant's place and leader in the `Roster`, its own first.
+`Participant::place` and `Participant::following` carry them.
+* A host on an offered page that no guest has opened yet is still there.
+* A host on a page it does not share is elsewhere, and nothing sent names that page.
+* A guest that names a file the host does not share has its connection closed.
+
+*Where following leads*
+
+A step at the end of the session's pump moves the follower to the leader's page.
+It runs after the session is put back, since opening a shared file needs the session.
+Following a follower leads to whoever ends the chain.
+In a ring nobody leads, and nobody moves.
+
+*A page not open yet*
+
+A guest asks the host for the page and shows it when it arrives.
+If it cannot, because too many files are open, following ends.
+
+*When following ends*
+
+* An edit made on this side ends it: typing, undo or redo.
+A remote edit does not.
+* The person showing another page themselves ends it.
+The engine remembers the page that following last showed, so its own moves do not count.
+* The leader leaving ends it, and so does the session ending.
+
+A leader who is disconnected, or elsewhere, leaves the follower where it is.
+
+*Pacing*
+
+A changed place is due at once (`due_session`).
+The host sends each peer at most one roster a pump, and only when it changed.
+
+The tests are in `crates/adoc-engine/tests/collab_follow.rs`, `a_move_to_another_shared_page_is_due_at_once` in `tests/wake.rs`, and the simulation's following check.
+
 ==== What the host offers
 
 `host_session` checks every file before it offers any, and one that may not be offered refuses the whole call, so the host is never left sharing less than it chose without knowing.

@@ -94,6 +94,8 @@ pub mod ids {
     pub const COLLAB_REVOKE_EDIT: CommandId = CommandId::new("collaboration.revoke_edit");
     pub const COLLAB_REMOVE: CommandId = CommandId::new("collaboration.remove");
     pub const COLLAB_OPEN_FILE: CommandId = CommandId::new("collaboration.open_file");
+    pub const COLLAB_FOLLOW: CommandId = CommandId::new("collaboration.follow");
+    pub const COLLAB_STOP_FOLLOWING: CommandId = CommandId::new("collaboration.stop_following");
     pub const SETTINGS_RELOAD: CommandId = CommandId::new("settings.reload");
     pub const VIEW_TOGGLE_PREVIEW: CommandId = CommandId::new("view.toggle_preview");
     pub const VIEW_DETACH_PREVIEW: CommandId = CommandId::new("view.detach_preview");

@@ -51,6 +51,10 @@ pub struct Participant {
     pub role: Role,
     /// Whether their link is up; a disconnected participant may resume.
     pub connected: bool,
+    /// The shared file they are in, when they are on a shared page; `None` elsewhere.
+    pub place: Option<u64>,
+    /// Whom they follow, if anyone.
+    pub following: Option<PeerId>,
 }
 
 #[derive(Default)]
@@ -86,6 +90,19 @@ pub(crate) struct Session {
     presence: BTreeMap<u64, Presence>,
     /// The last pump stopped at [`SESSION_EVENTS_PER_PUMP`]: the next is due at once.
     backlog: bool,
+    /// The participant this one follows (#767).
+    follow: Option<Follow>,
+}
+
+/// Where another participant is, whom they follow, and whether their link is up.
+type Place = (Option<u64>, Option<PeerId>, bool);
+
+/// Following another participant: whom, and the page following last showed, so that the
+/// person choosing another page themselves is told from following moving them.
+#[derive(Clone, Copy, Debug)]
+struct Follow {
+    leader: PeerId,
+    placed: Option<DocumentId>,
 }
 
 enum Side {
@@ -129,6 +146,9 @@ struct Peer {
     files: BTreeMap<u64, PeerFile>,
     /// Who is in the session, as the peer was last told it.
     told_roster: Option<Vec<Member>>,
+    /// Where the peer says it is, and whom it follows (`Message::Focus`).
+    place: Option<u64>,
+    following: Option<PeerId>,
 }
 
 struct PeerFile {
@@ -150,6 +170,9 @@ struct PeerFile {
 }
 
 struct Guest {
+    /// Where this guest last told the host it is, and whom it follows; `None` until it has
+    /// told it on this connection.
+    told_focus: Option<(Option<u64>, Option<PeerId>)>,
     me: Option<(PeerId, Role)>,
     connected: bool,
     manifest: Vec<ManifestFile>,
@@ -322,6 +345,7 @@ impl Engine {
             }),
             backlog: false,
             presence: BTreeMap::new(),
+            follow: None,
         });
         Ok(manifest)
     }
@@ -344,6 +368,7 @@ impl Engine {
                 requests: BTreeMap::new(),
                 workspace: None,
                 roster: Vec::new(),
+                told_focus: None,
                 virtual_root: None,
                 components: Vec::new(),
                 shared: Box::default(),
@@ -351,6 +376,7 @@ impl Engine {
             }),
             backlog: false,
             presence: BTreeMap::new(),
+            follow: None,
         });
         Ok(())
     }
@@ -481,6 +507,8 @@ impl Engine {
                     name: entry.name.clone(),
                     role: entry.role,
                     connected: entry.connected,
+                    place: entry.place,
+                    following: entry.following,
                 })
                 .collect(),
             Some(Side::Guest(guest)) => guest
@@ -491,6 +519,8 @@ impl Engine {
                     name: member.name.clone(),
                     role: member.role,
                     connected: member.connected && guest.connected,
+                    place: member.file,
+                    following: member.following,
                 })
                 .collect(),
             None => Vec::new(),
@@ -615,6 +645,8 @@ impl Engine {
                 connected: true,
                 files: BTreeMap::new(),
                 told_roster: None,
+                place: None,
+                following: None,
             },
         );
         let entries: Vec<ManifestFile> = host
@@ -1003,12 +1035,17 @@ impl Engine {
         };
         let roster = match &session.side {
             Side::Host(host) => {
-                let members = Self::roster(host);
+                let members = self.roster(session);
                 host.peers
                     .values()
                     .any(|entry| entry.connected && entry.told_roster.as_ref() != Some(&members))
             }
-            Side::Guest(_) => false,
+            // Where this guest is, or whom it follows, changed since it told the host.
+            Side::Guest(guest) => {
+                guest.connected
+                    && guest.me.is_some()
+                    && guest.told_focus != Some(self.focus(session))
+            }
         };
         let presence = session
             .presence
@@ -1023,6 +1060,9 @@ impl Engine {
     /// Handles what the link brought, at most [`SESSION_EVENTS_PER_PUMP`] events, and sends
     /// the local author's updates. Returns the number of events handled.
     pub(crate) fn pump_session(&mut self) -> usize {
+        // The person may have shown another page since the last pump: following ends before
+        // this side tells the others where it is, so they hear it in this pump.
+        self.follow_step();
         let Some(mut session) = self.collab_session.take() else {
             return 0;
         };
@@ -1045,6 +1085,7 @@ impl Engine {
         }
         self.flush_presence(&mut session);
         self.collab_session = Some(session);
+        self.follow_step();
         if changed {
             self.emit(EngineEvent::SessionChanged);
         }
@@ -1168,6 +1209,23 @@ impl Engine {
                 selection,
                 ..
             } => self.host_awareness(session, peer, file, epoch, selection),
+            Message::Focus { file, following } => {
+                let Side::Host(host) = &mut session.side else {
+                    return Ok(());
+                };
+                if file.is_some_and(|file| !host.offered.contains_key(&file)) {
+                    return Err("a place in a file not shared".to_owned());
+                }
+                let following = following.filter(|leader| {
+                    *leader == PeerId::HOST || (*leader != peer && host.peers.contains_key(leader))
+                });
+                if let Some(entry) = host.peers.get_mut(&peer) {
+                    entry.place = file;
+                    entry.following = following;
+                }
+                self.emit(EngineEvent::SessionChanged);
+                Ok(())
+            }
             Message::Resync { file, .. } => {
                 // In the current epoch or one before: either way the peer starts again from
                 // the host's text. One behind lost a snapshot in flight.
@@ -1680,28 +1738,54 @@ impl Engine {
 
     /// Sends the host's own changes to every live peer with the file open.
     /// Who is in the session, the host first, as guests are told it.
-    fn roster(host: &Host) -> Vec<Member> {
+    /// Who is in the session, the host first with where it is and whom it follows.
+    fn roster(&self, session: &Session) -> Vec<Member> {
+        let Side::Host(host) = &session.side else {
+            return Vec::new();
+        };
         std::iter::once(Member {
             peer: PeerId::HOST,
             name: host.name.clone(),
             role: Role::Owner,
             connected: true,
+            file: self.session_place(session),
+            following: session.follow.map(|follow| follow.leader),
         })
         .chain(host.peers.iter().map(|(peer, entry)| Member {
             peer: *peer,
             name: entry.name.clone(),
             role: entry.role,
             connected: entry.connected,
+            file: entry.place,
+            following: entry.following,
         }))
         .collect()
     }
 
+    /// The shared file of the page this participant is on: `None` on a page of its own, an
+    /// image or nothing.
+    fn session_place(&self, session: &Session) -> Option<u64> {
+        let id = self.active?;
+        if let Some(file) = Self::session_file(session, id) {
+            return Some(file);
+        }
+        // A host on an offered page no guest has opened yet: it is there all the same.
+        let Side::Host(host) = &session.side else {
+            return None;
+        };
+        let path = &self.documents.get(&id)?.path;
+        host.offered
+            .iter()
+            .find(|(_, offered)| &offered.path == path)
+            .map(|(file, _)| *file)
+    }
+
     /// Tells each connected peer who is in the session, if it was told otherwise.
-    fn host_announce_roster(session: &mut Session) {
+    fn host_announce_roster(&self, session: &mut Session) {
+        let members = self.roster(session);
         let Side::Host(host) = &mut session.side else {
             return;
         };
-        let members = Self::roster(host);
         let workspace = host.workspace.clone();
         for (peer, entry) in &mut host.peers {
             if !entry.connected || entry.told_roster.as_ref() == Some(&members) {
@@ -1719,7 +1803,7 @@ impl Engine {
     }
 
     fn host_flush(&mut self, session: &mut Session) {
-        Self::host_announce_roster(session);
+        self.host_announce_roster(session);
         let Side::Host(host) = &session.side else {
             return;
         };
@@ -1799,6 +1883,7 @@ impl Engine {
             LinkEvent::Knock { .. } => false,
             LinkEvent::Resumed { .. } => {
                 guest.connected = true;
+                guest.told_focus = None;
                 for file in guest.files.values_mut() {
                     file.resuming = true;
                 }
@@ -1838,6 +1923,7 @@ impl Engine {
                 }
                 guest.me = Some((peer, role));
                 guest.connected = true;
+                guest.told_focus = None;
                 self.guest_refresh_editing(session);
                 true
             }
@@ -2162,9 +2248,18 @@ impl Engine {
 
     /// Sends this guest's changes, keeping each until acknowledged.
     fn guest_flush(&mut self, session: &mut Session) {
+        let focus = self.focus(session);
         let Side::Guest(guest) = &mut session.side else {
             return;
         };
+        // Where this guest is, and whom it follows, for the host to tell the others.
+        if guest.connected && guest.me.is_some() && guest.told_focus != Some(focus) {
+            guest.told_focus = Some(focus);
+            let (file, following) = focus;
+            let _ = session
+                .link
+                .send(PeerId::HOST, Message::Focus { file, following });
+        }
         // The shared workspace's index follows the shared pages open here: a page closed
         // leaves it.
         let documents = &self.documents;
@@ -2556,6 +2651,26 @@ pub(crate) fn register_collaboration(registry: &mut crate::CommandRegistry) {
     );
     register(
         registry,
+        panel(ids::COLLAB_FOLLOW, "Follow Participant"),
+        |engine, args| {
+            engine
+                .follow_participant(peer(ids::COLLAB_FOLLOW, &args)?)
+                .map(|()| CommandOutcome::Done)
+        },
+    );
+    register(
+        registry,
+        simple(ids::COLLAB_STOP_FOLLOWING, "Stop Following"),
+        |engine, _| {
+            if engine.following().is_none() {
+                return Err(refused("not following anyone"));
+            }
+            engine.stop_following();
+            Ok(CommandOutcome::Done)
+        },
+    );
+    register(
+        registry,
         panel(ids::COLLAB_OPEN_FILE, "Open Shared File"),
         |engine, args| {
             let file = number(ids::COLLAB_OPEN_FILE, &args, "file")?;
@@ -2788,5 +2903,177 @@ impl Engine {
             }
         }
         components
+    }
+}
+
+impl Engine {
+    /// Where this participant is, and whom it follows, as the others are told it.
+    fn focus(&self, session: &Session) -> (Option<u64>, Option<PeerId>) {
+        (
+            self.session_place(session),
+            session.follow.map(|follow| follow.leader),
+        )
+    }
+
+    /// Follows participant `peer` (#767): this participant's page follows theirs from shared
+    /// file to shared file, until it edits, chooses another page itself, or stops following.
+    pub fn follow_participant(&mut self, peer: PeerId) -> Result<(), EngineError> {
+        let session = self
+            .collab_session
+            .as_mut()
+            .ok_or_else(|| refused("not in a session"))?;
+        let known = match &session.side {
+            Side::Host(host) => peer != PeerId::HOST && host.peers.contains_key(&peer),
+            Side::Guest(guest) => {
+                guest.me.map(|(me, _)| me) != Some(peer)
+                    && guest.roster.iter().any(|member| member.peer == peer)
+            }
+        };
+        if !known {
+            return Err(refused("no other participant has that number"));
+        }
+        session.follow = Some(Follow {
+            leader: peer,
+            placed: None,
+        });
+        self.emit(EngineEvent::SessionChanged);
+        self.follow_step();
+        Ok(())
+    }
+
+    /// Stops following anyone.
+    pub fn stop_following(&mut self) {
+        if let Some(session) = self.collab_session.as_mut() {
+            if session.follow.take().is_some() {
+                self.emit(EngineEvent::SessionChanged);
+            }
+        }
+    }
+
+    /// Whom this participant follows.
+    #[must_use]
+    pub fn following(&self) -> Option<PeerId> {
+        self.collab_session
+            .as_ref()?
+            .follow
+            .map(|follow| follow.leader)
+    }
+
+    /// An edit made here, by this participant: following ends, as typing does in Zed.
+    pub(crate) fn edited_here(&mut self) {
+        if self.following().is_some() {
+            self.stop_following();
+        }
+    }
+
+    /// Moves to the shared page the participant followed is on: through whom they follow in
+    /// turn, to whoever follows nobody; in a ring nobody leads, and nobody moves. Ends when the
+    /// participant has gone, or this one has chosen another page since following moved it.
+    fn follow_step(&mut self) {
+        let Some(session) = self.collab_session.as_ref() else {
+            return;
+        };
+        let Some(follow) = session.follow else {
+            return;
+        };
+        if follow
+            .placed
+            .is_some_and(|placed| self.active != Some(placed))
+        {
+            self.stop_following();
+            return;
+        }
+        // Each other participant's place, whom they follow, and whether they are connected.
+        let (me, places): (PeerId, BTreeMap<PeerId, Place>) = match &session.side {
+            Side::Host(host) => (
+                PeerId::HOST,
+                host.peers
+                    .iter()
+                    .map(|(peer, entry)| (*peer, (entry.place, entry.following, entry.connected)))
+                    .collect(),
+            ),
+            Side::Guest(guest) => (
+                guest.me.map_or(PeerId::HOST, |(me, _)| me),
+                guest
+                    .roster
+                    .iter()
+                    .map(|member| {
+                        (
+                            member.peer,
+                            (
+                                member.file,
+                                member.following,
+                                member.connected && guest.connected,
+                            ),
+                        )
+                    })
+                    .collect(),
+            ),
+        };
+        if !places.contains_key(&follow.leader) {
+            self.stop_following();
+            return;
+        }
+        let mut seen = BTreeSet::from([me]);
+        let mut at = follow.leader;
+        let target = loop {
+            if !seen.insert(at) {
+                break None;
+            }
+            let Some((file, following, connected)) = places.get(&at) else {
+                break None;
+            };
+            match following {
+                Some(next) => at = *next,
+                None => break file.filter(|_| *connected),
+            }
+        };
+        let Some(file) = target else {
+            // Nowhere to go: following stays where it is, and ends if the person moves.
+            self.set_placed(self.active);
+            return;
+        };
+        match self.session_document(file) {
+            Some(id) => {
+                if self.active != Some(id) {
+                    self.set_active(id);
+                }
+                self.set_placed(Some(id));
+            }
+            None => {
+                // A page this guest has not opened: the host sends it, and it is shown when
+                // it arrives.
+                let waiting = match self.collab_session.as_ref().map(|session| &session.side) {
+                    Some(Side::Guest(guest)) => guest.files.contains_key(&file),
+                    _ => true,
+                };
+                if !waiting {
+                    if self.open_session_file(file).is_err() {
+                        self.stop_following();
+                        return;
+                    }
+                    if let Some(Side::Guest(guest)) = self
+                        .collab_session
+                        .as_mut()
+                        .map(|session| &mut session.side)
+                    {
+                        if let Some(state) = guest.files.get_mut(&file) {
+                            state.show = true;
+                        }
+                    }
+                }
+                self.set_placed(None);
+            }
+        }
+    }
+
+    fn set_placed(&mut self, placed: Option<DocumentId>) {
+        if let Some(follow) = self
+            .collab_session
+            .as_mut()
+            .and_then(|session| session.follow.as_mut())
+        {
+            follow.placed = placed;
+        }
     }
 }

@@ -6432,6 +6432,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_copy_invitation))
             .on_action(cx.listener(Self::on_stop_sharing))
             .on_action(cx.listener(Self::on_leave_session))
+            .on_action(cx.listener(Self::on_stop_following))
             .on_action(cx.listener(Self::on_recover_unsaved))
             .on_action(cx.listener(Self::on_local_history))
             .on_action(cx.listener(Self::on_reload_settings))

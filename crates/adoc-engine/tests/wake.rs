@@ -559,3 +559,63 @@ fn a_shared_change_to_send_is_due_at_once() {
     engine.pump();
     assert!(engine.take_shared_updates(page).is_empty());
 }
+
+/// A participant's move to another shared page is due at once, to be told (#767): the host's
+/// own place is in the roster its guests are sent.
+#[cfg(feature = "collab")]
+#[test]
+fn a_move_to_another_shared_page_is_due_at_once() {
+    use std::{collections::VecDeque, sync::Mutex};
+
+    use adoc_engine::{
+        protocol::{ErrorCode, Message, PeerId},
+        Link, LinkError, LinkEvent,
+    };
+
+    struct Scripted(Arc<Mutex<VecDeque<LinkEvent>>>);
+    impl Link for Scripted {
+        fn try_recv(&mut self) -> Option<LinkEvent> {
+            self.0.lock().unwrap().pop_front()
+        }
+        fn send(&mut self, _: PeerId, _: Message) -> Result<(), LinkError> {
+            Ok(())
+        }
+        fn admit(&mut self, _: PeerId) -> Result<(), LinkError> {
+            Ok(())
+        }
+        fn remove(&mut self, _: PeerId, _: ErrorCode, _: &str) {}
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("one.adoc"), "= One\n").unwrap();
+    fs::write(directory.path().join("two.adoc"), "= Two\n").unwrap();
+    let mut engine = Engine::new(plain());
+    let peer = PeerId(1);
+    let events = Arc::new(Mutex::new(VecDeque::from([LinkEvent::Knock {
+        peer,
+        name: "guest".to_owned(),
+    }])));
+    engine
+        .host_session(
+            Box::new(Scripted(Arc::clone(&events))),
+            directory.path(),
+            &["one.adoc".into(), "two.adoc".into()],
+            "Host",
+        )
+        .unwrap();
+    engine.pump();
+    engine.admit_peer(peer).unwrap();
+    let one = engine.open(&directory.path().join("one.adoc")).unwrap();
+    let two = engine.open(&directory.path().join("two.adoc")).unwrap();
+    settle(&mut engine);
+    assert_eq!(engine.next_due(), None);
+
+    engine.set_active(one);
+    assert!(engine.next_due().is_some_and(|due| due <= Instant::now()));
+    engine.pump();
+    assert_eq!(engine.next_due(), None);
+    engine.set_active(two);
+    assert!(engine.next_due().is_some_and(|due| due <= Instant::now()));
+    engine.pump();
+    assert_eq!(engine.next_due(), None);
+}

@@ -70,6 +70,7 @@ actions!(
         CopyInvitation,
         StopSharing,
         LeaveSession,
+        StopFollowing,
         Quit,
         HideApp,
         HideOtherApps,
@@ -335,6 +336,7 @@ fn binding_for(id: CommandId, keys: &str, cx: &App) -> Option<KeyBinding> {
         ids::COLLAB_COPY_INVITATION => key_binding(keys, CopyInvitation, workspace, cx),
         ids::COLLAB_STOP => key_binding(keys, StopSharing, workspace, cx),
         ids::COLLAB_LEAVE => key_binding(keys, LeaveSession, workspace, cx),
+        ids::COLLAB_STOP_FOLLOWING => key_binding(keys, StopFollowing, workspace, cx),
         // From any window, the graph and the detached preview too: the app handles it.
         ids::APP_QUIT => key_binding(keys, Quit, None, cx),
         ids::SETTINGS_RELOAD => key_binding(keys, ReloadSettings, workspace, cx),
@@ -467,6 +469,7 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::COLLAB_COPY_INVITATION => Box::new(CopyInvitation),
         ids::COLLAB_STOP => Box::new(StopSharing),
         ids::COLLAB_LEAVE => Box::new(LeaveSession),
+        ids::COLLAB_STOP_FOLLOWING => Box::new(StopFollowing),
         ids::APP_QUIT => Box::new(Quit),
         ids::SETTINGS_RELOAD => Box::new(ReloadSettings),
         ids::VIEW_TOGGLE_PREVIEW => Box::new(TogglePreview),
@@ -650,6 +653,7 @@ mod tests {
             ids::COLLAB_REVOKE_EDIT,
             ids::COLLAB_REMOVE,
             ids::COLLAB_OPEN_FILE,
+            ids::COLLAB_FOLLOW,
         ];
         let engine = Engine::new(Settings::default());
         let missing: Vec<&str> = engine

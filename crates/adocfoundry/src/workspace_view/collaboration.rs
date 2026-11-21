@@ -15,7 +15,7 @@ use gpui::{AnyElement, ClipboardItem};
 
 use super::*;
 use crate::editor::bindings::{
-    CopyInvitation, JoinSession, LeaveSession, ShareWorkspace, StopSharing,
+    CopyInvitation, JoinSession, LeaveSession, ShareWorkspace, StopFollowing, StopSharing,
 };
 
 /// The arguments naming `peer` to the commands that act on a participant.
@@ -236,6 +236,16 @@ impl WorkspaceView {
             self.app.update(cx, |app, cx| app.end_transport(cx));
             window.push_notification("Sharing stopped.", cx);
         }
+    }
+
+    /// Stop Following: this participant's page no longer follows anyone's (#767).
+    pub(super) fn on_stop_following(
+        &mut self,
+        _: &StopFollowing,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.invoke(ids::COLLAB_STOP_FOLLOWING, CommandArgs::None, window, cx);
     }
 
     /// Leave Session: the connection closes; the shared tabs stay, no longer shared.

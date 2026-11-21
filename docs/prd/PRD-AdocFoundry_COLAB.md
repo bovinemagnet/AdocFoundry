@@ -452,6 +452,28 @@ Convergence, security, performance and release QA. The record is `docs/qa/collab
 - **The protocol changed** (`Components` in C7, `Update::base` here) and `PROTOCOL_VERSION` stays 1: no build with collaboration has been released, so no peer speaks the earlier form.
 - **Not done here:** the manual checks on three platforms in `docs/qa/collab.md`.
 
+### Following a participant (#767)
+
+A follow-on after COLLAB 8/8. Its engine side is `Engine::follow_participant`, `stop_following` and `following` (`collaboration.follow`, `collaboration.stop_following`), with tests in `crates/adoc-engine/tests/collab_follow.rs`.
+
+- **Everyone tells where they are.**
+  - A guest sends `Focus` (the shared file of the page it is on, or none, and whom it follows) whenever either changes, and again after resuming.
+  - The host tells the others in its `Roster`, its own place included, and `Participant` carries both.
+  - A host on an offered page no guest has opened yet is there all the same.
+  - On a page it does not share, it is elsewhere: no name or path of that page is sent (`a_host_on_a_page_it_does_not_share_is_elsewhere`).
+- **What everyone learns.** Each participant now knows which shared file each other one is in, always, where a caret was told only to those with the file open. Following needs this, and it names nothing outside the manifest.
+- **Following a follower** leads to whoever the chain ends at. In a ring nobody leads, so nobody moves, and the session comes to rest (`following_in_a_ring_settles`).
+- **A page not open yet:**
+  - A follower opens the leader's page, from the host if it is a guest's, and shows it when it arrives.
+  - A page the guest cannot open (past `MAX_OPEN_FILES`) ends following.
+- **When following ends:**
+  - an edit made here (typing, undo or redo), not another participant's;
+  - the person showing another page themselves, told from following's own moves by remembering the page following last showed;
+  - the leader leaving the session, or the session ending.
+  - A leader who is disconnected, or elsewhere, leaves the follower where it is.
+- **Pacing.** A `Focus` changes the roster, which the host sends at most once a pump to each peer and only when it changed, and the host reads at most `SESSION_EVENTS_PER_PUMP` events a pump. A guest's move is due at once (`a_move_to_another_shared_page_is_due_at_once` for the host's).
+- **The simulation** moves participants between pages and follows, and checks after each settle that a follower shows its leader's page (`check_following`).
+
 ## 15. References
 
 - Epic #686.

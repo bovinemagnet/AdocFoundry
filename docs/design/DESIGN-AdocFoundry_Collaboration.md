@@ -126,7 +126,8 @@ An unknown kind, malformed JSON, or a field outside its limit closes the connect
 | `Hello` | both | Protocol versions supported (`min`, `max`), the application's version, capabilities. The host answers with the version chosen, or `Error { incompatible }`, and both show it |
 | `Authenticate` | guest | The invitation secret or a resume token; a display name |
 | `Join` | host | The decision after Admit: `PeerId`, role, session id; or `Error { denied }` |
-| `Roster` | host | Who is in the session (each participant's `PeerId`, name, role and whether connected, the host first) and the shared folder's name; sent after `Join` and whenever it changes |
+| `Roster` | host | Who is in the session (each participant's `PeerId`, name, role, whether connected, the shared file they are in or none, and whom they follow, the host first) and the shared folder's name; sent after `Join` and whenever it changes |
+| `Focus` | guest | The shared file the guest is in, or none (on a page of its own, an image or nothing), and whom it follows; sent when either changes and again after `Join` or resuming; a file not in the manifest closes the connection. The host tells the others in its `Roster`, at most once a pump (#767) |
 | `Manifest` | host | The shared files: `SharedFileId`, root-relative display path, kind (page or partial), size; in parts of at most `MANIFEST_PART` files, `more` until the last, so each control part fits its two-byte length whatever the paths |
 | `Components` | host | The Antora component versions the shared files belong to: each one's folder from the shared root, name and version, words the protocol checks, and nothing else of its `antora.yml`; at most `MAX_COMPONENTS`, checked whole as it is built so it fits one frame; sent after the manifest (COLLAB 7/8) |
 | `OpenFile` | guest | A `SharedFileId` |
