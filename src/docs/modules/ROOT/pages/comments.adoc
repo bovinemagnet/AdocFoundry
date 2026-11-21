@@ -19,7 +19,8 @@ If nothing is selected, AdocFoundry asks you to select some text first.
 
 == Seeing comments in the editor
 
-Commented text is marked in the source editor with a fill, and a mark in the gutter.
+The source editor fills commented text and marks the gutter beside it.
+The visual editor fills the text of each open comment in the same colour; it has no gutter, so it shows no gutter mark.
 When the caret is inside a comment, the status bar says whose it is.
 
 *Edit › Next Comment* and *Edit › Previous Comment* move to the next or previous open comment, going round the page.

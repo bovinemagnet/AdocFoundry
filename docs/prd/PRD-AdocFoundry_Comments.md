@@ -304,3 +304,9 @@ Where the implementation departs from this design, or settles what it left open:
 - **Accessible labels:** each comment's card carries "Comment by <author> on “<quote>”", and every button its own selector. The editor's mark is never the only cue: the panel and the status bar name each comment.
 - **The visual editor** shows no marks yet; that is COMMENTS 4/4.
 - After a comment is sent or its box put away, the keyboard's focus goes back to the editor.
+
+### COMMENTS 4/4: the visual editor and the release record
+
+- **The visual editor** fills each open comment's text with the source editor's colour, laid over the text runs as misspellings' underlines are (`text::with_backgrounds`). A comment spanning several blocks fills its part of each. It has no gutter, so there is no gutter mark; the panel and the status bar name each comment.
+- **Comments are drawn only while the model shown is of the page's current version,** as misspellings are, so no mark is drawn on text the model has not caught up with.
+- **The release record** is `docs/qa/comments.md`: the coverage of every requirement by its tests, and the manual checks no test makes.
