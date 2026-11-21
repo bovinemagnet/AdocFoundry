@@ -113,8 +113,13 @@ impl Session {
             .1
     }
 
-    /// Pumps everyone until nothing is left in flight.
+    /// Pumps everyone until nothing is left in flight and nothing is due. Work due at once
+    /// (comments still to tell a guest, say) is due at the moment it was asked for, so the time
+    /// is read after asking. A deadline by an engine's own manual clock, which pumping does not
+    /// reach, stays "due" by the system's time: once nothing is in flight for a few rounds, the
+    /// session is at rest whatever such a deadline says.
     pub fn settle(&mut self) {
+        let mut quiet = 0;
         for _ in 0..1000 {
             self.host.pump();
             for (_, guest) in &mut self.guests {
@@ -123,14 +128,14 @@ impl Session {
             let net = self.net.lock().unwrap();
             let idle = net.to_host.is_empty() && net.to_guest.values().all(VecDeque::is_empty);
             drop(net);
-            // The time read after the deadline: work due at once is due at the moment it was
-            // asked, which a time read before would count as still to come.
             let rested = |engine: &Engine| {
                 engine
                     .next_due()
                     .is_none_or(|due| due > std::time::Instant::now())
             };
-            if idle && rested(&self.host) && self.guests.iter().all(|(_, guest)| rested(guest)) {
+            let due = !rested(&self.host) || self.guests.iter().any(|(_, guest)| !rested(guest));
+            quiet = if idle { quiet + 1 } else { 0 };
+            if idle && (!due || quiet >= 3) {
                 self.assert_no_host_paths();
                 return;
             }
