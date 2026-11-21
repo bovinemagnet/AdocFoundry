@@ -4,7 +4,7 @@ The release record for collaborative editing (COLLAB 8/8, #695; `docs/prd/PRD-Ad
 
 A case is marked passed only when a named test holds it, or a person has run it and recorded the result here. Nothing unverified is marked as passing.
 
-**State:** every automated row below passes on macOS. The manual checks have not been run yet. Two release decisions are open (see the end).
+**State:** every automated row below passes on macOS. The manual checks have not been run yet. One release decision is open (see the end).
 
 ## Coverage matrix
 
@@ -40,7 +40,7 @@ A case is marked passed only when a named test holds it, or a person has run it 
 | | Disk failure | `a_failed_save_keeps_the_file_and_the_shared_text` |
 | | Recovery | `a_guests_text_is_never_kept_for_recovery_but_the_hosts_is` |
 | Reliability | Disconnect and reconnect | `collab_loopback_session_syncs` (adoc-share), `a_reconnected_guest_delivers_each_edit_once`, `a_guest_away_through_a_new_epoch_catches_up`, `an_edit_waiting_when_the_link_drops_is_kept`, `a_snapshot_racing_a_resume_is_followed_by_a_resync`; the two-process suite |
-| | Guest crash | the two-process suite kills the guest on failure and the host carries on; a guest killed mid-session on a real machine: **manual** |
+| | Guest crash | **manual** (no test kills a guest mid-session; a dropped link, which the host sees the same way, is held by the reconnection tests above) |
 | | Host restart, epoch change | `collab_stale_epoch_is_refused`, `an_edit_crossing_a_reload_is_spent`, `stopping_closes_every_connection` |
 | | Slow or blocked participant | `collab_slow_peer_never_blocks_host`; held deliveries in the simulation |
 | Regression | Ordinary editing, undo and saves | `collab_off_changes_nothing`; the engine's whole suite |
@@ -76,6 +76,7 @@ Each threat, its defence, and the test that holds it. Defects found in `yrs` dur
 | A Viewer or revoked guest writing | Every update checked against the sender's current role; a guest cannot save | `collab_unauthorised_requests_are_refused`, `a_role_taken_away_while_edits_are_in_flight` |
 | Forged authorship | An update may create items only under the guest's own client id, and only one run from the host's clock for it | `collab_forged_author_is_refused`, `collab_authors_are_read_before_applying` |
 | Updates replayed across snapshots | Each update names the snapshot it was made on; earlier ones are discarded | `a_duplicate_after_a_snapshot_is_discarded` |
+| Guest pages parsed on every update (cost, not a breach) | Parsed once typing pauses | `a_guests_page_is_parsed_once_typing_pauses` |
 | Malformed or hostile CRDT data | A grammar check before `yrs` decodes anything; panics caught; the whole text compared after each remote update; a replica that may be wrong is poisoned and rebuilt in a new epoch | `collab_malformed_update_changes_nothing`, `an_update_splitting_a_character_poisons_the_replica`, `a_hostile_update_makes_the_host_rebuild_and_the_guest_start_again`; fuzz target `collab_update` |
 | Allocation bombs | Every count bounded by the bytes that follow; frames bounded before allocation | `counts_claiming_more_than_follows_are_refused`, `frames_over_the_limit_are_refused_before_reading`; fuzz target `collab_frame` |
 | Flooding | Bounded per-peer queues; a slow peer closed, never waited for; bounded events per pump | `collab_slow_peer_never_blocks_host`, `a_session_drains_a_bounded_number_of_events_a_pump` |
@@ -105,7 +106,6 @@ Run with two copies of the app on two machines on one local network, unless the 
 | Screen reader: the Session panel's participants, roles and caret places are read | [ ] | [ ] | [ ] |
 | Stop Sharing: guests are told, the port is closed | [ ] | [ ] | [ ] |
 
-## Open release decisions
+## Open release decision
 
-- **Remote updates on large pages.** After every remote update the replica's whole text is compared with the text it should be, a defence against the defects fuzzing found in `yrs`. On a 1 MiB page that costs about 5 ms an update (`docs/qa/collab-performance.md`), against the spike's budget of 50 µs; on pages of tens of kilobytes it is well under a millisecond. Keep the check, or narrow it (to resynchronisations and saves, with fuzzing standing for the rest)?
 - **Flatpak.** The Flatpak package has no network permission, so it cannot share or join. Add `--share=network` to its manifest, or document collaboration as unavailable there (as the user guide now does)?

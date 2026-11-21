@@ -197,8 +197,9 @@ fn micros(duration: Duration) -> String {
     format!("{:.1} µs", duration.as_secs_f64() * 1e6)
 }
 
-/// Typing latency on one document, with collaboration (the host of a session) or without.
-fn typing(shared: bool, size: usize) -> (Duration, Duration) {
+/// Typing latency on one document, with collaboration (the host of a session) or without, in
+/// the middle of the page or at its end.
+fn typing(shared: bool, size: usize, end: bool) -> (Duration, Duration) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("page.adoc");
     fs::write(&path, page(size)).unwrap();
@@ -215,10 +216,14 @@ fn typing(shared: bool, size: usize) -> (Duration, Duration) {
     }
     let mut samples = Vec::new();
     let middle = text(&engine, id).len() / 2;
-    let middle = text(&engine, id)[..middle]
-        .char_indices()
-        .last()
-        .map_or(0, |(at, _)| at);
+    let middle = if end {
+        text(&engine, id).len()
+    } else {
+        text(&engine, id)[..middle]
+            .char_indices()
+            .last()
+            .map_or(0, |(at, _)| at)
+    };
     for at in middle..middle + 2000 {
         let start = Instant::now();
         insert(&mut engine, id, at, "a");
@@ -238,10 +243,12 @@ fn typing(shared: bool, size: usize) -> (Duration, Duration) {
 fn collab_performance_probe() {
     println!("| Measure | Small page (4 KiB) | 1 MiB document |");
     println!("| --- | --- | --- |");
-    let (small_alone, small_alone_95) = typing(false, 4 << 10);
-    let (large_alone, large_alone_95) = typing(false, 1 << 20);
-    let (small_shared, small_shared_95) = typing(true, 4 << 10);
-    let (large_shared, large_shared_95) = typing(true, 1 << 20);
+    let (small_alone, small_alone_95) = typing(false, 4 << 10, false);
+    let (large_alone, large_alone_95) = typing(false, 1 << 20, false);
+    let (small_shared, small_shared_95) = typing(true, 4 << 10, false);
+    let (large_shared, large_shared_95) = typing(true, 1 << 20, false);
+    let (small_end, small_end_95) = typing(true, 4 << 10, true);
+    let (large_end, large_end_95) = typing(true, 1 << 20, true);
     println!(
         "| Typing, alone, p50 / p95 | {} / {} | {} / {} |",
         micros(small_alone),
@@ -255,6 +262,13 @@ fn collab_performance_probe() {
         micros(small_shared_95),
         micros(large_shared),
         micros(large_shared_95)
+    );
+    println!(
+        "| Typing at the end, hosting, p50 / p95 | {} / {} | {} / {} |",
+        micros(small_end),
+        micros(small_end_95),
+        micros(large_end),
+        micros(large_end_95)
     );
 
     let mut row = [String::new(), String::new(), String::new()];
@@ -272,8 +286,9 @@ fn collab_performance_probe() {
             .and_then(|rounds| rounds.parse().ok())
             .unwrap_or(200);
         for n in 0..rounds {
-            let before = text(&pair.host, host_doc);
-            let at = before.len();
+            // Lengths only: copying a 1 MiB text inside the timed window would be timed too.
+            let at = pair.host.document(host_doc).unwrap().text.len();
+            let wanted = at + 1;
             let start = Instant::now();
             insert(
                 &mut pair.host,
@@ -281,9 +296,8 @@ fn collab_performance_probe() {
                 at,
                 if n % 2 == 0 { "a" } else { "b" },
             );
-            let wanted = text(&pair.host, host_doc);
             until(&mut [&mut pair.host, &mut pair.guest], |engines| {
-                text(engines[1], guest_doc).len() == wanted.len()
+                engines[1].document(guest_doc).unwrap().text.len() == wanted
             });
             samples.push(start.elapsed());
         }

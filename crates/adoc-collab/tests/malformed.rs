@@ -242,10 +242,10 @@ fn an_update_splitting_a_character_poisons_the_replica() {
         .unwrap()
         .outbound
         .unwrap();
-    // The fuzzer's input: byte 0x8f % len set to 0x00, then 0x06 % len set to 0x10.
-    let len = honest.0.len();
-    honest.0[0x8f % len] = 0x00;
-    honest.0[0x06 % len] = 0x10;
+    // The fuzzer's two changes, at the places they fall now that the host's text is written
+    // under a client of its own (`Replica::new`): a byte set to 0x00, another to 0x10.
+    honest.0[0x03] = 0x00;
+    honest.0[0x0d] = 0x10;
     let mut guest = Peer::join(&host, 3);
     assert_eq!(
         guest
@@ -275,8 +275,10 @@ fn a_snapshot_that_would_rebuild_another_text_is_refused() {
         .unwrap()
         .outbound
         .unwrap();
-    let len = update.0.len();
-    update.0[8 % len] = 0x01;
+    // The fuzzer's change, at the place it falls now that the host's text is written under a
+    // client of its own (`Replica::new`).
+    update.0[0x0d] = 0x11;
+    let mut refused = 0;
     for sender in [Sender::Guest(id(2)), Sender::Host] {
         let mut receiver = Replica::from_snapshot(&snapshot, id(3)).unwrap();
         if receiver.apply_remote(&update, sender).is_err() {
@@ -287,7 +289,14 @@ fn a_snapshot_that_would_rebuild_another_text_is_refused() {
                 let copy = Replica::from_snapshot(&snapshot, id(4)).unwrap();
                 assert_eq!(copy.text(), receiver.text(), "{sender:?}");
             }
-            Err(error) => assert_eq!(error, CollabError::ProjectionMismatch, "{sender:?}"),
+            Err(error) => {
+                assert_eq!(error, CollabError::ProjectionMismatch, "{sender:?}");
+                refused += 1;
+            }
         }
     }
+    assert!(
+        refused > 0,
+        "the change no longer reaches the snapshot's check"
+    );
 }

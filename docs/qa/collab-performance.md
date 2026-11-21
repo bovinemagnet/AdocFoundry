@@ -14,31 +14,44 @@ cargo test --release -p adoc-share --test performance -- --ignored --nocapture
 
 | Measure | Small page (4 KiB) | 1 MiB document |
 | --- | --- | --- |
-| Typing, alone, p50 / p95 | 0.8 µs / 0.9 µs | 0.7 µs / 0.7 µs |
-| Typing, hosting, p50 / p95 | 4.5 µs / 5.7 µs | 3.6 µs / 4.9 µs |
-| Remote update, loopback, p50 / p95 | 75.6 µs / 85.4 µs | 5,133 µs / 5,303 µs |
+| Typing, alone, p50 / p95 | 0.8 µs / 0.8 µs | 0.7 µs / 0.8 µs |
+| Typing in the middle, hosting, p50 / p95 | 4.6 µs / 5.8 µs | 3.5 µs / 4.8 µs |
+| Typing at the end, hosting, p50 / p95 | 3.2 µs / 4.3 µs | 3.0 µs / 4.0 µs |
+| Remote update, loopback, p50 / p95 | 36.3 µs / 47.7 µs | 119.2 µs / 122.6 µs |
 | Initial snapshot | 4,121 B; joined in 3 ms | 1,048,604 B; joined in 13 ms |
 | Reconnection, one page | under 1 ms | 1 ms |
 
 | Measure | |
 | --- | --- |
-| Update per character typed | 16.4 B |
-| Update per 400-byte paragraph | 417 B |
-| Snapshot after 20,000 edits (half deletions) on a 64 KiB page | 108,157 B to 289,126 B |
+| Update per character typed | 29.9 B |
+| Update per 400-byte paragraph | 423 B |
+| Snapshot after 20,000 edits (half deletions) on a 64 KiB page | 110,904 B to 406,626 B |
 | Joining with ten 16 KiB pages open | 5 ms |
 
-Typing is the time `edit.insert_text` takes on the engine's thread, with the host's update taken for sending. A remote update runs from the host's keystroke until the guest's text shows it: the host's pump, the transport both ways, and the guest applying it.
+Typing is the time `edit.insert_text` takes on the engine's thread, with the host's update taken for sending. A remote update runs from the host's keystroke until the guest's rope has it: the host's pump, the transport both ways, and the guest applying it. The probe waits on the rope's length, so no copy of the text is timed.
 
 ## Against the budgets
 
 | Budget (spike) | Measured | |
 | --- | --- | --- |
-| Local typing on a shared 1 MiB page within the engine's `keystroke_insert` budget (100 µs) | 3.6 µs p50, 4.9 µs p95 | met |
-| A remote keystroke applied in under 50 µs | 76 µs on a small page over loopback, transport included; **5.1 ms on a 1 MiB page** | missed on large pages |
-| Update bytes per keystroke under 64 | 16.4 B | met |
+| Local typing on a shared 1 MiB page within the engine's `keystroke_insert` budget (100 µs) | 3.0–4.8 µs p95, middle or end | met |
+| A remote keystroke applied in under 50 µs | 36 µs on a small page, transport included; 119 µs on a 1 MiB page, transport included, of which the guest's apply is about 85 µs | met on small pages; about 1.7 times over on 1 MiB |
+| Update bytes per keystroke under 64 | 29.9 B | met |
 
-**The 1 MiB remote update.** With the guest's shared index refresh switched off, 4.9 ms of it remains. That remainder grows with the page and not with the edit, and the code points to the replica's checks after each remote update (`Replica::apply_remote`). A sample of the release build was taken without symbols, so this is an inference from the code, not a resolved profile. The whole text is rebuilt from `yrs` and compared with the text the update should give. This is the defence against the defects fuzzing found in `yrs` (COLLAB 2/8). The spike measured the replica alone with no such check, and expected whole-text checks only in tests, after a resynchronisation and before a save. The cost grows with the page, about 5 ms per MiB, so it is under half a millisecond on pages of tens of kilobytes. Keeping or narrowing the check is an open release decision (`docs/qa/collab.md`).
+## What the measurement found
 
-Refreshing the guest's shared index from the page's own parse, rather than parsing it again, took the same measure from 7.4 ms to 5.1 ms (COLLAB 8/8).
+The first measurements were far off two budgets. Both causes were in the engine, not in the defences, and both are fixed:
 
-**Growth.** Bytes per edit stay constant over a page's size and history: `collab_update_sizes_stay_small` holds them on every run (a character at most 32 bytes, a paragraph at most its length plus 32), so CI catches unbounded growth without timing anything. A long session's snapshot grows with its history of deletions, as the spike found (`a_long_session_grows_with_its_text` bounds it).
+- **A guest's page was parsed whole on every update.**
+  - A guest's shared page is an untitled document, and the engine refreshed an untitled document's diagnostics by parsing it whole after every edit.
+  - On a 1 MiB page that was 7.8 ms for each update from the host, and for each keystroke the guest made.
+  - The page is now parsed once typing pauses (`INDEX_SETTLE`), as an indexed page is indexed, and the guest's shared index with it (`a_guests_page_is_parsed_once_typing_pauses`).
+- **Typing at the end of a long page was proportional to the page.**
+  - The host's replica held the whole text under the host's own `yrs` client, and `yrs` merges a client's consecutive items.
+  - Each character typed at the end was merged into the whole text, which was split again for the next: 1.3 ms a keystroke at the end of 1 MiB, against 12 µs in the middle.
+  - `Replica::new` now writes the text under a client of its own, derived from the host's, which never types.
+  - The cost: each typed item names that client as its neighbour, so an update per character grew from 16 to 30 bytes, and a long session's snapshot grows faster. Both are within the budgets.
+
+Timed alone on a 1 MiB page, the replica's remote apply, whole-text check included, takes about 130 µs, and the engine's whole remote apply about 85 µs. The whole-text check stays as it is.
+
+**Growth.** Bytes per edit stay constant over a page's size and history. `collab_update_sizes_stay_small` holds them on every run (a character at most 32 bytes, a paragraph at most its length plus 32), so CI catches unbounded growth without timing anything. A long session's snapshot grows with its history of deletions, as the spike found (`a_long_session_grows_with_its_text` bounds it).

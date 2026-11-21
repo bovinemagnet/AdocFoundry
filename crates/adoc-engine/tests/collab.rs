@@ -390,9 +390,8 @@ fn a_hostile_update_makes_the_host_rebuild_and_the_guest_start_again() {
     // `an_update_splitting_a_character_poisons_the_replica`).
     replace(&mut pair.guest, pair.guest_doc, 8, 17, "Thé 🇬🇧");
     let mut honest = pair.guest.take_shared_updates(pair.guest_doc).remove(0);
-    let len = honest.0.len();
-    honest.0[0x8f % len] = 0x00;
-    honest.0[0x06 % len] = 0x10;
+    honest.0[0x03] = 0x00;
+    honest.0[0x0d] = 0x10;
     let before = text(&pair.host, pair.host_doc);
     let receipt = pair
         .host
@@ -433,8 +432,7 @@ fn a_snapshot_that_would_rebuild_another_text_makes_the_host_rebuild() {
     let mut pair = Pair::new("= Page\n\nUn café 👋\r\nMore.\n");
     replace(&mut pair.guest, pair.guest_doc, 8, 17, "Thé 🇬🇧");
     let mut update = pair.guest.take_shared_updates(pair.guest_doc).remove(0);
-    let len = update.0.len();
-    update.0[8 % len] = 0x01;
+    update.0[0x0d] = 0x11;
     let receipt = pair
         .host
         .apply_shared_update(pair.host_doc, 1, &update, Sender::Guest(id(2)))

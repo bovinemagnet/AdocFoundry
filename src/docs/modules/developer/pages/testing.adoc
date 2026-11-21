@@ -789,7 +789,7 @@ Collaborative editing is tested at three levels: an in-memory session, a simulat
 
 === The in-memory session
 
-`crates/adoc-engine/tests/collab_common/` runs a host and a guest engine over `adoc_collab::testing`'s `Net`.
+`crates/adoc-engine/tests/collab_common/` runs a host and a guest engine over the `Net` of `adoc_collab::testing`.
 Every message goes between them as an encoded frame.
 
 * `drop_link` drops a link.

@@ -1061,7 +1061,14 @@ impl Engine {
         let indexed = document.indexed();
         // What the change could re-diagnose, as the index stood before it.
         let mut before = None;
-        if untitled {
+        // A guest's shared page, edited a little: diagnosed once typing pauses, as an indexed
+        // page is indexed, not parsed whole on every keystroke or update from the host.
+        let settle_untitled = untitled && guest && defer_index;
+        if settle_untitled {
+            let deadline = self.clock.now() + INDEX_SETTLE;
+            self.pending_index.insert(id, deadline);
+        } else if untitled {
+            self.pending_index.remove(&id);
             document.diagnostics = document.parsed().diagnostics.clone();
         } else if !indexed {
             // Text that is not AsciiDoc: nothing to index or diagnose.
@@ -1094,7 +1101,7 @@ impl Engine {
         if !untitled {
             self.schedule_hunks(id, defer_index);
         }
-        if untitled {
+        if untitled && !settle_untitled {
             self.emit(EngineEvent::DiagnosticsUpdated { path });
         } else if let Some(before) = before.filter(|_| !self.applying) {
             self.refresh_diagnosed_with(&path, before);
@@ -1138,9 +1145,27 @@ impl Engine {
         ready.sort();
         ready.dedup();
         for id in &ready {
-            self.index_now(*id);
+            if !self.diagnose_untitled(*id) {
+                self.index_now(*id);
+            }
         }
         ready.len()
+    }
+
+    /// Diagnoses untitled document `id` from its own parse, which no index holds; whether it is
+    /// one.
+    fn diagnose_untitled(&mut self, id: DocumentId) -> bool {
+        let Some(document) = self
+            .documents
+            .get_mut(&id)
+            .filter(|document| document.untitled)
+        else {
+            return false;
+        };
+        document.diagnostics = document.parsed().diagnostics.clone();
+        let path = document.path.clone();
+        self.emit(EngineEvent::DiagnosticsUpdated { path });
+        true
     }
 
     /// Hands the pending documents whose deadline is at or before `due` to workers, which
@@ -1154,7 +1179,9 @@ impl Engine {
             .collect();
         for id in &ready {
             self.pending_index.remove(id);
-            self.start_settle(*id);
+            if !self.diagnose_untitled(*id) {
+                self.start_settle(*id);
+            }
         }
         ready.len()
     }

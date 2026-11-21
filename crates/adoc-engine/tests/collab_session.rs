@@ -1120,3 +1120,40 @@ fn collab_structural_commands_refused() {
         "{after:?}"
     );
 }
+
+/// A guest's shared page is parsed for its diagnostics once typing pauses, not on every update
+/// the host sends: a 1 MiB page would otherwise cost a whole parse per keystroke.
+#[test]
+fn a_guests_page_is_parsed_once_typing_pauses() {
+    use adoc_core::probe::{self, Probe};
+    let mut session = Session::new(&[("page.adoc", "= Page\n\nText.\n")]);
+    let clock = adoc_engine::ManualClock::new();
+    let mut settings = adoc_engine::Settings::load(None, None).unwrap();
+    settings.git.enabled = false;
+    let guest = adoc_engine::Engine::with_clock(settings, std::sync::Arc::new(clock.clone()));
+    let ada = session.knock_with(1, guest);
+    session.host.admit_peer(ada).unwrap();
+    session.settle();
+    session.engine(ada).open_session_file(1).unwrap();
+    session.settle();
+    let id = session.engine(ada).session_document(1).unwrap();
+
+    probe::reset();
+    let host = session.host_doc();
+    for n in 0..5 {
+        type_at(&mut session.host, host, 0, &n.to_string());
+        session.settle();
+    }
+    assert_eq!(session.guest_text(ada), session.host_text());
+    assert_eq!(probe::count(Probe::Parse), 0, "parsed while the host typed");
+
+    clock.advance(adoc_engine::INDEX_SETTLE);
+    session.settle();
+    assert_eq!(probe::count(Probe::Parse), 1, "parsed once typing paused");
+    assert!(session
+        .engine(ada)
+        .document(id)
+        .unwrap()
+        .text_string()
+        .starts_with("43210"));
+}

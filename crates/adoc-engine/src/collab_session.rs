@@ -2183,6 +2183,10 @@ impl Engine {
             let Some(document) = self.documents.get(&id) else {
                 continue;
             };
+            // While typing goes on the page is parsed once it pauses, the shared index with it.
+            if self.pending_index.contains_key(&id) {
+                continue;
+            }
             if guest.indexed.get(&id).map(|(version, _)| *version) != Some(document.version) {
                 // The document's own parse, shared with whatever else reads this version.
                 let parsed = document.parsed().clone();

@@ -221,8 +221,27 @@ impl Replica {
         }
         let replica = Self::empty(id);
         if !text.is_empty() {
+            // The text is written under a client of its own, which never types. `yrs` merges a
+            // client's consecutive items, so text typed at the end of a long page seeded under
+            // the typist's own client would merge into the whole page, and split it again, on
+            // every keystroke: 1.3 ms a character at the end of 1 MiB, against 12 µs elsewhere.
+            // Derived from the host's id, so the same text gives the same snapshot; the top bit
+            // flipped, so never the host's own, nor 0.
+            let seed = id.get() ^ (1 << 52);
+            let seed = ReplicaId::new(seed).unwrap_or(ReplicaId(seed | 1));
+            let mut options = Options::with_client_id(ClientID::new(seed.get()));
+            options.offset_kind = OffsetKind::Bytes;
+            let seeded = Doc::with_options(options);
+            let seeded_text = seeded.get_or_insert_text(TEXT);
+            seeded_text.insert(&mut seeded.transact_mut(), 0, text);
+            let update = seeded
+                .transact()
+                .encode_state_as_update_v1(&StateVector::default());
+            let update = Update::decode_v1(&update)
+                .map_err(|error| CollabError::MalformedUpdate(error.to_string()))?;
             let mut txn = replica.doc.transact_mut_with(INITIAL);
-            replica.text.insert(&mut txn, 0, text);
+            txn.apply_update(update)
+                .map_err(|error| CollabError::MalformedUpdate(error.to_string()))?;
         }
         replica.take_observed();
         replica.take_outgoing();

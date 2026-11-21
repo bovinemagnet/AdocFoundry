@@ -104,7 +104,7 @@ Every guest is treated as possibly modified, and everything it sends as untruste
 
 - `SessionId`: 128 random bits, per Share.
 - `PeerId`: a small number the host assigns at Admit, never reused in a session. The host owns `PeerId` 0.
-- `yrs` client id: the host assigns a random 53-bit id per peer per file epoch, distinct within the session, and tells the peer in `Snapshot`.
+- `yrs` client id: the host assigns a random 53-bit id per peer per snapshot, distinct within the session, and tells the peer in `Snapshot`. A file's text is seeded under a client of its own, derived from the host's by flipping its top bit, which never types: `yrs` merges a client's consecutive items, and text typed at the end of a long page seeded under the typist's own client would merge into the whole page on every keystroke (COLLAB 8/8).
 - `SharedFileId`: a counter the host assigns per session, opaque to guests.
 - `Epoch`: a number per shared file, starting at 1. It is bumped whenever the file's replica is rebuilt from text: a reload from disk, a host-initiated resynchronisation, or a projection failure.
 - None of these is the engine's `DocumentId` or `OpenDocument::version`, which stay local to a process and are never sent. A state vector is never treated as permission.
@@ -128,10 +128,11 @@ An unknown kind, malformed JSON, or a field outside its limit closes the connect
 | `Join` | host | The decision after Admit: `PeerId`, role, session id; or `Error { denied }` |
 | `Roster` | host | Who is in the session (each participant's `PeerId`, name, role and whether connected, the host first) and the shared folder's name; sent after `Join` and whenever it changes |
 | `Manifest` | host | The shared files: `SharedFileId`, root-relative display path, kind (page or partial), size; in parts of at most `MANIFEST_PART` files, `more` until the last, so each control part fits its two-byte length whatever the paths |
+| `Components` | host | The Antora component versions the shared files belong to: each one's folder from the shared root, name and version, words the protocol checks, and nothing else of its `antora.yml`; at most `MAX_COMPONENTS`, checked whole as it is built so it fits one frame; sent after the manifest (COLLAB 7/8) |
 | `OpenFile` | guest | A `SharedFileId` |
 | `CloseFile` | guest | A `SharedFileId` the guest no longer follows |
 | `Snapshot` | host | File id, epoch, the peer's client id for that epoch, the whole state as a `yrs` update |
-| `Update` | both | File id, epoch, a per-sender sequence number, a `yrs` update |
+| `Update` | both | File id, epoch, a per-sender sequence number, `base` (from a guest, the `client` of the snapshot the change was made on; from the host, 0), a `yrs` update |
 | `UpdateAck` | host | File id, epoch, the highest sequence number applied |
 | `Awareness` | both | File id, epoch, the participant's `PeerId` (the host sets it to the sender's when forwarding, whatever the guest wrote), the selection as two encoded sticky indexes; throttled to one per `AWARENESS_INTERVAL` |
 | `SaveRequest` | guest | File id, epoch, a request id |
@@ -145,7 +146,9 @@ An unknown kind, malformed JSON, or a field outside its limit closes the connect
 
 **Acknowledgements.**
 - The host acknowledges a guest's `Update` only after applying it (and forwarding it, if more guests exist).
-- Sequence numbers are per sender and per file, and start at 1 after every `Snapshot` the host sends that peer: a snapshot replaces whatever the receiver had, so what was in flight before it means nothing after. The host discards a guest's updates to a file after sending it a snapshot until one numbered 1 arrives; the guest numbers from 1 once it has applied the snapshot. Otherwise a gap or a repeat closes the connection. So does an update the receiver's replica does not admit (§6): on an ordered link a duplicate or reordered update is never honest.
+- Sequence numbers are per sender and per file, and start at 1 after every `Snapshot` the host sends that peer: a snapshot replaces whatever the receiver had, so what was in flight before it means nothing after. The host discards a guest's updates to a file after sending it a snapshot until one numbered 1 arrives; the guest numbers from 1 once it has applied the snapshot.
+- Numbers alone cannot tell an update sent before a snapshot from one after it, and an update that only deletes names no author, so each update names its snapshot's `client` as `base`. The host discards an update whose epoch or base is not the peer's latest, and one from the document's previous epoch when the host has started the file again and not yet told the peer; the new snapshot follows (COLLAB 8/8).
+- An update numbered below the next expected was applied already: after a reconnection the guest sends again the updates after the first acknowledgement it receives, and an acknowledgement sent over the new link may cross them. The host discards it. A gap closes the connection. So does an update the receiver's replica does not admit (§6).
 - An update from a peer whose role no longer allows editing (taken away while it was on its way) changes nothing; the host sends `Error { unauthorised }` and a new snapshot, and the guest starts again from the host's text.
 - The interface shows a guest's edit as Acknowledged once its sequence number is acknowledged. Acknowledged is not Saved (§10).
 
@@ -176,7 +179,8 @@ An unknown kind, malformed JSON, or a field outside its limit closes the connect
 **Disconnecting and reconnecting.**
 - A disconnected guest cannot edit. Its last text stays visible and copyable, marked unsaved, and no edit typed while disconnected is accepted.
 - While the session lives, the guest reconnects with its resume token, which the host's `Join` replaces. For each file the guest has open, the host sends `UpdateAck` with the last of the guest's updates it applied, and forwards nothing more to it yet. The guest keeps every update until it is acknowledged; it sends again those after the acknowledged one, then `Resync`, and the host answers with a checked `Snapshot`, which already holds them. So an edit made before the link dropped arrives once, and nothing the host sent while the guest was away is lost.
-- If the epoch no longer matches, the host sends the new epoch's `Snapshot` instead, and the guest's replica is rebuilt from it; its updates of the old epoch are dropped.
+- If the epoch no longer matches, the host sends the new epoch's `Snapshot` instead, and the guest's replica is rebuilt from it; its updates of the old epoch are dropped. A guest away when the epoch moved keeps its old epoch recorded on the host, so resuming always finds the difference; a `Resync` from an earlier epoch is answered with a snapshot too.
+- A guest's `Resync` sends its edits not yet sent first, so the snapshot answering holds them. A snapshot that reaches a resuming guest before the host has read its return is followed by a `Resync`, since the host's acknowledgement then waits to be asked (COLLAB 8/8).
 - A host restart is a new session; the guest rejoins explicitly with a new invitation.
 
 ## 9. The edit bridge (COLLAB 3/8)
@@ -220,7 +224,7 @@ An unknown kind, malformed JSON, or a field outside its limit closes the connect
 
 - **The manifest:** the host offers the `.adoc` pages and partials under the shared root that its catalog and index know, minus dotfiles, `.git`, `[workspace] ignore` folders and anything reached through a link leaving the root. Display paths are root-relative with `/`.
 - **The guest's engine:**
-  - It sees only the manifest's files, through a virtual-file resolver over the replicas it has open. It renders previews itself, from its own replica text.
+  - It sees only the manifest's files, through a virtual-file resolver over the replicas it has open: a folder of the session's in the temporary folder, never read from disk, with a catalog built from the manifest and `Components` and an index of the pages open (COLLAB 7/8). It renders previews itself, from its own replica text.
   - A cross reference or include to a file outside the manifest is an "unavailable" placeholder.
   - An image is its alt text with a placeholder: v1 shares no media.
   - Diagnostics are root-relative and never name a file outside the manifest.

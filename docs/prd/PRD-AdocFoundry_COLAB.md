@@ -429,16 +429,27 @@ Convergence, security, performance and release QA. The record is `docs/qa/collab
   - The schedule is generated before it runs, its positions fractions of the text, so a failing one is shrunk to the fewest steps that still fail.
   - The in-memory link loses what either side sends while a guest's link is down, as a closed connection does (`Net::down`).
   - A duplicated update may be refused, removing the guest, or discarded as stale. Either is right; convergence must hold.
+- **What the simulation does not cover**, and what holds each instead:
+  - **Visual edits and selections:** `collab_visual_edits_share_the_bridge`, `collab_remote_carets_follow_edits`.
+  - **Opening and closing files during a session:** `a_remote_tab_closed_can_be_opened_again`.
+  - **Frames reordered or invalid on the wire:** `duplicates_and_reordering_are_refused_unread` and the fuzz targets, since the transport delivers in order.
+  - **That versions only grow, and that epochs correspond:** not checked step by step; convergence and the replica checks would fail first.
+- **Seeds replay their schedule, not every byte.**
+  - Client ids are random, and the engines run on the wall clock.
+  - So a seed gives the same operations but not the same encodings, and an order between concurrent insertions may differ.
+  - Every failure found shrank to the same operations on each run.
 - **Undo is checked, redo is not.** An undo never takes away another participant's text. A redo may delete it again, as its author did.
 - **Two processes.** The guest is the test binary run again on an ignored test, since no shipped binary but the app carries collaboration (`collab_two_process_release_suite` in `adoc-share`). The rest of the matrix is held in process; `docs/qa/collab.md` names the tests.
-- **Performance.**
-  - Every budget is met but one: a remote update on a 1 MiB page takes about 5 ms against 50 µs, nearly all of it the replica's whole-text check after each remote update.
-  - Whether to keep or narrow that check is open.
+- **Performance: two engine faults found and fixed.**
+  - A guest's shared page, an untitled document, was parsed whole after every edit for its diagnostics: 7.8 ms for each update on a 1 MiB page. It is now parsed once typing pauses (`a_guests_page_is_parsed_once_typing_pauses`).
+  - Typing at the end of a long page cost time in proportion to the page, since `yrs` merged each typed character into the host's whole text, which was seeded under the host's own client. `Replica::new` now seeds the text under a client derived from the host's that never types. Updates grow from 16 to 30 bytes a character, within the budget.
+  - Every budget is now met but one: a remote update on a 1 MiB page takes 119 µs over loopback, transport included, against 50 µs; a small page's takes 36 µs. The replica's whole-text check costs about 130 µs on 1 MiB and stays.
   - Bytes per edit are held on every run (`collab_update_sizes_stay_small`); CI times nothing.
 - **Packaging.**
   - The macOS bundle says why it reaches the local network (`NSLocalNetworkUsageDescription`, `packaging/test_bundle.py`).
   - The Flatpak manifest has no network permission, so collaboration is unavailable there until decided.
-- **Not done here:** the manual checks on three platforms; the two open decisions in `docs/qa/collab.md`.
+- **The protocol changed** (`Components` in C7, `Update::base` here) and `PROTOCOL_VERSION` stays 1: no build with collaboration has been released, so no peer speaks the earlier form.
+- **Not done here:** the manual checks on three platforms, and the Flatpak decision in `docs/qa/collab.md`.
 
 ## 15. References
 
