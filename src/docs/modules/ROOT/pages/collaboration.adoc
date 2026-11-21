@@ -277,6 +277,53 @@ When someone leaves, or their connection drops, their caret and selection disapp
 If you are using an input method to compose text, such as Japanese or Chinese, or accents, your composition carries on when someone else edits elsewhere in the page.
 It is marked again where their edit moved it.
 
+== Following someone
+
+You can make your view follow another participant.
+It then goes where they go.
+
+=== Starting
+
+In the *Session* panel, each other participant who is connected has a *Follow* button.
+Choose it, and your view follows them.
+
+* When they move to another shared page, that page opens on your side and becomes your active page.
+* While they type and move, their caret stays in view.
+Your editor scrolls only when their caret would leave it.
+* If they are on a page that is not open on your side, it is fetched from the host and shown when it arrives.
+That happens for a guest.
+A host has every shared page already.
+
+The status bar says "Following" and their name.
+The button beside them in the *Session* panel then reads *Stop Following*.
+
+=== Following a follower
+
+If you follow someone who is following someone else, you go to whoever they follow.
+If people follow each other in a ring, nobody moves.
+
+=== Where people are
+
+The *Session* panel says which shared page each person is on, even when it is not open on your side.
+Everyone in a session can see which shared page each other person is on.
+A page that is not shared is never named.
+Someone on a page of their own shows as on no shared page.
+
+=== When following stops
+
+Following stops when you:
+
+* type or undo;
+* click or scroll in the editor;
+* choose another tab or page yourself;
+* choose *Stop Following*, beside them in the *Session* panel or in the *File* menu.
+
+Following also stops when the person leaves the session.
+If they disconnect, or move to a page that is not shared, your view stays where it is.
+
+Following does not send anything about your own caret beyond what is already shared.
+It does not change what you may edit.
+
 == Sharing a session or sharing a repository
 
 There are two ways for people to work on the same documentation.

@@ -12023,12 +12023,17 @@ fn pump_both(setup: &mut GuestSetup) {
 }
 
 fn guest_setup(cx: &mut TestAppContext) -> GuestSetup {
+    guest_setup_with(cx, "= Page\n")
+}
+
+/// [`guest_setup`] with the shared page's text.
+fn guest_setup_with(cx: &mut TestAppContext, page: &str) -> GuestSetup {
     use adoc_collab::testing::{GuestLink, HostLink, Net};
     use adoc_engine::{protocol::PeerId, LinkEvent};
 
     init(cx);
     let directory = tempfile::tempdir().unwrap();
-    std::fs::write(directory.path().join("page.adoc"), "= Page\n").unwrap();
+    std::fs::write(directory.path().join("page.adoc"), page).unwrap();
     let net = std::sync::Arc::new(std::sync::Mutex::new(Net::default()));
     let mut host = Engine::new(Settings::default().with_git_opt_in());
     host.host_session(
@@ -12209,6 +12214,88 @@ fn collab_remote_carets_follow_edits(cx: &mut TestAppContext) {
     let carets = setup.host.peer_carets(id);
     assert_eq!(carets.len(), 1);
     assert_eq!((carets[0].name.as_str(), carets[0].head), ("Ada", 3));
+}
+
+/// Following the host keeps its caret in view, scrolling once it leaves the view; a click in
+/// the editor stops following (#767).
+#[gpui::test]
+fn following_keeps_the_leaders_caret_in_view_and_a_click_stops_it(cx: &mut TestAppContext) {
+    use adoc_engine::protocol::PeerId;
+    use gpui_component::input::RopeExt as _;
+
+    let page: String = std::iter::once("= Page\n".to_owned())
+        .chain((1..=400).map(|line| format!("Line {line}.\n")))
+        .collect();
+    let mut setup = guest_setup_with(cx, &page);
+    let app = setup.app.clone();
+    let shown = setup.cx.update(|_, cx| setup.editor.read(cx).document());
+    setup.cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            // The page is shown, as its tab is in the app.
+            app.engine.set_active(shown);
+            app.invoke(
+                ids::COLLAB_FOLLOW,
+                CommandArgs::Custom(serde_json::json!({ "peer": 0 })),
+                cx,
+            )
+            .unwrap();
+        });
+    });
+    pump_both(&mut setup);
+    let following = |setup: &mut GuestSetup| {
+        let app = setup.app.clone();
+        setup.cx.update(|_, cx| app.read(cx).engine.following())
+    };
+    assert_eq!(following(&mut setup), Some(PeerId::HOST));
+
+    // The host's caret near the end: the guest's editor brings it into view.
+    let id = setup.host.session_document(1).unwrap();
+    let far = page.find("Line 380.").unwrap();
+    setup.host.share_selection(id, far, far);
+    pump_both(&mut setup);
+    let editor = setup.editor.clone();
+    let rows = setup.cx.update(|_, cx| {
+        let state = editor.read(cx).state_for_test().read(cx);
+        let line = state.text().offset_to_position(far).line as usize;
+        let row = state.display_map().buffer_line_to_display_row(line);
+        (state.visible_row_range(), row)
+    });
+    let (visible, row) = rows;
+    assert!(
+        visible.as_ref().is_some_and(|rows| rows.contains(&row)),
+        "row {row} not in {visible:?}"
+    );
+
+    // A click in the editor takes over.
+    let centre = setup.cx.update(|window, _| window.bounds().center());
+    setup
+        .cx
+        .simulate_mouse_down(centre, gpui::MouseButton::Left, gpui::Modifiers::none());
+    setup.cx.run_until_parked();
+    pump_both(&mut setup);
+    assert_eq!(following(&mut setup), None);
+
+    // Following again, a turn of the scroll wheel takes over too.
+    setup.cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::COLLAB_FOLLOW,
+                CommandArgs::Custom(serde_json::json!({ "peer": 0 })),
+                cx,
+            )
+            .unwrap();
+        });
+    });
+    pump_both(&mut setup);
+    assert_eq!(following(&mut setup), Some(PeerId::HOST));
+    setup.cx.simulate_event(gpui::ScrollEvent {
+        position: centre,
+        delta: gpui::ScrollDelta::Lines(gpui::point(0., 3.)),
+        ..Default::default()
+    });
+    setup.cx.run_until_parked();
+    pump_both(&mut setup);
+    assert_eq!(following(&mut setup), None);
 }
 
 /// An input method's composition goes on through another participant's edit before it, marked

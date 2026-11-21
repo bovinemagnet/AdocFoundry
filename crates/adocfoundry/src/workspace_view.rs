@@ -6185,6 +6185,15 @@ impl WorkspaceView {
                 .unwrap_or_default();
             Some(format!("{who} · {state}"))
         });
+        // Whom this participant follows (#767).
+        let following = engine.following().and_then(|leader| {
+            let name = engine
+                .participants()
+                .into_iter()
+                .find(|participant| participant.peer == leader)?
+                .name;
+            Some(format!("Following {name}"))
+        });
         StatusBar::new()
             .left(
                 div()
@@ -6220,6 +6229,14 @@ impl WorkspaceView {
                         .debug_selector(|| "status-shared".to_owned())
                         .text_xs()
                         .child(shared),
+                )
+            })
+            .when_some(following, |bar, following| {
+                bar.left(
+                    div()
+                        .debug_selector(|| "status-following".to_owned())
+                        .text_xs()
+                        .child(following),
                 )
             })
             .when(indexing, |bar| bar.left(div().text_xs().child("Indexing…")))
