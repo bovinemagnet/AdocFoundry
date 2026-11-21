@@ -3,9 +3,10 @@
 
 use adoc_collab::{
     protocol::{
-        decode, display_path, frame_length, Credential, ErrorCode, FileKind, FrameError,
-        ManifestFile, Message, PeerId, Role, SaveOutcome, Secret, SessionId, MANIFEST_PART,
-        MAX_CONTROL, MAX_FRAME, MAX_NAME, MAX_PATH, MAX_TEXT,
+        decode, display_path, frame_length, CommentChange, Credential, ErrorCode, FileKind,
+        FrameError, ManifestFile, Message, PeerId, Role, SaveOutcome, Secret, SessionId,
+        SharedReply, SharedResolution, SharedThread, MANIFEST_PART, MAX_COMMENT_REPLIES,
+        MAX_COMMENT_TEXT, MAX_CONTROL, MAX_FRAME, MAX_NAME, MAX_PATH, MAX_TEXT,
     },
     EncodedUpdate, RelativeSelection, Replica, ReplicaId, StateVectorBytes, MAX_UPDATE,
 };
@@ -75,7 +76,7 @@ fn every_message() -> Vec<Message> {
             file: 1,
             epoch: 1,
             peer: PeerId(2),
-            selection,
+            selection: selection.clone(),
         },
         Message::SaveRequest {
             file: 1,
@@ -178,8 +179,159 @@ fn every_message() -> Vec<Message> {
             code: ErrorCode::Slow,
             message: "too slow".to_owned(),
         },
+        Message::Comment {
+            file: 3,
+            epoch: 2,
+            request: 9,
+            change: CommentChange::Add {
+                text: "Why?\n\tSee below.".to_owned(),
+            },
+            selection: Some(selection.clone()),
+        },
+        Message::Comment {
+            file: 3,
+            epoch: 2,
+            request: 10,
+            change: CommentChange::Edit {
+                comment: 11,
+                reply: Some(12),
+                text: "Because.".to_owned(),
+            },
+            selection: None,
+        },
+        Message::Comment {
+            file: 3,
+            epoch: 2,
+            request: 11,
+            change: CommentChange::Resolve {
+                comment: 11,
+                resolved: true,
+            },
+            selection: None,
+        },
+        Message::CommentThread {
+            file: 3,
+            epoch: 2,
+            thread: thread(),
+            selection: Some(selection.clone()),
+        },
+        Message::CommentThread {
+            file: 3,
+            epoch: 2,
+            thread: SharedThread {
+                detached: true,
+                ..thread()
+            },
+            selection: None,
+        },
+        Message::CommentRemoved {
+            file: 3,
+            epoch: 2,
+            comment: 11,
+        },
+        Message::CommentRefused {
+            file: 3,
+            request: 9,
+            reason: "a Viewer cannot resolve comments".to_owned(),
+        },
         Message::Heartbeat,
     ]
+}
+
+fn thread() -> SharedThread {
+    SharedThread {
+        id: 11,
+        author: "Ada".to_owned(),
+        email: Some("ada@example.org".to_owned()),
+        created: 1_795_000_000,
+        edited: None,
+        quote: "Page".to_owned(),
+        text: "Why?".to_owned(),
+        resolved: Some(SharedResolution {
+            by: "Bea".to_owned(),
+            at: 1_795_000_100,
+        }),
+        detached: false,
+        replies: vec![SharedReply {
+            id: 12,
+            author: "Bea".to_owned(),
+            email: None,
+            created: 1_795_000_050,
+            edited: Some(1_795_000_060),
+            text: "Because.".to_owned(),
+        }],
+    }
+}
+
+#[test]
+fn comments_are_held_to_their_limits() {
+    let replica = Replica::new("= Page\n", ReplicaId::new(7).unwrap()).unwrap();
+    let selection = replica
+        .selection(2, 4, adoc_collab::Affinity::After)
+        .unwrap();
+    let add = |text: String, selection: Option<RelativeSelection>| Message::Comment {
+        file: 1,
+        epoch: 1,
+        request: 1,
+        change: CommentChange::Add { text },
+        selection,
+    };
+    assert!(add("x".repeat(MAX_COMMENT_TEXT), Some(selection.clone()))
+        .encode()
+        .is_ok());
+    for refused in [
+        add("x".repeat(MAX_COMMENT_TEXT + 1), Some(selection.clone())),
+        add("  ".to_owned(), Some(selection.clone())),
+        add("bell\u{7}".to_owned(), Some(selection.clone())),
+        add("No range.".to_owned(), None),
+        Message::Comment {
+            file: 1,
+            epoch: 1,
+            request: 1,
+            change: CommentChange::Delete {
+                comment: 1,
+                reply: None,
+            },
+            selection: Some(selection.clone()),
+        },
+        Message::CommentThread {
+            file: 1,
+            epoch: 1,
+            thread: SharedThread {
+                replies: vec![thread().replies[0].clone(); MAX_COMMENT_REPLIES + 1],
+                ..thread()
+            },
+            selection: Some(selection.clone()),
+        },
+        Message::CommentThread {
+            file: 1,
+            epoch: 1,
+            thread: SharedThread {
+                author: "a".repeat(MAX_NAME + 1),
+                ..thread()
+            },
+            selection: Some(selection.clone()),
+        },
+        Message::CommentThread {
+            file: 1,
+            epoch: 1,
+            thread: thread(),
+            selection: None,
+        },
+    ] {
+        assert!(refused.encode().is_err(), "{refused:?}");
+    }
+    // A thread's JSON that names a field it does not know is refused.
+    let frame = Message::CommentThread {
+        file: 1,
+        epoch: 1,
+        thread: thread(),
+        selection: Some(selection),
+    }
+    .encode()
+    .unwrap();
+    let text = String::from_utf8_lossy(&frame[4..]).replace("\"quote\"", "\"quota\"");
+    assert!(decode(text.as_bytes()).is_err());
 }
 
 #[test]

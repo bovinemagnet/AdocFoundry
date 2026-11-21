@@ -42,6 +42,16 @@ pub const MAX_PATH: usize = 1024;
 pub const MAX_NAME: usize = 64;
 /// The longest free text: a reason, a message or the application's version.
 pub const MAX_TEXT: usize = 512;
+/// The longest text of a comment or reply, in bytes, as a page's metadata file holds it.
+pub const MAX_COMMENT_TEXT: usize = 8 * 1024;
+/// The most replies a comment holds.
+pub const MAX_COMMENT_REPLIES: usize = 100;
+/// The most comments one shared file holds.
+pub const MAX_COMMENTS: usize = 500;
+/// The longest quoted text a comment carries, in bytes.
+pub const MAX_COMMENT_QUOTE: usize = 4 * 1024;
+/// The longest e-mail address, in bytes.
+pub const MAX_EMAIL: usize = 254;
 /// How long an invitation stays valid.
 pub const INVITE_LIFETIME: Duration = Duration::from_secs(10 * 60);
 /// How long a connection may take from accepting it to its `Authenticate`.
@@ -312,6 +322,33 @@ pub enum Message {
         file: Option<u64>,
         following: Option<PeerId>,
     },
+    /// A guest asks the host to change the comments of `file` (#762): the host decides, and
+    /// answers with the comments as they then stand, or `CommentRefused` naming `request`. An
+    /// `Add` carries the range commented on as `selection`; nothing else does.
+    Comment {
+        file: u64,
+        epoch: u32,
+        request: u64,
+        change: CommentChange,
+        selection: Option<RelativeSelection>,
+    },
+    /// One comment of `file` and its replies, as the host holds it, and where it is in the
+    /// shared text (`None` while detached). Sent after the file's snapshot, and again whenever
+    /// it changes.
+    CommentThread {
+        file: u64,
+        epoch: u32,
+        thread: SharedThread,
+        selection: Option<RelativeSelection>,
+    },
+    /// A comment of `file` was deleted.
+    CommentRemoved { file: u64, epoch: u32, comment: u64 },
+    /// The host refused a guest's `Comment` request, and why.
+    CommentRefused {
+        file: u64,
+        request: u64,
+        reason: String,
+    },
     /// Who is in the session, the host first, and the name of the folder shared; sent after
     /// `Join` and whenever it changes. Names are for showing only.
     Roster {
@@ -485,6 +522,106 @@ struct ComponentsControl {
     components: Vec<SharedComponent>,
 }
 
+/// What a guest asks of a file's comments; ids are the comments' and replies' own.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "kind")]
+pub enum CommentChange {
+    Add {
+        text: String,
+    },
+    Reply {
+        comment: u64,
+        text: String,
+    },
+    Resolve {
+        comment: u64,
+        resolved: bool,
+    },
+    Edit {
+        comment: u64,
+        reply: Option<u64>,
+        text: String,
+    },
+    Delete {
+        comment: u64,
+        reply: Option<u64>,
+    },
+}
+
+/// A comment as the host sends it: times are seconds since 1970, UTC.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SharedThread {
+    pub id: u64,
+    pub author: String,
+    pub email: Option<String>,
+    pub created: u64,
+    pub edited: Option<u64>,
+    pub quote: String,
+    pub text: String,
+    pub resolved: Option<SharedResolution>,
+    pub detached: bool,
+    pub replies: Vec<SharedReply>,
+}
+
+/// Who resolved a comment, and when.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SharedResolution {
+    pub by: String,
+    pub at: u64,
+}
+
+/// A reply to a comment, as the host sends it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SharedReply {
+    pub id: u64,
+    pub author: String,
+    pub email: Option<String>,
+    pub created: u64,
+    pub edited: Option<u64>,
+    pub text: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommentControl {
+    file: u64,
+    epoch: u32,
+    request: u64,
+    change: CommentChange,
+    /// The length of the selection's anchor in the payload, its head following; none without
+    /// a selection.
+    anchor: Option<u16>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommentThreadControl {
+    file: u64,
+    epoch: u32,
+    /// The lengths of the selection's anchor and head at the payload's start, the thread's
+    /// JSON following; none while detached.
+    anchor: Option<(u16, u16)>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommentRemovedControl {
+    file: u64,
+    epoch: u32,
+    comment: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommentRefusedControl {
+    file: u64,
+    request: u64,
+    reason: String,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FocusControl {
@@ -561,6 +698,10 @@ mod kind {
     pub const ROSTER: u8 = 19;
     pub const COMPONENTS: u8 = 20;
     pub const FOCUS: u8 = 21;
+    pub const COMMENT: u8 = 22;
+    pub const COMMENT_THREAD: u8 = 23;
+    pub const COMMENT_REMOVED: u8 = 24;
+    pub const COMMENT_REFUSED: u8 = 25;
 }
 
 impl Message {
@@ -713,6 +854,78 @@ impl Message {
                 })?,
                 Vec::new(),
             ),
+            Self::Comment {
+                file,
+                epoch,
+                request,
+                change,
+                selection,
+            } => {
+                let payload = selection.as_ref().map_or_else(Vec::new, |selection| {
+                    [selection.anchor.as_slice(), selection.head.as_slice()].concat()
+                });
+                (
+                    kind::COMMENT,
+                    json(&CommentControl {
+                        file: *file,
+                        epoch: *epoch,
+                        request: *request,
+                        change: change.clone(),
+                        anchor: selection
+                            .as_ref()
+                            .map(|selection| selection.anchor.len() as u16),
+                    })?,
+                    payload,
+                )
+            }
+            Self::CommentThread {
+                file,
+                epoch,
+                thread,
+                selection,
+            } => {
+                let mut payload = selection.as_ref().map_or_else(Vec::new, |selection| {
+                    [selection.anchor.as_slice(), selection.head.as_slice()].concat()
+                });
+                payload.extend(json(thread)?);
+                (
+                    kind::COMMENT_THREAD,
+                    json(&CommentThreadControl {
+                        file: *file,
+                        epoch: *epoch,
+                        anchor: selection.as_ref().map(|selection| {
+                            (selection.anchor.len() as u16, selection.head.len() as u16)
+                        }),
+                    })?,
+                    payload,
+                )
+            }
+            Self::CommentRemoved {
+                file,
+                epoch,
+                comment,
+            } => (
+                kind::COMMENT_REMOVED,
+                json(&CommentRemovedControl {
+                    file: *file,
+                    epoch: *epoch,
+                    comment: *comment,
+                })?,
+                Vec::new(),
+            ),
+            Self::CommentRefused {
+                file,
+                request,
+                reason,
+            } => (
+                kind::COMMENT_REFUSED,
+                json(&CommentRefusedControl {
+                    file: *file,
+                    request: *request,
+                    reason: reason.clone(),
+                })?,
+                Vec::new(),
+            ),
             Self::Roster { workspace, members } => (
                 kind::ROSTER,
                 json(&RosterControl {
@@ -838,6 +1051,35 @@ impl Message {
                     component.version.as_deref().map_or(Ok(()), component_word)
                 })
             }
+            Self::Comment {
+                change, selection, ..
+            } => {
+                let adding = matches!(change, CommentChange::Add { .. });
+                if adding != selection.is_some() {
+                    return Err(FrameError::Invalid("selection"));
+                }
+                if let Some(selection) = selection {
+                    anchors(selection)?;
+                }
+                match change {
+                    CommentChange::Add { text }
+                    | CommentChange::Reply { text, .. }
+                    | CommentChange::Edit { text, .. } => comment_text(text),
+                    CommentChange::Resolve { .. } | CommentChange::Delete { .. } => Ok(()),
+                }
+            }
+            Self::CommentThread {
+                thread, selection, ..
+            } => {
+                if let Some(selection) = selection {
+                    anchors(selection)?;
+                }
+                if thread.detached != selection.is_none() {
+                    return Err(FrameError::Invalid("selection"));
+                }
+                check_thread(thread)
+            }
+            Self::CommentRefused { reason, .. } => text(reason, MAX_TEXT, "reason"),
             Self::Roster { workspace, members } => {
                 text(workspace, MAX_TEXT, "workspace")?;
                 if members.len() > MAX_PARTICIPANTS {
@@ -877,6 +1119,7 @@ impl Message {
             | Self::SaveResult { .. }
             | Self::FileState { .. }
             | Self::Focus { .. }
+            | Self::CommentRemoved { .. }
             | Self::Heartbeat => Ok(()),
         }
     }
@@ -1015,6 +1258,92 @@ pub fn decode(frame: &[u8]) -> Result<Message, FrameError> {
             let FocusControl { file, following } = read(control)?;
             no_payload(Message::Focus { file, following })?
         }
+        kind::COMMENT => {
+            let CommentControl {
+                file,
+                epoch,
+                request,
+                change,
+                anchor,
+            } = read(control)?;
+            let selection = match anchor {
+                None if payload.is_empty() => None,
+                None => return Err(FrameError::Payload),
+                Some(anchor) => {
+                    let anchor = anchor as usize;
+                    if anchor > payload.len() {
+                        return Err(FrameError::Payload);
+                    }
+                    let (anchor, head) = payload.split_at(anchor);
+                    Some(RelativeSelection {
+                        anchor: anchor.to_vec(),
+                        head: head.to_vec(),
+                    })
+                }
+            };
+            Message::Comment {
+                file,
+                epoch,
+                request,
+                change,
+                selection,
+            }
+        }
+        kind::COMMENT_THREAD => {
+            let CommentThreadControl {
+                file,
+                epoch,
+                anchor,
+            } = read(control)?;
+            let (selection, rest) = match anchor {
+                None => (None, payload),
+                Some((anchor, head)) => {
+                    let (anchor, head) = (anchor as usize, head as usize);
+                    if anchor + head > payload.len() {
+                        return Err(FrameError::Payload);
+                    }
+                    let (anchor, rest) = payload.split_at(anchor);
+                    let (head, rest) = rest.split_at(head);
+                    (
+                        Some(RelativeSelection {
+                            anchor: anchor.to_vec(),
+                            head: head.to_vec(),
+                        }),
+                        rest,
+                    )
+                }
+            };
+            Message::CommentThread {
+                file,
+                epoch,
+                thread: read(rest)?,
+                selection,
+            }
+        }
+        kind::COMMENT_REMOVED => {
+            let CommentRemovedControl {
+                file,
+                epoch,
+                comment,
+            } = read(control)?;
+            no_payload(Message::CommentRemoved {
+                file,
+                epoch,
+                comment,
+            })?
+        }
+        kind::COMMENT_REFUSED => {
+            let CommentRefusedControl {
+                file,
+                request,
+                reason,
+            } = read(control)?;
+            no_payload(Message::CommentRefused {
+                file,
+                request,
+                reason,
+            })?
+        }
         kind::ROSTER => {
             let RosterControl { workspace, members } = read(control)?;
             no_payload(Message::Roster { workspace, members })?
@@ -1115,6 +1444,60 @@ fn component_word(word: &str) -> Result<(), FrameError> {
 }
 
 /// A display name: one line of printable text, not empty, at most [`MAX_NAME`] bytes.
+fn anchors(selection: &RelativeSelection) -> Result<(), FrameError> {
+    if selection.anchor.len() > MAX_ANCHOR || selection.head.len() > MAX_ANCHOR {
+        return Err(FrameError::TooLarge(
+            selection.anchor.len().max(selection.head.len()),
+        ));
+    }
+    Ok(())
+}
+
+/// A comment's or reply's text: some, within [`MAX_COMMENT_TEXT`], with no control character
+/// but line breaks and tabs.
+fn comment_text(value: &str) -> Result<(), FrameError> {
+    if value.len() > MAX_COMMENT_TEXT {
+        return Err(FrameError::TooLarge(value.len()));
+    }
+    if value.trim().is_empty()
+        || value
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\n' | '\t'))
+    {
+        return Err(FrameError::Invalid("text"));
+    }
+    Ok(())
+}
+
+fn email(value: Option<&str>) -> Result<(), FrameError> {
+    match value {
+        Some(value) if value.len() > MAX_EMAIL || value.chars().any(char::is_control) => {
+            Err(FrameError::Invalid("email"))
+        }
+        _ => Ok(()),
+    }
+}
+
+fn check_thread(thread: &SharedThread) -> Result<(), FrameError> {
+    display_name(&thread.author)?;
+    email(thread.email.as_deref())?;
+    comment_text(&thread.text)?;
+    if thread.quote.len() > MAX_COMMENT_QUOTE {
+        return Err(FrameError::TooLarge(thread.quote.len()));
+    }
+    if let Some(resolution) = &thread.resolved {
+        display_name(&resolution.by)?;
+    }
+    if thread.replies.len() > MAX_COMMENT_REPLIES {
+        return Err(FrameError::TooLarge(thread.replies.len()));
+    }
+    thread.replies.iter().try_for_each(|reply| {
+        display_name(&reply.author)?;
+        email(reply.email.as_deref())?;
+        comment_text(&reply.text)
+    })
+}
+
 fn display_name(name: &str) -> Result<(), FrameError> {
     if name.trim().is_empty() || name.len() > MAX_NAME || name.chars().any(char::is_control) {
         return Err(FrameError::Invalid("name"));
