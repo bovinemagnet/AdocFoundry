@@ -1095,6 +1095,11 @@ impl Engine {
         self.recovery_changed(id);
         // An edited page is kept open, even once undone.
         self.keep_open(id);
+        // Typing here, or undoing, ends following another participant (#767).
+        #[cfg(feature = "collab")]
+        if origin != EditOrigin::Remote {
+            self.edited_here();
+        }
         self.preview_source_changed(&path);
         self.visual_source_changed(&path);
         self.navigation_edited(id, &path, &forward);

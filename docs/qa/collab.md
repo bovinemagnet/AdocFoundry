@@ -76,6 +76,7 @@ Each threat, its defence, and the test that holds it. Defects found in `yrs` dur
 | A Viewer or revoked guest writing | Every update checked against the sender's current role; a guest cannot save | `collab_unauthorised_requests_are_refused`, `a_role_taken_away_while_edits_are_in_flight` |
 | Forged authorship | An update may create items only under the guest's own client id, and only one run from the host's clock for it | `collab_forged_author_is_refused`, `collab_authors_are_read_before_applying` |
 | Updates replayed across snapshots | Each update names the snapshot it was made on; earlier ones are discarded | `a_duplicate_after_a_snapshot_is_discarded` |
+| Where each participant is | Only the shared file's id, or none; a host on a page it does not share is elsewhere, and nothing sent names that page; a guest naming a file not shared closes its connection | `a_host_on_a_page_it_does_not_share_is_elsewhere`, `a_focus_on_a_file_not_shared_closes_the_connection` |
 | Guest pages parsed on every update (cost, not a breach) | Parsed once typing pauses | `a_guests_page_is_parsed_once_typing_pauses` |
 | Malformed or hostile CRDT data | A grammar check before `yrs` decodes anything; panics caught; the whole text compared after each remote update; a replica that may be wrong is poisoned and rebuilt in a new epoch | `collab_malformed_update_changes_nothing`, `an_update_splitting_a_character_poisons_the_replica`, `a_hostile_update_makes_the_host_rebuild_and_the_guest_start_again`; fuzz target `collab_update` |
 | Allocation bombs | Every count bounded by the bytes that follow; frames bounded before allocation | `counts_claiming_more_than_follows_are_refused`, `frames_over_the_limit_are_refused_before_reading`; fuzz target `collab_frame` |
@@ -104,6 +105,7 @@ Run with two copies of the app on two machines on one local network, unless the 
 | The host saves; the guest's status bar shows Saved; the file on disk is the text | [ ] | [ ] | [ ] |
 | Change a shared file in another editor; the host is asked which to keep | [ ] | [ ] | [ ] |
 | Screen reader: the Session panel's participants, roles and caret places are read | [ ] | [ ] | [ ] |
+| Follow someone moving between pages and typing: your view goes with them and keeps their caret in view; a click, a scroll or typing ends it (#767) | [ ] | [ ] | [ ] |
 | Stop Sharing: guests are told, the port is closed | [ ] | [ ] | [ ] |
 | The Flatpak package shares and joins on the local network (Linux only) | | | [ ] |
 

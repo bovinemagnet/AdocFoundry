@@ -123,12 +123,9 @@ impl Session {
             let net = self.net.lock().unwrap();
             let idle = net.to_host.is_empty() && net.to_guest.values().all(VecDeque::is_empty);
             drop(net);
-            if idle
-                && self
-                    .host
-                    .next_due()
-                    .is_none_or(|due| due > std::time::Instant::now())
-            {
+            let now = std::time::Instant::now();
+            let rested = |engine: &Engine| engine.next_due().is_none_or(|due| due > now);
+            if idle && rested(&self.host) && self.guests.iter().all(|(_, guest)| rested(guest)) {
                 self.assert_no_host_paths();
                 return;
             }

@@ -15,7 +15,7 @@ use gpui::{AnyElement, ClipboardItem};
 
 use super::*;
 use crate::editor::bindings::{
-    CopyInvitation, JoinSession, LeaveSession, ShareWorkspace, StopSharing,
+    CopyInvitation, JoinSession, LeaveSession, ShareWorkspace, StopFollowing, StopSharing,
 };
 
 /// The arguments naming `peer` to the commands that act on a participant.
@@ -41,11 +41,12 @@ fn swatch(peer: PeerId, cx: &App) -> gpui::Div {
         .bg(crate::collaboration::peer_colour(peer, cx))
 }
 
-/// Where `peer`'s caret is, said in words (` · page.adoc, line 12`), so their colour is never
-/// all that tells their caret apart; empty when it is in no open shared file.
-fn caret_place(engine: &adoc_engine::Engine, peer: PeerId) -> String {
-    engine
-        .session_manifest()
+/// Where `peer` is, said in words (` · page.adoc, line 12`), so their colour is never all that
+/// tells their caret apart: the line of their caret in a page open here, else only the shared
+/// page they say they are on (`place`); empty when they are on none.
+fn caret_place(engine: &adoc_engine::Engine, peer: PeerId, place: Option<u64>) -> String {
+    let manifest = engine.session_manifest();
+    manifest
         .iter()
         .find_map(|entry| {
             let id = engine.session_document(entry.file)?;
@@ -57,6 +58,10 @@ fn caret_place(engine: &adoc_engine::Engine, peer: PeerId) -> String {
             let line =
                 text.byte_to_line_idx(caret.head.min(text.len()), ropey::LineType::LF_CR) + 1;
             Some(format!(" · {}, line {line}", entry.path))
+        })
+        .or_else(|| {
+            let entry = manifest.iter().find(|entry| Some(entry.file) == place)?;
+            Some(format!(" · {}", entry.path))
         })
         .unwrap_or_default()
 }
@@ -236,6 +241,16 @@ impl WorkspaceView {
             self.app.update(cx, |app, cx| app.end_transport(cx));
             window.push_notification("Sharing stopped.", cx);
         }
+    }
+
+    /// Stop Following: this participant's page no longer follows anyone's (#767).
+    pub(super) fn on_stop_following(
+        &mut self,
+        _: &StopFollowing,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.invoke(ids::COLLAB_STOP_FOLLOWING, CommandArgs::None, window, cx);
     }
 
     /// Leave Session: the connection closes; the shared tabs stay, no longer shared.
@@ -470,6 +485,25 @@ impl WorkspaceView {
                         this.invoke(command, args.clone(), window, cx);
                     }))
             };
+        // Follow, or Stop Following for the one followed (#767).
+        let following = engine.following();
+        let follow = |peer: PeerId| {
+            if following == Some(peer) {
+                action(
+                    format!("session-follow-{}", peer.0),
+                    "Stop Following",
+                    ids::COLLAB_STOP_FOLLOWING,
+                    CommandArgs::None,
+                )
+            } else {
+                action(
+                    format!("session-follow-{}", peer.0),
+                    "Follow",
+                    ids::COLLAB_FOLLOW,
+                    peer_args(peer),
+                )
+            }
+        };
         if engine.is_session_host() {
             let collaboration = &app.collaboration;
             let address = collaboration
@@ -592,8 +626,9 @@ impl WorkspaceView {
                             "{} · {} · {status}{}",
                             participant.name,
                             role_name(participant.role),
-                            caret_place(engine, peer)
+                            caret_place(engine, peer, participant.place)
                         )))
+                        .when(participant.connected, |row| row.child(follow(peer)))
                         .child(action(
                             format!("session-role-{}", peer.0),
                             label,
@@ -748,9 +783,12 @@ impl WorkspaceView {
                                 if you {
                                     String::new()
                                 } else {
-                                    caret_place(engine, peer)
+                                    caret_place(engine, peer, participant.place)
                                 }
-                            )),
+                            ))
+                            .when(!you && participant.connected && connected, |row| {
+                                row.child(follow(peer))
+                            }),
                     );
                 }
             }

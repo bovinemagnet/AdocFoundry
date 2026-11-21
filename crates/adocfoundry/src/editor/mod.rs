@@ -342,9 +342,11 @@ impl SourceEditorView {
                 EngineEvent::SessionChanged => {
                     this.sync_readonly(cx);
                     this.show_presence(cx);
+                    this.follow_caret(cx);
                 }
                 EngineEvent::PresenceChanged(id) if *id == this.document => {
                     this.show_presence(cx);
+                    this.follow_caret(cx);
                 }
                 EngineEvent::GitHunksChanged(id) | EngineEvent::GitBlameChanged(id)
                     if *id == this.document =>
@@ -728,6 +730,47 @@ impl SourceEditorView {
         // The editor would scroll only far enough to bring the caret to an edge, which can
         // leave it just out of view; the place navigated to goes near the top instead.
         self.scroll_to_line_of(range.start, REVEAL_MARGIN, cx);
+    }
+
+    /// While this participant follows another on this page, keeps their caret in view: the
+    /// editor scrolls only once it would leave it (#767).
+    fn follow_caret(&self, cx: &mut Context<Self>) {
+        let app = self.app.read(cx);
+        let engine = &app.engine;
+        let Some(leader) = engine.following() else {
+            return;
+        };
+        if engine.active() != Some(self.document) {
+            return;
+        }
+        let Some(caret) = engine
+            .peer_carets(self.document)
+            .into_iter()
+            .find(|caret| caret.peer == leader)
+        else {
+            return;
+        };
+        let state = self.state.read(cx);
+        let text = state.text();
+        let line = text.offset_to_position(caret.head.min(text.len())).line as usize;
+        let row = state.display_map().buffer_line_to_display_row(line);
+        if state
+            .visible_row_range()
+            .is_some_and(|rows| rows.contains(&row))
+        {
+            return;
+        }
+        self.scroll_to_line_of(caret.head, REVEAL_MARGIN, cx);
+    }
+
+    /// The person scrolled or clicked in the editor: following another participant ends, as
+    /// in Zed (#767).
+    fn took_over(&mut self, cx: &mut Context<Self>) {
+        if self.app.read(cx).engine.following().is_some() {
+            self.app.update(cx, |app, cx| {
+                let _ = app.invoke(ids::COLLAB_STOP_FOLLOWING, CommandArgs::None, cx);
+            });
+        }
     }
 
     /// Scrolls so the line holding `offset` is at the top, leaving the caret where it is.
@@ -1199,6 +1242,26 @@ impl Render for SourceEditorView {
             .flex_1()
             .min_w_0()
             .h_full()
+            .capture_any_mouse_down(cx.listener(|this, _, _, cx| this.took_over(cx)))
+            .child({
+                // The editor handles the wheel itself and keeps it from its parent, so the turn
+                // is caught before it, in the capture phase.
+                let this = cx.entity().downgrade();
+                gpui::canvas(
+                    |_, _, _| {},
+                    move |bounds, (), window, _| {
+                        window.on_mouse_event(move |event: &gpui::ScrollEvent, phase, _, cx| {
+                            if phase == gpui::DispatchPhase::Capture
+                                && bounds.contains(&event.position)
+                            {
+                                let _ = this.update(cx, |this, cx| this.took_over(cx));
+                            }
+                        });
+                    },
+                )
+                .absolute()
+                .size_full()
+            })
             .child(
                 Editor::new(&self.state)
                     .bordered(false)

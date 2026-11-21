@@ -117,6 +117,16 @@ enum Op {
     Reload {
         file: u64,
     },
+    /// An actor shows another shared page, as choosing its tab does.
+    GoTo {
+        actor: u8,
+        file: u64,
+    },
+    /// An actor follows another participant (#767); following itself, it stops.
+    Follow {
+        actor: u8,
+        leader: u8,
+    },
     /// One update a guest sent reaches the host a second time.
     Duplicate {
         guest: u8,
@@ -130,7 +140,7 @@ fn schedule(seed: u64, steps: usize) -> Vec<Op> {
             let actor = rng.below(3) as u8;
             let guest = 1 + rng.below(2) as u8;
             let file = 1 + rng.below(2);
-            match rng.below(100) {
+            match rng.below(110) {
                 0..=44 => Op::Edit {
                     actor,
                     file,
@@ -155,7 +165,12 @@ fn schedule(seed: u64, steps: usize) -> Vec<Op> {
                 90..=92 => Op::Role { guest },
                 93..=95 => Op::Save { file },
                 96..=97 => Op::Reload { file },
-                _ => Op::Duplicate { guest },
+                98..=99 => Op::Duplicate { guest },
+                100..=104 => Op::GoTo { actor, file },
+                _ => Op::Follow {
+                    actor,
+                    leader: rng.below(3) as u8,
+                },
             }
         })
         .collect()
@@ -305,6 +320,67 @@ impl Simulation {
         Ok(())
     }
 
+    /// The shared file `actor` shows.
+    fn shown(&mut self, actor: Actor) -> Option<u64> {
+        let engine = self.engine(actor);
+        let active = engine.active()?;
+        [1, 2]
+            .into_iter()
+            .find(|file| engine.session_document(*file) == Some(active))
+    }
+
+    /// Whether `actor` takes part now: not removed, and its link up.
+    fn connected(&self, actor: Actor) -> bool {
+        match actor {
+            Actor::Host => true,
+            Actor::Guest(peer) => !self.removed(peer) && !self.offline.contains(&peer),
+        }
+    }
+
+    /// Everyone following someone, once settled, shows the page of whoever leads the chain they
+    /// follow along, when that one is connected and on a shared page; in a ring nobody moves.
+    fn check_following(&mut self) -> Checked {
+        let actors = self.actors();
+        let of = |peer: PeerId| {
+            if peer == PeerId::HOST {
+                Actor::Host
+            } else {
+                Actor::Guest(peer)
+            }
+        };
+        for actor in actors {
+            if !self.connected(actor) {
+                continue;
+            }
+            let Some(mut at) = self.engine(actor).following() else {
+                continue;
+            };
+            let mut seen = vec![actor];
+            let root = loop {
+                let leader = of(at);
+                if seen.contains(&leader) || !self.connected(leader) {
+                    break None;
+                }
+                seen.push(leader);
+                match self.engine(leader).following() {
+                    Some(next) => at = next,
+                    None => break Some(leader),
+                }
+            };
+            let Some(root) = root else { continue };
+            let Some(file) = self.shown(root) else {
+                continue;
+            };
+            if self.shown(actor) != Some(file) {
+                return Err(format!(
+                    "{actor:?} follows towards {root:?}, on file {file}, but shows {:?}",
+                    self.shown(actor)
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Every guest connected and not removed holds each page's text as the host does.
     fn check_converged(&mut self) -> Checked {
         for file in [1, 2] {
@@ -419,6 +495,7 @@ impl Simulation {
                 if !self.held() {
                     self.session.settle();
                     self.check_converged()?;
+                    self.check_following()?;
                 }
             }
             Op::Drop { guest, lost } => {
@@ -480,6 +557,28 @@ impl Simulation {
                     .host
                     .resolve_disk_conflict(id, DiskResolution::ReloadDisk);
             }
+            Op::GoTo { actor: n, file } => {
+                let actor = actor(n);
+                if self.present(actor) {
+                    if let Some(id) = self.document(actor, file) {
+                        self.engine(actor).set_active(id);
+                    }
+                }
+            }
+            Op::Follow { actor: n, leader } => {
+                let actor = actor(n);
+                if self.present(actor) {
+                    if leader == n {
+                        self.engine(actor).stop_following();
+                    } else {
+                        let leader = match self::actor(leader) {
+                            Actor::Host => PeerId::HOST,
+                            Actor::Guest(peer) => peer,
+                        };
+                        let _ = self.engine(actor).follow_participant(leader);
+                    }
+                }
+            }
             Op::Duplicate { guest } => {
                 let peer = GUESTS[usize::from(guest - 1)];
                 if self.duplicated.is_some() {
@@ -521,6 +620,7 @@ impl Simulation {
         self.heal();
         self.check_replicas()?;
         self.check_converged()?;
+        self.check_following()?;
         for (peer, _) in self.session.removed() {
             if self.duplicated != Some(peer) {
                 return Err(format!("the host removed {peer:?}, who did nothing wrong"));
@@ -726,6 +826,28 @@ fn a_duplicate_after_a_snapshot_is_discarded() {
         Op::Role { guest: 1 },
         Op::Pump { actor: 1 },
         Op::Duplicate { guest: 1 },
+    ]);
+}
+
+/// A follower of a follower moves with the chain when the follower in the middle stops by
+/// showing another page itself: it leads now.
+#[test]
+fn a_follower_follows_on_when_its_leader_stops_following() {
+    converges(&[
+        Op::Follow {
+            actor: 1,
+            leader: 0,
+        },
+        Op::Follow {
+            actor: 2,
+            leader: 1,
+        },
+        Op::GoTo { actor: 1, file: 2 },
+        Op::Settle,
+        Op::GoTo { actor: 0, file: 1 },
+        Op::Settle,
+        Op::GoTo { actor: 1, file: 2 },
+        Op::Pump { actor: 2 },
     ]);
 }
 

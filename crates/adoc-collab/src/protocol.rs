@@ -160,6 +160,10 @@ pub struct Member {
     pub role: Role,
     /// Whether their link is up.
     pub connected: bool,
+    /// The shared file they are in, when the page they are on is one; `None` elsewhere.
+    pub file: Option<u64>,
+    /// Whom they follow, if anyone.
+    pub following: Option<PeerId>,
 }
 
 /// An Antora component version the shared files belong to, as much as a guest needs to resolve
@@ -300,6 +304,13 @@ pub enum Message {
     /// The Antora component versions the manifest's files belong to; sent after the manifest.
     Components {
         components: Vec<SharedComponent>,
+    },
+    /// Where a guest is: the shared file of the page it is on (`None` when on a page of its own
+    /// or none), and whom it follows; sent when either changes and after resuming. The host
+    /// tells the others in its `Roster`.
+    Focus {
+        file: Option<u64>,
+        following: Option<PeerId>,
     },
     /// Who is in the session, the host first, and the name of the folder shared; sent after
     /// `Join` and whenever it changes. Names are for showing only.
@@ -476,6 +487,13 @@ struct ComponentsControl {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct FocusControl {
+    file: Option<u64>,
+    following: Option<PeerId>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RosterControl {
     workspace: String,
     members: Vec<Member>,
@@ -542,6 +560,7 @@ mod kind {
     pub const FILE_STATE: u8 = 18;
     pub const ROSTER: u8 = 19;
     pub const COMPONENTS: u8 = 20;
+    pub const FOCUS: u8 = 21;
 }
 
 impl Message {
@@ -683,6 +702,14 @@ impl Message {
                 kind::COMPONENTS,
                 json(&ComponentsControl {
                     components: components.clone(),
+                })?,
+                Vec::new(),
+            ),
+            Self::Focus { file, following } => (
+                kind::FOCUS,
+                json(&FocusControl {
+                    file: *file,
+                    following: *following,
                 })?,
                 Vec::new(),
             ),
@@ -849,6 +876,7 @@ impl Message {
             | Self::SaveRequest { .. }
             | Self::SaveResult { .. }
             | Self::FileState { .. }
+            | Self::Focus { .. }
             | Self::Heartbeat => Ok(()),
         }
     }
@@ -982,6 +1010,10 @@ pub fn decode(frame: &[u8]) -> Result<Message, FrameError> {
         kind::COMPONENTS => {
             let ComponentsControl { components } = read(control)?;
             no_payload(Message::Components { components })?
+        }
+        kind::FOCUS => {
+            let FocusControl { file, following } = read(control)?;
+            no_payload(Message::Focus { file, following })?
         }
         kind::ROSTER => {
             let RosterControl { workspace, members } = read(control)?;

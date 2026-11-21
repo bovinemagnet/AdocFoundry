@@ -80,6 +80,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::COLLAB_COPY_INVITATION),
             Command(ids::COLLAB_STOP),
             Command(ids::COLLAB_LEAVE),
+            Command(ids::COLLAB_STOP_FOLLOWING),
             Separator,
             Command(ids::DOCUMENT_SAVE),
             Command(ids::DOCUMENT_SAVE_ALL),
