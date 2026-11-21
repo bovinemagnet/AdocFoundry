@@ -501,7 +501,7 @@ macro_rules! comment_commands {
 }
 
 comment_commands! {
-    add_comment: ids::COMMENTS_ADD, "Add Comment", Some("secondary-alt-m");
+    add_comment: ids::COMMENTS_ADD, "Add Comment", Some("cmd-alt-m");
     reply_to_comment: ids::COMMENTS_REPLY, "Reply to Comment", None;
     resolve_comment: ids::COMMENTS_RESOLVE, "Resolve Comment", None;
     reopen_comment: ids::COMMENTS_REOPEN, "Reopen Comment", None;

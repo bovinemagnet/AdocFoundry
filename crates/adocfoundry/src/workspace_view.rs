@@ -57,6 +57,7 @@ use crate::{
 
 mod build_site;
 mod collaboration;
+mod comments;
 mod delete_file;
 mod file_actions;
 mod font_picker;
@@ -134,6 +135,8 @@ enum SidebarTab {
     Impact,
     /// Shown while a collaboration session runs.
     Session,
+    /// Shown while the active page has comments, or one is being written (#762).
+    Comments,
 }
 
 /// What a tab shows: a page's source editor, or an image.
@@ -232,6 +235,8 @@ pub struct WorkspaceView {
     /// The tab last right-clicked, which the tab strip's menu acts on; `None` over empty strip.
     tab_menu_target: Rc<Cell<Option<TabItem>>>,
     sidebar_tab: SidebarTab,
+    /// The Comments panel's box being written in, and whether resolved comments show.
+    comments: comments::CommentsPanel,
     navigation: Entity<TreeState>,
     families: Entity<TreeState>,
     /// The rows of Navigation and Modules as last built, kept to show again when a bulk
@@ -706,6 +711,7 @@ impl WorkspaceView {
             impact_filter: None,
             tab_menu_target: Rc::default(),
             sidebar_tab: SidebarTab::Navigation,
+            comments: comments::CommentsPanel::default(),
             navigation,
             families,
             nav_nodes: Vec::new(),
@@ -934,6 +940,9 @@ impl WorkspaceView {
                 self.warn_about_settings(window, cx);
                 // `[quality] enabled` may have turned the audit on.
                 self.show_quality(cx);
+            }
+            EngineEvent::CommentRefused { reason, .. } => {
+                window.push_notification(format!("The host refused the comment: {reason}"), cx);
             }
             EngineEvent::CommandFailed { command, error } => {
                 if *command == ids::GIT_COMMIT {
@@ -5568,6 +5577,12 @@ impl WorkspaceView {
         if self.app.read(cx).engine.in_session() {
             panels.push((SidebarTab::Session, "Session".to_owned()));
         }
+        if self.offers_comments(cx) {
+            let count = self.active_document(cx).map_or(0, |document| {
+                self.app.read(cx).engine.comments(document).len()
+            });
+            panels.push((SidebarTab::Comments, format!("Comments ({count})")));
+        }
         let selected = panels
             .iter()
             .position(|(tab, _)| *tab == self.sidebar_tab)
@@ -5602,6 +5617,7 @@ impl WorkspaceView {
             SidebarTab::Build => self.render_build(cx),
             SidebarTab::Impact => self.render_impact(cx),
             SidebarTab::Session => self.render_session(cx),
+            SidebarTab::Comments => self.render_comments(cx),
         };
         v_flex()
             .size_full()
@@ -6185,6 +6201,8 @@ impl WorkspaceView {
                 .unwrap_or_default();
             Some(format!("{who} · {state}"))
         });
+        // The comment at the caret, if any (#762).
+        let comment = self.comment_at_caret(cx);
         // Whom this participant follows (#767).
         let following = engine.following().and_then(|leader| {
             let name = engine
@@ -6229,6 +6247,14 @@ impl WorkspaceView {
                         .debug_selector(|| "status-shared".to_owned())
                         .text_xs()
                         .child(shared),
+                )
+            })
+            .when_some(comment, |bar, comment| {
+                bar.left(
+                    div()
+                        .debug_selector(|| "status-comment".to_owned())
+                        .text_xs()
+                        .child(comment),
                 )
             })
             .when_some(following, |bar, following| {
@@ -6450,6 +6476,9 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_stop_sharing))
             .on_action(cx.listener(Self::on_leave_session))
             .on_action(cx.listener(Self::on_stop_following))
+            .on_action(cx.listener(Self::on_add_comment))
+            .on_action(cx.listener(Self::on_next_comment))
+            .on_action(cx.listener(Self::on_previous_comment))
             .on_action(cx.listener(Self::on_recover_unsaved))
             .on_action(cx.listener(Self::on_local_history))
             .on_action(cx.listener(Self::on_reload_settings))

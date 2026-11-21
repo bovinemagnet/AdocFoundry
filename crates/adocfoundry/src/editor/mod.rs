@@ -172,6 +172,10 @@ pub struct SourceEditorView {
     presence: Option<Presence>,
     /// The carets last drawn.
     shown_carets: Vec<adoc_engine::PeerCaret>,
+    /// The page's comments as drawn: a fill over each open comment's text and a mark in the
+    /// gutter (#762), and the ranges last drawn.
+    comment_marks: Option<Presence>,
+    shown_comments: Vec<std::ops::Range<usize>>,
     shared_selection: Option<(usize, usize)>,
     caret: Option<usize>,
     /// The widget's scroll offset as last drawn, which the change markers follow.
@@ -336,8 +340,12 @@ impl SourceEditorView {
                         this.reconcile(window, cx);
                     }
                     this.sync_readonly(cx);
-                    // The others' carets moved with the text.
+                    // The others' carets, and the comments, moved with the text.
                     this.show_presence(cx);
+                    this.show_comments(cx);
+                }
+                EngineEvent::CommentsChanged(id) if *id == this.document => {
+                    this.show_comments(cx);
                 }
                 EngineEvent::SessionChanged => {
                     this.sync_readonly(cx);
@@ -396,6 +404,8 @@ impl SourceEditorView {
             shared_readonly: false,
             presence: None,
             shown_carets: Vec::new(),
+            comment_marks: None,
+            shown_comments: Vec::new(),
             shared_selection: None,
             caret: None,
             scroll: None,
@@ -413,7 +423,91 @@ impl SourceEditorView {
         };
         view.show_diagnostics(cx);
         view.sync_readonly(cx);
+        view.show_comments(cx);
         view
+    }
+
+    /// Marks the page's open comments: their text filled in the theme's warning colour and a
+    /// mark in the gutter. Resolved and detached comments are not marked; the Comments panel
+    /// lists them, and names each comment, so the colour is never all that says one is there.
+    fn show_comments(&mut self, cx: &mut Context<Self>) {
+        let ranges: Vec<std::ops::Range<usize>> = self
+            .app
+            .read(cx)
+            .engine
+            .comments(self.document)
+            .into_iter()
+            .filter(|comment| !comment.detached && comment.resolved.is_none())
+            .map(|comment| comment.range.start..comment.range.end)
+            .collect();
+        if ranges.is_empty() && self.comment_marks.is_none() {
+            return;
+        }
+        let marks = match &self.comment_marks {
+            Some(marks) => marks.clone(),
+            None => {
+                let marks = self.state.update(cx, |state, cx| Presence {
+                    ranges: state.create_range_decorations_collection(Vec::new(), cx),
+                    gutter: state.create_gutter_decorations_collection(Vec::new(), cx),
+                });
+                self.comment_marks = Some(marks.clone());
+                marks
+            }
+        };
+        let text = self.state.read(cx).text().clone();
+        let len = text.len();
+        let colour = cx.theme().warning;
+        let drawn: Vec<std::ops::Range<usize>> = ranges
+            .into_iter()
+            .filter(|range| range.start < range.end && range.end <= len)
+            .collect();
+        marks.ranges.set(
+            drawn
+                .iter()
+                .map(|range| {
+                    RangeDecoration::new(range.clone())
+                        .with_style(RangeDecorationStyle::Fill)
+                        .with_color(colour.opacity(0.22))
+                })
+                .collect(),
+            cx,
+        );
+        marks.gutter.set(
+            drawn
+                .iter()
+                .map(|range| GutterDecoration::new(range.clone()).with_color(colour))
+                .collect(),
+            cx,
+        );
+        self.shown_comments = drawn;
+    }
+
+    /// The comments' ranges as last marked, for tests.
+    #[cfg(test)]
+    pub fn shown_comments(&self) -> &[std::ops::Range<usize>] {
+        &self.shown_comments
+    }
+
+    /// Selects `range` and scrolls it into view: where Next Comment and the Comments panel go.
+    pub fn select_range(
+        &mut self,
+        range: SourceRange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.state.update(cx, |state, cx| {
+            let len = state.text().len();
+            state.set_selected_range(range.start.min(len)..range.end.min(len), cx);
+        });
+        self.scroll_to_line_of(range.start, REVEAL_MARGIN, cx);
+        self.focus(window, cx);
+        cx.notify();
+    }
+
+    /// Puts the keyboard's focus in the editor.
+    pub fn focus(&self, window: &mut Window, cx: &mut gpui::App) {
+        let focus = self.state.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
     }
 
     /// Shows this participant's selection to the others on a shared page, when it changed: the
