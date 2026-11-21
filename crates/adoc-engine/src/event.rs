@@ -37,6 +37,9 @@ pub enum EngineEvent {
     /// Another participant's selection in a shared document moved (`Engine::peer_selections`):
     /// presence only, often, so views redraw carets without rebuilding anything else.
     PresenceChanged(DocumentId),
+    /// The comments of a page changed, or whether they can be used (`Engine::comments`,
+    /// `Engine::comments_state`).
+    CommentsChanged(DocumentId),
     DocumentSaved(DocumentId),
     DocumentClosed(DocumentId),
     /// `new` took the preview tab's place from `old`, which is closed next.

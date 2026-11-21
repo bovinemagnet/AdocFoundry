@@ -33,6 +33,7 @@ adoc-theme = { workspace = true, optional = true }
 adoc-render.workspace = true
 adoc-spell.workspace = true
 dirs.workspace = true
+getrandom.workspace = true
 notify.workspace = true
 regex.workspace = true
 ropey.workspace = true

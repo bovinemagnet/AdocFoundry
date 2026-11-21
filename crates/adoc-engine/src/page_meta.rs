@@ -279,7 +279,9 @@ fn read_comments(document: &DocumentMut) -> Result<Vec<StoredComment>, MetaProbl
         .as_array_of_tables()
         .ok_or_else(|| invalid("`comment` is not a list of tables"))?;
     if tables.len() > MAX_COMMENTS {
-        return Err(invalid(&format!("it has more than {MAX_COMMENTS} comments")));
+        return Err(invalid(&format!(
+            "it has more than {MAX_COMMENTS} comments"
+        )));
     }
     let mut ids = BTreeSet::new();
     let mut comments = Vec::with_capacity(tables.len());
@@ -413,9 +415,8 @@ fn days_from_civil(year: i64, month: u8, day: u8) -> i64 {
     let era = year.div_euclid(400);
     let year_of_era = year - era * 400;
     let month = i64::from(month);
-    let day_of_year = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5
-        + i64::from(day)
-        - 1;
+    let day_of_year =
+        (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + i64::from(day) - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     era * 146_097 + day_of_era - 719_468
 }
@@ -562,9 +563,24 @@ impl PageMeta {
     }
 }
 
+/// Whether two values are the same, however each is written.
+fn same(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::String(left), Value::String(right)) => left.value() == right.value(),
+        (Value::Integer(left), Value::Integer(right)) => left.value() == right.value(),
+        (Value::Boolean(left), Value::Boolean(right)) => left.value() == right.value(),
+        (Value::Datetime(left), Value::Datetime(right)) => {
+            from_datetime(left.value()) == from_datetime(right.value())
+        }
+        _ => false,
+    }
+}
+
 fn set(table: &mut Table, key: &str, value: impl Into<Value>) {
     let value = value.into();
     match table.get_mut(key) {
+        // Left as it is written when its value is the same, so a diff shows only what changed.
+        Some(Item::Value(existing)) if same(existing, &value) => {}
         // Kept where it was, with its own comment, when only its value changes.
         Some(Item::Value(existing)) => {
             let decor = existing.decor().clone();
@@ -607,7 +623,10 @@ fn write_comment(mut table: Table, comment: &StoredComment) -> Table {
     set_or_remove(
         &mut table,
         "resolved_by",
-        comment.resolved.as_ref().map(|resolution| resolution.by.as_str()),
+        comment
+            .resolved
+            .as_ref()
+            .map(|resolution| resolution.by.as_str()),
     );
     set_or_remove(
         &mut table,
@@ -708,7 +727,13 @@ mod tests {
             Path::new("/docs/modules/ROOT/pages/.install.adoc.afd")
         );
         assert_eq!(page_of_sidecar(&sidecar).as_deref(), Some(page));
-        for other in [".afd", "..afd", ".install.adoc", "install.adoc.afd", ".notes.txt.afd"] {
+        for other in [
+            ".afd",
+            "..afd",
+            ".install.adoc",
+            "install.adoc.afd",
+            ".notes.txt.afd",
+        ] {
             assert_eq!(page_of_sidecar(Path::new(other)), None, "{other}");
         }
     }
@@ -734,17 +759,20 @@ mod tests {
     #[test]
     fn unknown_data_is_kept() {
         let mut text = written(&[comment(0x1, 8, 12)]);
+        text = text.replace("text = ", "colour = \"amber\" # someone's tool\ntext = ");
         text = text.replace(
-            "text = ",
-            "colour = \"amber\" # someone's tool\ntext = ",
+            "[[comment.reply]]\n",
+            "[[comment.reply]]\nmood = \"glad\"\n",
         );
-        text = text.replace("[[comment.reply]]\n", "[[comment.reply]]\nmood = \"glad\"\n");
         text.push_str("\n[suggestion]\nkind = \"later\"\n");
         let read = parse(text.as_bytes()).unwrap();
         let mut changed = read.comments.clone();
         changed[0].text = "Changed.".to_owned();
         let again = read.render(&changed).unwrap().unwrap();
-        assert!(again.contains("colour = \"amber\" # someone's tool"), "{again}");
+        assert!(
+            again.contains("colour = \"amber\" # someone's tool"),
+            "{again}"
+        );
         assert!(again.contains("mood = \"glad\""), "{again}");
         assert!(again.contains("[suggestion]\nkind = \"later\""), "{again}");
         assert_eq!(parse(again.as_bytes()).unwrap().comments, changed);
@@ -801,9 +829,18 @@ mod tests {
         );
         let text = written(&[comment(0x1, 0, 1)]);
         for (from, to) in [
-            ("author = \"Ada Lovelace\"", format!("author = \"{}\"", "a".repeat(MAX_AUTHOR + 1))),
-            ("before = \"Some \"", format!("before = \"{}\"", "b".repeat(MAX_CONTEXT + 1))),
-            ("quote = \"text\"", format!("quote = \"{}\"", "q".repeat(MAX_QUOTE + 1))),
+            (
+                "author = \"Ada Lovelace\"",
+                format!("author = \"{}\"", "a".repeat(MAX_AUTHOR + 1)),
+            ),
+            (
+                "before = \"Some \"",
+                format!("before = \"{}\"", "b".repeat(MAX_CONTEXT + 1)),
+            ),
+            (
+                "quote = \"text\"",
+                format!("quote = \"{}\"", "q".repeat(MAX_QUOTE + 1)),
+            ),
         ] {
             let broken = text.replace(from, &to);
             assert!(
@@ -817,15 +854,33 @@ mod tests {
     fn unusable_files_are_named() {
         let text = written(&[comment(0x1, 0, 1)]);
         let conflicted = format!("<<<<<<< HEAD\n{text}=======\n{text}>>>>>>> theirs\n");
-        assert_eq!(parse(conflicted.as_bytes()).err(), Some(MetaProblem::Conflict));
+        assert_eq!(
+            parse(conflicted.as_bytes()).err(),
+            Some(MetaProblem::Conflict)
+        );
         assert!(MetaProblem::Conflict.to_string().contains("merge conflict"));
-        assert!(matches!(parse(b"format = [").err(), Some(MetaProblem::NotToml(_))));
-        assert!(matches!(parse(&[0xff, 0xfe]).err(), Some(MetaProblem::NotToml(_))));
-        assert!(matches!(parse(b"x = 1\n").err(), Some(MetaProblem::Invalid(_))));
+        assert!(matches!(
+            parse(b"format = [").err(),
+            Some(MetaProblem::NotToml(_))
+        ));
+        assert!(matches!(
+            parse(&[0xff, 0xfe]).err(),
+            Some(MetaProblem::NotToml(_))
+        ));
+        assert!(matches!(
+            parse(b"x = 1\n").err(),
+            Some(MetaProblem::Invalid(_))
+        ));
         let wrong = text.replace("start = 0", "start = \"zero\"");
-        assert!(matches!(parse(wrong.as_bytes()).err(), Some(MetaProblem::Invalid(_))));
+        assert!(matches!(
+            parse(wrong.as_bytes()).err(),
+            Some(MetaProblem::Invalid(_))
+        ));
         let backwards = text.replace("start = 0", "start = 5");
-        assert!(matches!(parse(backwards.as_bytes()).err(), Some(MetaProblem::Invalid(_))));
+        assert!(matches!(
+            parse(backwards.as_bytes()).err(),
+            Some(MetaProblem::Invalid(_))
+        ));
     }
 
     #[test]
@@ -833,8 +888,13 @@ mod tests {
         let mut twin = comment(0x1, 2, 3);
         twin.replies.clear();
         let text = written(&[comment(0x1, 0, 1)])
-            + &written(&[twin]).replace(HEADER, "").replace("format = 1\n", "");
-        assert!(matches!(parse(text.as_bytes()).err(), Some(MetaProblem::Invalid(_))));
+            + &written(&[twin])
+                .replace(HEADER, "")
+                .replace("format = 1\n", "");
+        assert!(matches!(
+            parse(text.as_bytes()).err(),
+            Some(MetaProblem::Invalid(_))
+        ));
     }
 
     #[test]
@@ -869,7 +929,11 @@ mod tests {
         let end = start + 8; // two emoji
         let (quote, before, after) = context(&text, start, end);
         assert_eq!(quote, "😀😀");
-        assert_eq!(before, format!("{}é", "a".repeat(30)), "31 bytes, the first a cut");
+        assert_eq!(
+            before,
+            format!("{}é", "a".repeat(30)),
+            "31 bytes, the first a cut"
+        );
         assert_eq!(after, "😀".repeat(8), "32 bytes");
         let long = "x".repeat(MAX_QUOTE + 10);
         assert_eq!(context(&long, 0, long.len()).0.len(), MAX_QUOTE);

@@ -14,6 +14,7 @@ mod collab;
 mod collab_session;
 mod command;
 pub mod commands;
+mod comments;
 #[cfg(feature = "git")]
 mod commit;
 mod deletion;
@@ -132,6 +133,10 @@ pub use collab_session::{
 pub use command::{
     CollaborationStep, Command, CommandArgs, CommandCategory, CommandContext, CommandId,
     CommandOutcome, CommandRegistry, CommandSpec, RegistryError,
+};
+pub use comments::{
+    find_quote, map_range, Allowed, Author, Comment, CommentId, CommentRequest, CommentsState,
+    Reply, COMMENT_SETTLE,
 };
 pub use deletion::{KeptDeletion, DELETED_DIR};
 pub use discovery::{IncomingReference, ReferenceKind, ResourceEntry, ResourceQuery};

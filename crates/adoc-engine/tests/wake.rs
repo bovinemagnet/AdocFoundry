@@ -619,3 +619,81 @@ fn a_move_to_another_shared_page_is_due_at_once() {
     engine.pump();
     assert_eq!(engine.next_due(), None);
 }
+
+/// A page with a comment on "commented", open in a workspace of its own.
+fn commented(clock_settings: Settings) -> (tempfile::TempDir, Engine, ManualClock, DocumentId) {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_engine::normalize_path(directory.path());
+    let page = root.join("page.adoc");
+    fs::write(&page, "= Page\n\nSome commented text.\n").unwrap();
+    let (mut engine, clock) = manual(clock_settings);
+    engine.open_workspace(vec![root]).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let id = engine.open(&page).unwrap();
+    run_out(&mut engine, &clock);
+    let start = "= Page\n\nSome ".len();
+    engine
+        .invoke(
+            ids::COMMENTS_ADD,
+            CommandArgs::Comment(adoc_engine::CommentRequest::Add {
+                id,
+                range: adoc_core::SourceRange::new(start, start + "commented".len()),
+                text: "Why?".to_owned(),
+            }),
+        )
+        .unwrap();
+    (directory, engine, clock, id)
+}
+
+/// Pumps at each deadline until nothing is due.
+fn run_out(engine: &mut Engine, clock: &ManualClock) {
+    for _ in 0..50 {
+        let Some(due) = engine.next_due() else {
+            return;
+        };
+        clock.advance(due.saturating_duration_since(clock.now()));
+        engine.pump();
+        assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    }
+    panic!("a deadline the pump does not act on");
+}
+
+#[test]
+fn a_comment_change_is_due_after_its_settle() {
+    let (_directory, mut engine, clock, _) = commented(plain());
+    assert_eq!(
+        engine.next_due(),
+        Some(clock.now() + adoc_engine::COMMENT_SETTLE)
+    );
+    run_out(&mut engine, &clock);
+    assert_eq!(engine.next_due(), None);
+}
+
+#[test]
+fn a_detached_comment_is_due_once_typing_pauses() {
+    let (_directory, mut engine, clock, id) = commented(plain());
+    run_out(&mut engine, &clock);
+    let start = "= Page\n\nSome ".len();
+    engine
+        .invoke(
+            ids::EDIT_REPLACE_RANGE,
+            CommandArgs::Text {
+                id,
+                range: adoc_core::SourceRange::new(start, start + "commented ".len()),
+                text: String::new(),
+            },
+        )
+        .unwrap();
+    assert!(engine.comments(id)[0].detached);
+    let deleted = clock.now();
+    assert!(engine
+        .next_due()
+        .is_some_and(|due| due <= deleted + INDEX_SETTLE));
+    run_out(&mut engine, &clock);
+    assert_eq!(
+        engine.next_due(),
+        None,
+        "a search that finds nothing is not due again"
+    );
+    assert!(engine.comments(id)[0].detached);
+}
