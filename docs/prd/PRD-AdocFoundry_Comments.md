@@ -292,3 +292,4 @@ Where the implementation departs from this design, or settles what it left open:
 - **The host's own actions** follow the session's rules on a shared page: it resolves and deletes any comment, but edits only its own. Alone, it may do everything, as before.
 - **Loading.** A page the host offers keeps comments wherever it is, since it was confined when offered: its comments file is read when the page is shared for a guest (`load_offered_comments`).
 - **A guest away** cannot comment: the request is refused at once with "The host cannot be reached", never queued.
+- **The soak found a flaw in the test harness, not the engine.** The in-memory session's `settle` read the time before asking each engine what was due. Work due at once is due at the moment it is asked for, so it looked still to come, and `settle` stopped with comments untold beyond the first 32. `settle` now reads the time after, and `more_comments_than_one_pump_tells_all_reach_a_guest` holds it.
