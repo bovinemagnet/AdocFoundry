@@ -468,6 +468,7 @@ With `--http 127.0.0.1:8765` (any other loopback address, or port 0 for a free o
 - Editing included content in place, plugins.
 - Merging, rebasing, conflicts and history: use a Git client.
 - Accessible labels for the graph's nodes: GPUI has no accessibility tree yet.
+- Comments in the app: the engine keeps a page's comments in `.<page>.afd` beside it (see the developer guide's engine page), and the Comments panel, the marks in the editors and comments in a collaboration session follow (#762).
 - In collaboration: other participants' carets in the visual editor, images and navigation for guests, sharing beyond a local network or VPN, and the manual checks on two machines (`docs/qa/collab.md`).
 - Verified IME composition and frame timing on every platform, the packages on macOS and Windows, and the preview and the graph checked by hand on each platform: see [`docs/qa/phase7.md`](docs/qa/phase7.md), [`docs/qa/phase1.md`](docs/qa/phase1.md), [`docs/qa/phase2.md`](docs/qa/phase2.md), [`docs/qa/phase3.md`](docs/qa/phase3.md), [`docs/qa/phase4.md`](docs/qa/phase4.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).
 

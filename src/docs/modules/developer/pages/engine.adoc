@@ -1132,6 +1132,92 @@ A guest's shared documents have no file of their own.
 They get no recovery record (`write_record` forgets one for a guest's document), and, having no file, they are not kept in the window session.
 The host's shared documents keep their recovery records while dirty, as any page does.
 
+== Comments and page metadata
+
+Comments on a page's text are kept in a metadata file beside the page, never in the page.
+`crates/adoc-engine/src/page_meta.rs` is the file and `crates/adoc-engine/src/comments.rs` is the model an open page holds.
+The engine has no user interface for them yet; the app's Comments panel follows in a later change.
+
+=== The file
+
+`install.adoc` has `.install.adoc.afd` in the same folder (`sidecar_path`; `page_of_sidecar` goes back).
+"afd" stands for AdocFoundry.
+The leading dot keeps the file out of Antora's catalog and published site.
+The engine's own catalog leaves out every file whose name begins with a dot, as Antora 3.2 does.
+
+The file is TOML.
+It starts with `format = 1`, then one `[[comment]]` table for each comment, each with `[[comment.reply]]` tables.
+
+[cols="1,3"]
+|===
+|Table |Keys
+
+|`[[comment]]`
+|`id` (16 hexadecimal digits), `author`, optional `email`, `created`, optional `edited`, `start` and `end` (byte offsets), `revision` (`sha256:<hex>` of the page text the offsets refer to), `quote`, `before` and `after` (up to 32 bytes of text either side), `text`, `resolved` with `resolved_by` and `resolved_at`, and `detached`.
+
+|`[[comment.reply]]`
+|`id`, `author`, optional `email`, optional `edited`, `created` and `text`.
+|===
+
+Anything the engine does not know is kept when the file is rewritten.
+`parse(bytes) -> Result<PageMeta, MetaProblem>` reads it as untrusted input and `PageMeta::render` writes it.
+The limits are `MAX_FILE` (4 MiB), `MAX_COMMENTS` (500), `MAX_REPLIES` (100 for each comment), `MAX_TEXT` (8 KiB), `MAX_AUTHOR` (64 bytes), `MAX_EMAIL` (254), `MAX_QUOTE` (4 KiB) and `MAX_CONTEXT` (32).
+They hold when writing too, so a change that would pass one is refused.
+
+=== How comments follow text
+
+An open page holds its comments as byte ranges, mapped through every edit by `map_range`.
+Text typed at a range's edges falls outside it, text typed inside grows it, and deleting part of it shrinks it.
+A comment whose text is all deleted is detached.
+It keeps its quote, and `find_quote` looks for the quote again near where it was once typing pauses (`COMMENT_SETTLE`), so undo brings the comment back.
+
+On opening, a comment whose `revision` matches the page text is at its offsets.
+Otherwise it is found by its quote, scored by how well the text before and after match and then by nearness to the old place, and a comment whose quote cannot be found is detached.
+Each changed comment is written with the offsets, revision and context of the page text at that time.
+
+Comment changes are not in the page's undo history and never mark the page unsaved.
+An untitled page keeps its comments in memory only.
+
+=== When the file is written
+
+The file is rewritten only when a comment changes: added, replied to, resolved, reopened, edited, deleted, detached, or its commented text edited.
+Saving the page never rewrites it, so two branches that edit a commented page do not conflict on the file.
+
+Writes go through the engine's writer (see <<writer>>) after `COMMENT_SETTLE` (500 ms).
+Each checks first that the file on disk is the one last read, by SHA-256.
+If it changed, as a `git pull` can change it, it is read again and the changes made here are applied on top by id, so nothing made here is lost.
+
+=== Unusable files
+
+`Engine::comments_state(id)` gives a `CommentsState`.
+
+* `Usable`: comments are shown and can be changed.
+* `Unusable(reason)`: the file is not TOML, holds Git conflict markers, breaks a limit or has duplicate ids.
+Its comments are not shown, adding one is refused with the reason, and the file is never rewritten.
+* `ReadOnly(reason)`: the file's `format` is newer than this engine knows.
+Its comments are shown and never written.
+
+=== Moving and deleting a page
+
+Renaming or moving a page moves its comments file with it.
+The move is refused if a file is already at the destination, and a case-only rename works.
+Deleting a page keeps the file with it in the deletion store as `sidecar` (see <<file-deletion>>), and Undo Delete or Restore Deleted File puts it back.
+
+=== Commands, queries and events
+
+The commands are `comments.add` (Cmd-Alt-M, Ctrl-Alt-M elsewhere), `comments.reply`, `comments.resolve`, `comments.reopen`, `comments.edit`, `comments.delete`, `comments.next` and `comments.previous`.
+All take `CommandArgs::Comment(CommentRequest)`, whose variants are `Add`, `Reply`, `Resolve`, `Edit`, `Delete` and `Step`.
+
+The queries are `Engine::comments(id)`, `comment_at(id, offset)`, `comments_state(id)` and `comment_author()`.
+`EngineEvent::CommentsChanged(id)` follows each change.
+
+The author comes from `[comments] name` and `email` in the user settings file (see xref:ROOT:settings.adoc[Settings]), else the global Git identity (`user.name` and `user.email`, read by `adoc_git::global_identity` without a repository), else the operating system's user name.
+
+=== Tests
+
+`crates/adoc-engine/tests/comments.rs` drives the engine through the commands, and the `page_meta` unit tests in `page_meta.rs` cover the file.
+The fuzz target `page_meta` in `fuzz/fuzz_targets/page_meta.rs` feeds `parse` arbitrary bytes, and each crash becomes a regression test.
+
 == The pump and worker indexing
 
 `open_workspace` starts indexing on a worker thread and creates the watcher, but places no watches itself, so it does no watching on the caller's thread.

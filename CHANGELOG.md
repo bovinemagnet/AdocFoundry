@@ -15,6 +15,14 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
   - **Not yet:** the manual checks on two machines (`docs/qa/collab.md`), carets in the visual editor, shared pictures and navigation, and sharing beyond a local network or VPN.
   - **For developers:** new crates `adoc-collab` (the replica over `yrs` and the session protocol) and `adoc-share` (the TLS transport). `adoc-engine` gains the `collab` feature, which only the app names; the release workflow builds the app apart from the other binaries.
 
+### Changed
+
+- The Antora catalog leaves out every file whose name begins with a dot, as Antora 3.2 does: such a file is no longer a resource, offered in completion or listed in the Modules panel.
+
+### For developers
+
+- Comments on a page's text, kept in a metadata file beside the page (#762, COMMENTS 1/4; `docs/prd/PRD-AdocFoundry_Comments.md`). `install.adoc` has `.install.adoc.afd`, TOML that keeps whatever it holds that this version does not know. The engine holds an open page's comments as ranges that follow its text, finds them again by their quote when the page changed elsewhere, detaches one whose text is gone and finds it again on undo, and writes the file only when comments change, checking first that nobody else changed it. A page renamed, moved or deleted in the app takes its comments file with it. Commands `comments.*`, `Engine::comments`, `comment_at`, `comments_state` and `CommentsChanged`; `[comments] name` and `email` in the user settings file, else the global Git identity, name who writes them. The app's Comments panel follows.
+
 ## 0.13.0 — 2026-11-19
 
 ### Added

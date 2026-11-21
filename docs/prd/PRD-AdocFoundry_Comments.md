@@ -262,3 +262,21 @@ The user guide gains a "Comments" page and the developer guide's engine page a s
 - The settle time before a comment change is written.
 - Visual details of marks and the panel, within the theme's colours and the accessibility rule.
 - The random source for ids, from what `Cargo.lock` already has.
+
+## 13. Implementation notes
+
+### COMMENTS 1/4: the sidecar and comments alone
+
+Where the implementation departs from this design, or settles what it left open:
+
+- **A comment is rewritten when its own text is edited,** as well as when the comment changes (5.5). Otherwise a page edited inside a commented phrase, then saved and closed, would keep only the old quote, which a later opening could not find. A page edited elsewhere still leaves the file alone.
+- **Untitled pages keep comments in memory only.** The engine has no Save As that gives an untitled page a path, so there is never a file to write them to (5.1).
+- **Values left as they are written.** A rewrite leaves a key whose value is unchanged exactly as it is written, a hand-written multi-line string included, so a diff shows only what changed.
+- **Unusable files are named, not counted.** A file past a limit on reading is `MetaProblem::Invalid` naming the limit, so the notice says which; `TooMany` and `TooLong` are the refusals of a change before it is written.
+- **The builder's choices (section 12):**
+  - The modules are `src/page_meta.rs` (the file) and `src/comments.rs` (the model). The fuzz target `page_meta` links the engine without default features, so no new crate was needed.
+  - A quote's occurrences, at most 1,000, are scored by how many bytes of `before` end the text before each, plus how many of `after` begin the text after it. Nearness to the old start breaks ties.
+  - `COMMENT_SETTLE` is 500 ms, and a failed write is tried again after 5 s or at the next change.
+  - Ids come from `getrandom`, already in the tree.
+- **A page closed with a write still to make** keeps its comments, by path, until the write is made (`closing_comments`); reopening it meanwhile takes them back. `flush_writes`, which dropping the engine calls, writes every page's comments and retries a conflict before returning.
+- **Commands are available on any active page** (`CommandContext::ActiveDocument`). The app shows none of them until COMMENTS 3/4, and its user guide page comes with that package; the developer guide's engine page and the settings page describe them now.

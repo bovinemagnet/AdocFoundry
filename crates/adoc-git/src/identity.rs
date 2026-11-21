@@ -46,7 +46,11 @@ mod tests {
     fn identity_is_read_from_the_files_given() {
         let directory = tempfile::tempdir().unwrap();
         let both = directory.path().join("both");
-        std::fs::write(&both, "[user]\n\tname = Ada Lovelace\n\temail = ada@example.org\n").unwrap();
+        std::fs::write(
+            &both,
+            "[user]\n\tname = Ada Lovelace\n\temail = ada@example.org\n",
+        )
+        .unwrap();
         let name_only = directory.path().join("name");
         std::fs::write(&name_only, "[user]\n\tname = Grace Hopper\n").unwrap();
         let empty = directory.path().join("empty");
