@@ -12416,7 +12416,8 @@ fn a_comment_is_added_from_the_selection_and_shown(cx: &mut TestAppContext) {
         "the box is put away"
     );
     let marked = cx.update(|_, cx| editor.read(cx).shown_comments().to_vec());
-    assert_eq!(marked, [start..end]);
+    assert_eq!(marked.len(), 1);
+    assert_eq!(marked[0], start..end);
 
     // The caret inside it: the status bar names it.
     cx.update(|_, cx| {
