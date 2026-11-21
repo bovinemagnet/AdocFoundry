@@ -417,3 +417,17 @@ fn guests_are_never_told_an_email_address() {
             || thread.replies.iter().any(|reply| reply.email.is_some())
     )));
 }
+
+/// At most 32 comments are told a guest for a file in a pump: the rest follow in the next ones,
+/// due at once, and the harness waits for them as an app's pump would.
+#[test]
+fn more_comments_than_one_pump_tells_all_reach_a_guest() {
+    let mut session = session();
+    let ada = session.guest(1, true);
+    let host = session.host_doc();
+    for n in 0..40 {
+        add(&mut session.host, host, &format!("Comment {n}.")).unwrap();
+    }
+    session.settle();
+    assert_eq!(agree(&mut session, ada).len(), 40);
+}
