@@ -105,6 +105,7 @@ Run with two copies of the app on two machines on one local network, unless the 
 | The host saves; the guest's status bar shows Saved; the file on disk is the text | [ ] | [ ] | [ ] |
 | Change a shared file in another editor; the host is asked which to keep | [ ] | [ ] | [ ] |
 | Screen reader: the Session panel's participants, roles and caret places are read | [ ] | [ ] | [ ] |
+| Follow someone moving between pages and typing: your view goes with them and keeps their caret in view; a click, a scroll or typing ends it (#767) | [ ] | [ ] | [ ] |
 | Stop Sharing: guests are told, the port is closed | [ ] | [ ] | [ ] |
 | The Flatpak package shares and joins on the local network (Linux only) | | | [ ] |
 
