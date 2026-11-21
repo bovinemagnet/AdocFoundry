@@ -367,6 +367,14 @@ pub struct CollaborationSettings {
     pub enabled: bool,
 }
 
+/// The `[comments]` table, user settings only: who the comments written here are by. Unset, the
+/// global Git identity names them (see [`crate::Engine::comment_author`]).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CommentsSettings {
+    pub name: Option<String>,
+    pub email: Option<String>,
+}
+
 /// The `[quality]` table: whether the documentation quality audit is kept current, and the
 /// policy it is judged by (`fail_on`, `require_complete`, `[quality.rules]`,
 /// `[[quality.exclusions]]` and the optional `providers`). Both layers may set it: a rule's
@@ -489,6 +497,7 @@ pub struct Settings {
     pub graph: GraphSettings,
     pub quality: QualitySettings,
     pub collaboration: CollaborationSettings,
+    pub comments: CommentsSettings,
     pub templates: TemplateSettings,
     /// Problems found while loading, such as unknown keys. Shown once by the front end.
     pub warnings: Vec<String>,
@@ -1218,6 +1227,12 @@ impl Settings {
             }
             ("quality", "enabled") => self.quality.enabled = boolean(value)?,
             ("collaboration", "enabled") => self.collaboration.enabled = boolean(value)?,
+            ("comments", "name") => {
+                self.comments.name = Some(string(value)?).filter(|name| !name.trim().is_empty());
+            }
+            ("comments", "email") => {
+                self.comments.email = Some(string(value)?).filter(|email| !email.trim().is_empty());
+            }
             ("quality", "fail_on") => {
                 self.quality.policy.fail_on = value
                     .as_str()
@@ -1442,6 +1457,7 @@ fn is_known(section: &str, key: &str) -> bool {
             )
             | ("updates", "check")
             | ("collaboration", "enabled")
+            | ("comments", "name" | "email")
             | (
                 "quality",
                 "enabled" | "fail_on" | "require_complete" | "rules" | "exclusions" | "providers"
@@ -1554,6 +1570,33 @@ mod tests {
         .unwrap();
         let settings = Settings::load(Some(&user), Some(directory.path())).unwrap();
         assert!(!settings.collaboration.enabled);
+        assert!(settings.warnings[0].contains("can only be set in the user settings file"));
+    }
+
+    /// `[comments]` names the user: a workspace file someone else wrote cannot sign comments
+    /// in another name.
+    #[test]
+    fn comments_settings_are_user_only() {
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("settings.toml");
+        fs::write(
+            &user,
+            "[comments]\nname = \"Ada Lovelace\"\nemail = \"ada@example.org\"\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), None).unwrap();
+        assert_eq!(settings.comments.name.as_deref(), Some("Ada Lovelace"));
+        assert_eq!(settings.comments.email.as_deref(), Some("ada@example.org"));
+        assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
+
+        fs::write(&user, "").unwrap();
+        fs::write(
+            directory.path().join(WORKSPACE_SETTINGS_FILE),
+            "[comments]\nname = \"Someone Else\"\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), Some(directory.path())).unwrap();
+        assert_eq!(settings.comments.name, None);
         assert!(settings.warnings[0].contains("can only be set in the user settings file"));
     }
 

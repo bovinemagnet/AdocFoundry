@@ -225,8 +225,10 @@ impl VisualView {
             EngineEvent::ModelChanged { id, .. } if *id == self.document => {
                 self.refresh(cx);
             }
-            // The change markers and the misspelt words are drawn from the engine.
-            EngineEvent::GitHunksChanged(id) | EngineEvent::SpellingChanged(id)
+            // The change markers, the misspelt words and the comments are drawn from the engine.
+            EngineEvent::GitHunksChanged(id)
+            | EngineEvent::SpellingChanged(id)
+            | EngineEvent::CommentsChanged(id)
                 if *id == self.document =>
             {
                 cx.notify();
@@ -718,6 +720,24 @@ impl VisualView {
             .misspellings(self.document)
             .iter()
             .map(|misspelling| misspelling.range)
+            .collect()
+    }
+
+    /// The ranges of the page's open comments (#762), when the model shown is of its current
+    /// version, as the source editor marks them.
+    pub fn commented(&self, document: &VisualDocument, cx: &App) -> Vec<SourceRange> {
+        let engine = &self.app.read(cx).engine;
+        let current = engine
+            .document(self.document)
+            .is_some_and(|open| open.version == document.version);
+        if !current {
+            return Vec::new();
+        }
+        engine
+            .comments(self.document)
+            .into_iter()
+            .filter(|comment| !comment.detached && comment.resolved.is_none())
+            .map(|comment| comment.range)
             .collect()
     }
 

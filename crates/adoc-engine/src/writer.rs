@@ -51,8 +51,28 @@ pub(crate) enum SaveFailure {
     Io(io::Error),
 }
 
+/// Whose comments a sidecar write carries: an open page's, or a page closed with a write still
+/// to make, by its path.
+#[derive(Clone, Debug)]
+pub(crate) enum SidecarTarget {
+    Open(DocumentId),
+    Closed(PathBuf),
+}
+
+/// A page's metadata file to write (`comments.rs`): only over the file last read or written,
+/// whose SHA-256 is `expected` (`None`: no file), so a change made elsewhere meanwhile is never
+/// overwritten. `contents` of `None` removes the file.
+pub(crate) struct SidecarJob {
+    pub(crate) ticket: u64,
+    pub(crate) target: SidecarTarget,
+    pub(crate) path: PathBuf,
+    pub(crate) expected: Option<[u8; 32]>,
+    pub(crate) contents: Option<String>,
+}
+
 pub(crate) enum Job {
     Save(Box<SaveJob>),
+    Sidecar(SidecarJob),
     /// Writes a file, creating its folder, with the contents worked out on the writer. A
     /// failure costs only the file.
     Write {
@@ -115,6 +135,19 @@ impl Engine {
                             });
                             WorkerMessage::Written
                         }
+                        Job::Sidecar(job) => {
+                            let result = crate::worker::guarded(|| write_sidecar(&job))
+                                .unwrap_or_else(|error| {
+                                    Err(SaveFailure::Io(io::Error::other(format!(
+                                        "writing comments crashed: {error}"
+                                    ))))
+                                });
+                            WorkerMessage::SidecarWritten {
+                                ticket: job.ticket,
+                                target: job.target,
+                                result,
+                            }
+                        }
                         Job::Remove(file) => {
                             let _ = fs::remove_file(file);
                             WorkerMessage::Written
@@ -158,6 +191,11 @@ impl Engine {
         hold
     }
 
+    /// Writes a page's metadata file on the writer, after every write asked for before.
+    pub(crate) fn write_sidecar(&mut self, job: SidecarJob) {
+        self.send_job(Job::Sidecar(job));
+    }
+
     /// Removes `file` on the writer, after every write asked for before.
     pub(crate) fn remove_later(&mut self, file: PathBuf) {
         self.send_job(Job::Remove(file));
@@ -165,6 +203,7 @@ impl Engine {
 
     /// Blocks until every write asked for so far is on disk: for an app about to quit.
     pub(crate) fn flush_writes(&mut self) {
+        self.write_comments_now();
         if self.writer.jobs.is_none() {
             return;
         }
@@ -367,4 +406,28 @@ fn save(job: &SaveJob) -> Result<Written, SaveFailure> {
         hash: hash_text(&text),
         len: text.len(),
     })
+}
+
+/// Writes a page's metadata file, or removes it, if the file on disk is still the one expected.
+/// Returns the SHA-256 of what is there now (`None`: no file).
+fn write_sidecar(job: &SidecarJob) -> Result<Option<[u8; 32]>, SaveFailure> {
+    let on_disk = match fs::read(&job.path) {
+        Ok(bytes) => Some(crate::page_meta::digest(&bytes)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(SaveFailure::Io(error)),
+    };
+    if on_disk != job.expected {
+        return Err(SaveFailure::Conflict);
+    }
+    match &job.contents {
+        Some(text) => {
+            write_replacing(&job.path, text).map_err(SaveFailure::Io)?;
+            Ok(Some(crate::page_meta::digest(text.as_bytes())))
+        }
+        None => match fs::remove_file(&job.path) {
+            Ok(()) => Ok(None),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(SaveFailure::Io(error)),
+        },
+    }
 }

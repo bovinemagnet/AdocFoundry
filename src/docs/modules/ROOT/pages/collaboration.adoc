@@ -324,6 +324,12 @@ If they disconnect, or move to a page that is not shared, your view stays where 
 Following does not send anything about your own caret beyond what is already shared.
 It does not change what you may edit.
 
+== Comments
+
+Everyone with a shared page open sees its comments, on the same text whoever types, and Viewers can comment and reply too.
+The host keeps them in its comments file beside the page.
+See xref:comments.adoc[Comments].
+
 == Sharing a session or sharing a repository
 
 There are two ways for people to work on the same documentation.

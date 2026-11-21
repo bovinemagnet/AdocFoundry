@@ -78,6 +78,12 @@ pub(crate) enum WorkerMessage {
         background: bool,
         result: Result<crate::writer::Written, crate::writer::SaveFailure>,
     },
+    /// A page's metadata file written or removed, or why not.
+    SidecarWritten {
+        ticket: u64,
+        target: crate::writer::SidecarTarget,
+        result: Result<Option<[u8; 32]>, crate::writer::SaveFailure>,
+    },
     /// A state file or recovery record written or removed.
     Written,
     PreviewParsed {
@@ -542,6 +548,7 @@ impl Engine {
             self.due_problems(),
             self.due_audit(),
             self.due_graph(),
+            self.comments_due(),
             self.due_collaboration(),
         ]
         .into_iter()
@@ -609,6 +616,7 @@ impl Engine {
             + self.update_due_problems()
             + self.update_due_audit()
             + self.update_due_graph()
+            + self.update_due_comments()
             + self.pump_collaboration()
     }
 
@@ -754,6 +762,11 @@ impl Engine {
                 result,
                 ..
             } => self.save_finished(id, version, background, result),
+            WorkerMessage::SidecarWritten {
+                ticket,
+                target,
+                result,
+            } => self.sidecar_written(target, ticket, result),
             WorkerMessage::Written => {}
             WorkerMessage::PreviewParsed {
                 id,
@@ -1005,6 +1018,8 @@ impl Engine {
                 } else {
                     indexed |= self.file_changed_on_disk(path, &mut catalogued);
                 }
+            } else if *change == Change::File && self.sidecar_changed_on_disk(path) {
+                // A page's comments file: its page's comments follow it.
             } else if *change == Change::File {
                 catalogued.extend(self.catalog_file_changed(path, None));
                 self.diagram_input_changed(path);

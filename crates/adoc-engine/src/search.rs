@@ -577,19 +577,37 @@ impl Engine {
                 }
             }
         }
+        // A page's metadata file (its comments) moves with it, never onto another's.
+        let sidecars = crate::page_meta::sidecar_path(from)
+            .zip(crate::page_meta::sidecar_path(to))
+            .filter(|(sidecar, _)| {
+                fs::symlink_metadata(sidecar).is_ok_and(|metadata| metadata.is_file())
+            });
+        if let Some((from_sidecar, to_sidecar)) = &sidecars {
+            if fs::symlink_metadata(to_sidecar).is_ok()
+                && !is_case_only_rename(from_sidecar, to_sidecar)
+            {
+                return Err(EngineError::Refused(format!(
+                    "A comments file is already at {}",
+                    to_sidecar.display()
+                )));
+            }
+            // Its comments still to be written reach it before it moves.
+            self.write_comments_now();
+        }
         if let Some(parent) = to.parent() {
             fs::create_dir_all(parent).map_err(|error| EngineError::io(parent, error))?;
         }
-        if is_case_only_rename(from, to) {
-            // Through a name of its own, so no file system takes the move for a no-op.
-            let temporary = from.with_extension("adocfoundry-rename");
-            fs::rename(from, &temporary).map_err(|error| EngineError::io(from, error))?;
-            fs::rename(&temporary, to).map_err(|error| EngineError::io(&temporary, error))?;
-        } else {
-            fs::rename(from, to).map_err(|error| EngineError::io(from, error))?;
+        rename_on_disk(from, to)?;
+        if let Some((from_sidecar, to_sidecar)) = &sidecars {
+            if let Err(error) = rename_on_disk(from_sidecar, to_sidecar) {
+                let _ = rename_on_disk(to, from);
+                return Err(error);
+            }
         }
         let from = normalize_path(from);
         let to = normalize_path(to);
+        self.comments_moved(&from, &to);
         self.move_history(&from, &to);
         self.workspace.remove_document(&from);
         self.graph_file_changed(&from);
@@ -915,7 +933,7 @@ impl Engine {
     }
 
     /// The coordinate a file at `path` would have in `family`, if it lies in that family's
-    /// directory of a module.
+    /// directory of a module and is not hidden.
     pub(crate) fn coordinate_in(
         &self,
         path: &Path,
@@ -926,6 +944,11 @@ impl Engine {
                 .directories()
                 .iter()
                 .find_map(|directory| path.strip_prefix(module.root.join(directory)).ok())?;
+            // Antora neither catalogues nor publishes a hidden file, such as a page's
+            // comments file.
+            if adoc_antora::is_hidden(relative) {
+                return None;
+            }
             Some(AntoraCoordinate {
                 component: module.component.clone(),
                 version: module.version.clone(),
@@ -1064,6 +1087,18 @@ pub(crate) fn slash_path(path: &Path) -> String {
 /// found only because the file system ignores case (as macOS and Windows do by default): the
 /// folder holds no entry of that exact name, so the file `to` finds is `from` itself. Such a
 /// move renames the page; it does not overwrite another.
+/// Renames `from` to `to` on disk, through a name of its own when only the case changes, so no
+/// file system takes the move for a no-op.
+fn rename_on_disk(from: &Path, to: &Path) -> Result<(), EngineError> {
+    if is_case_only_rename(from, to) {
+        let temporary = from.with_extension("adocfoundry-rename");
+        fs::rename(from, &temporary).map_err(|error| EngineError::io(from, error))?;
+        fs::rename(&temporary, to).map_err(|error| EngineError::io(&temporary, error))
+    } else {
+        fs::rename(from, to).map_err(|error| EngineError::io(from, error))
+    }
+}
+
 fn is_case_only_rename(from: &Path, to: &Path) -> bool {
     let (Some(folder), Some(from_name), Some(to_name)) =
         (from.parent(), from.file_name(), to.file_name())

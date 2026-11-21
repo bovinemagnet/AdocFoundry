@@ -12367,3 +12367,162 @@ fn a_composition_survives_a_remote_edit_before_it(cx: &mut TestAppContext) {
     assert_eq!(guest_text(&mut setup), "// = Page\n日本");
     assert_eq!(host_text(&setup), "// = Page\n日本");
 }
+
+/// Comments (#762, COMMENTS 3/4): Add Comment on the selection opens a box in the Comments
+/// panel, the comment is marked in the editor and named in the status bar, and Next Comment
+/// selects it.
+#[gpui::test]
+fn a_comment_is_added_from_the_selection_and_shown(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let page = root.join("page.adoc");
+    let text = "= Page\n\nSome words to comment on.\n";
+    std::fs::write(&page, text).unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+    let start = text.find("words").unwrap();
+    let end = start + "words".len();
+    cx.update(|_, cx| {
+        editor
+            .read(cx)
+            .state_for_test()
+            .clone()
+            .update(cx, |state, cx| {
+                state.set_selected_range(start..end, cx);
+            });
+    });
+
+    cx.dispatch_action(crate::editor::bindings::AddComment);
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("comments-panel").is_some());
+    assert!(cx.debug_bounds("comment-box").is_some());
+    cx.simulate_keystrokes("W h y ?");
+    click("comment-submit", &mut cx);
+    cx.run_until_parked();
+
+    let id = cx.update(|_, cx| editor.read(cx).document());
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].text, "Why?");
+    assert_eq!(comments[0].quote, "words");
+    assert!(
+        cx.debug_bounds("comment-box").is_none(),
+        "the box is put away"
+    );
+    let marked = cx.update(|_, cx| editor.read(cx).shown_comments().to_vec());
+    assert_eq!(marked.len(), 1);
+    assert_eq!(marked[0], start..end);
+
+    // The caret inside it: the status bar names it.
+    cx.update(|_, cx| {
+        editor
+            .read(cx)
+            .state_for_test()
+            .clone()
+            .update(cx, |state, cx| {
+                state.set_selected_range(start + 2..start + 2, cx);
+            });
+    });
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("status-comment").is_some());
+
+    // Next Comment from the top of the page (the editor has the focus back) selects it.
+    cx.update(|_, cx| {
+        editor
+            .read(cx)
+            .state_for_test()
+            .clone()
+            .update(cx, |state, cx| {
+                state.set_selected_range(0..0, cx);
+            });
+    });
+    cx.dispatch_action(crate::editor::bindings::NextComment);
+    cx.run_until_parked();
+    let selected = cx.update(|_, cx| editor.read(cx).selection(cx));
+    assert_eq!(selected, start..end);
+
+    // Resolving it takes its mark away and folds it under Resolved.
+    click_dynamic(&format!("comment-resolve-{}", comments[0].id), &mut cx);
+    cx.run_until_parked();
+    assert!(cx.update(|_, cx| editor.read(cx).shown_comments().is_empty()));
+    assert!(cx.debug_bounds("comments-resolved").is_some());
+}
+
+fn click_dynamic(selector: &str, cx: &mut VisualTestContext) {
+    let bounds = cx
+        .debug_bounds(Box::leak(selector.to_owned().into_boxed_str()))
+        .unwrap_or_else(|| panic!("{selector} is not drawn"));
+    cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+}
+
+/// Comments (#762, COMMENTS 4/4): the visual editor fills a page's open comments, as the source
+/// editor marks them, and stops once one is resolved.
+#[gpui::test]
+fn the_visual_editor_marks_a_pages_comments(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let page = root.join("page.adoc");
+    let text = "= Page\n\nSome words to comment on.\n";
+    std::fs::write(&page, text).unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.simulate_keystrokes("secondary-k w");
+    settle_engine(&app, &mut cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let visual = cx
+        .update(|_, cx| workspace.read(cx).visual_for_test(id).cloned())
+        .expect("a visual editor");
+    let start = text.find("words").unwrap();
+    let range = adoc_core::SourceRange::new(start, start + "words".len());
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::COMMENTS_ADD,
+                CommandArgs::Comment(adoc_engine::CommentRequest::Add {
+                    id,
+                    range,
+                    text: "Which words?".to_owned(),
+                }),
+                cx,
+            )
+            .unwrap();
+        });
+    });
+    settle_engine(&app, &mut cx);
+    let commented = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let view = visual.read(cx);
+            let shown = view.shown().cloned().unwrap();
+            view.commented(&shown, cx)
+        })
+    };
+    assert_eq!(commented(&mut cx), vec![range]);
+
+    let comment = cx.update(|_, cx| app.read(cx).engine.comments(id)[0].id);
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::COMMENTS_RESOLVE,
+                CommandArgs::Comment(adoc_engine::CommentRequest::Resolve {
+                    id,
+                    comment,
+                    resolved: true,
+                }),
+                cx,
+            )
+            .unwrap();
+        });
+    });
+    settle_engine(&app, &mut cx);
+    assert!(commented(&mut cx).is_empty());
+}

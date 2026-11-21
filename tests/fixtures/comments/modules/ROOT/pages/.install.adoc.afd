@@ -1,0 +1,23 @@
+# AdocFoundry page metadata
+format = 1
+
+[[comment]]
+id = "7d1e0c3a9b2f4e61"
+author = "Ada Lovelace"
+email = "ada@example.org"
+created = 2026-11-21T06:30:00Z
+start = 20
+end = 61
+revision = "sha256:1c1f7d46930178e673006464534737c4243a5f27cae46c134c1406c7e0ecc394"
+quote = "the installer refuses an unsigned package"
+before = "= Install\n\nOn macOS "
+after = ", so sign it first.\n\nOn Windows "
+text = """
+Is this still true for 0.14?"""
+resolved = false
+
+[[comment.reply]]
+id = "a40b7c11d2e94f08"
+author = "Grace Hopper"
+created = 2026-11-21T06:41:00Z
+text = "Yes, notarised builds only."

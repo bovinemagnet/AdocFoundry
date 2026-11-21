@@ -14,6 +14,7 @@ mod collab;
 mod collab_session;
 mod command;
 pub mod commands;
+mod comments;
 #[cfg(feature = "git")]
 mod commit;
 mod deletion;
@@ -60,6 +61,8 @@ mod new_page;
 mod new_project;
 #[cfg(feature = "git")]
 mod page_age;
+#[doc(hidden)]
+pub mod page_meta;
 mod parses;
 #[cfg(feature = "typst")]
 mod pdf_preview;
@@ -131,6 +134,10 @@ pub use command::{
     CollaborationStep, Command, CommandArgs, CommandCategory, CommandContext, CommandId,
     CommandOutcome, CommandRegistry, CommandSpec, RegistryError,
 };
+pub use comments::{
+    find_quote, map_range, Allowed, Author, Comment, CommentId, CommentRequest, CommentsState,
+    Reply, COMMENT_SETTLE,
+};
 pub use deletion::{KeptDeletion, DELETED_DIR};
 pub use discovery::{IncomingReference, ReferenceKind, ResourceEntry, ResourceQuery};
 pub use docbook_settings::{DocBookProfile, DocBookSettings};
@@ -191,11 +198,11 @@ pub use session::{
     WindowPlacement, PLAYBOOK_NOTICES_FILE, RECENT_FOLDERS, RECENT_FOLDERS_FILE, SESSION_FILE,
 };
 pub use settings::{
-    pdf_standard, AppearanceSettings, AutoSave, CollaborationSettings, EditorSettings,
-    ExpansionPolicy, FontScale, GitSettings, GraphColour, GraphLayout, GraphSettings,
-    HistorySettings, PdfSettings, QualitySettings, Settings, SidebarSettings, SpellingSettings,
-    TemplateSettings, ThemePreference, ToolSettings, UpdateSettings, WorkspaceSettings,
-    USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
+    pdf_standard, AppearanceSettings, AutoSave, CollaborationSettings, CommentsSettings,
+    EditorSettings, ExpansionPolicy, FontScale, GitSettings, GraphColour, GraphLayout,
+    GraphSettings, HistorySettings, PdfSettings, QualitySettings, Settings, SidebarSettings,
+    SpellingSettings, TemplateSettings, ThemePreference, ToolSettings, UpdateSettings,
+    WorkspaceSettings, USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
 };
 pub use site_build::{
     SiteBuild, SiteBuildBlocker, SiteBuildState, DEFAULT_BUILD_TIMEOUT, MAX_BUILD_OUTPUT,

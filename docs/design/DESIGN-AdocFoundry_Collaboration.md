@@ -128,6 +128,10 @@ An unknown kind, malformed JSON, or a field outside its limit closes the connect
 | `Join` | host | The decision after Admit: `PeerId`, role, session id; or `Error { denied }` |
 | `Roster` | host | Who is in the session (each participant's `PeerId`, name, role, whether connected, the shared file they are in or none, and whom they follow, the host first) and the shared folder's name; sent after `Join` and whenever it changes |
 | `Focus` | guest | The shared file the guest is in, or none (on a page of its own, an image or nothing), and whom it follows; sent when either changes and again after `Join` or resuming; a file not in the manifest closes the connection. The host tells the others in its `Roster`, at most once a pump (#767) |
+| `Comment` | guest | A change to a shared file's comments (#762): add, with the range as a selection relative to the shared text, reply, resolve or reopen, edit, or delete, numbered by `request`; the host makes it as the guest if the guest may, and a request from an earlier epoch is refused |
+| `CommentThread` | host | One comment of a file and its replies, with its place as a selection (none while detached) and names only, never an e-mail address; sent after the file's snapshot, and again whenever it changes or its place would resolve otherwise on the guest's side, at most 32 a pump per file |
+| `CommentRemoved` | host | A comment of a file was deleted |
+| `CommentRefused` | host | Why the host refused a guest's `Comment` request, naming it; the connection stays |
 | `Manifest` | host | The shared files: `SharedFileId`, root-relative display path, kind (page or partial), size; in parts of at most `MANIFEST_PART` files, `more` until the last, so each control part fits its two-byte length whatever the paths |
 | `Components` | host | The Antora component versions the shared files belong to: each one's folder from the shared root, name and version, words the protocol checks, and nothing else of its `antora.yml`; at most `MAX_COMPONENTS`, checked whole as it is built so it fits one frame; sent after the manifest (COLLAB 7/8) |
 | `OpenFile` | guest | A `SharedFileId` |

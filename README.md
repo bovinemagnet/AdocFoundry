@@ -151,6 +151,12 @@ The project is built in phases: (1) a source editor with Antora support and link
 - File › Delete File… (also in a tab's menu, and Delete… in the Files panel's) deletes any file of the workspace, asking first and listing what removing it would break, worked out by Inspect Impact while it asks: the pages that include it, the references to it and where each is written, the navigation that lists it and the PDF profiles that publish it. The file is moved aside into the app's state folder, not destroyed: the notification's Undo, or Edit › Undo Delete, puts back the latest deletion and reopens it. File › Restore Deleted File… lists every deletion still kept for the workspace's files, from this session or an earlier one, newest first, and puts back the one chosen, making any folders it was in and opening it if it is a page; like Undo Delete, it refuses while a file is at that path. Deletions are removed after `[history] keep_days`.
 - A replace or rename is undone and redone only as a whole. If one of its pages was edited afterwards, undo says which; undo that page's later edits first.
 
+**Comments**
+
+- Select text and choose Edit › Add Comment (Cmd/Ctrl-Alt-M) to leave a note on it in the Comments panel; reply, resolve, edit and delete there. Commented text is marked in the source and visual editors, the status bar names the comment at the caret, and Next Comment and Previous Comment move between them. A comment follows its text as anyone types; one whose text is deleted is kept as detached and comes back if the text does.
+- Comments live in a file beside the page (`.install.adoc.afd` for `install.adoc`), never in the page, so a page's Git diff never shows them and Antora never publishes them; the file changes only when comments do. Your name on them is `[comments] name` and `email` in the user settings file, else your global Git identity.
+- In a collaboration session everyone with a shared page open sees its comments, and Viewers can comment too; the host keeps them and decides who may resolve, edit or delete.
+
 **Working together**
 
 - Collaboration is off until `[collaboration] enabled = true` is in the user settings file; until then nothing about it shows in the menus or the palette, and nothing listens or connects.
@@ -468,6 +474,7 @@ With `--http 127.0.0.1:8765` (any other loopback address, or port 0 for a free o
 - Editing included content in place, plugins.
 - Merging, rebasing, conflicts and history: use a Git client.
 - Accessible labels for the graph's nodes: GPUI has no accessibility tree yet.
+- Comments' manual checks on each platform (`docs/qa/comments.md`).
 - In collaboration: other participants' carets in the visual editor, images and navigation for guests, sharing beyond a local network or VPN, and the manual checks on two machines (`docs/qa/collab.md`).
 - Verified IME composition and frame timing on every platform, the packages on macOS and Windows, and the preview and the graph checked by hand on each platform: see [`docs/qa/phase7.md`](docs/qa/phase7.md), [`docs/qa/phase1.md`](docs/qa/phase1.md), [`docs/qa/phase2.md`](docs/qa/phase2.md), [`docs/qa/phase3.md`](docs/qa/phase3.md), [`docs/qa/phase4.md`](docs/qa/phase4.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).
 

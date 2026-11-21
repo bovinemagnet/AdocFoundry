@@ -10,7 +10,8 @@
 //!
 //! Each deletion is a folder in the store, `<milliseconds>-<process>-<count>`, the time it was
 //! made, holding the file as `file` and its path, as UTF-8 text, as `path`, written whole
-//! before the file is moved. The store is read as untrusted: links are never followed, and a
+//! before the file is moved; a page's metadata file (`.<page>.afd`, its comments) goes with it
+//! as `sidecar`, and comes back with it. The store is read as untrusted: links are never followed, and a
 //! recorded path is restored only when it is absolute, has no `..` and lies in a root,
 //! reached without a link. Without a state folder nothing is deleted, so only the app deletes.
 
@@ -35,6 +36,8 @@ pub const DELETED_DIR: &str = "deleted";
 
 const FILE: &str = "file";
 const PATH_FILE: &str = "path";
+/// The page's metadata file (its comments), kept beside it when it had one.
+const SIDECAR: &str = "sidecar";
 
 /// The longest `path` record read; longer is not a path this engine wrote.
 const MAX_PATH_RECORD: u64 = 64 * 1024;
@@ -174,6 +177,8 @@ impl Engine {
                 }
             }
         }
+        // Comments still to be written go to the file before it is moved with the page.
+        self.write_comments_now();
         sweep(
             &store,
             self.settings.history.keep_days,
@@ -194,6 +199,13 @@ impl Engine {
         if let Err(error) = move_file(&path, &folder.join(FILE), false) {
             let _ = fs::remove_dir_all(&folder);
             return Err(EngineError::io(&path, error));
+        }
+        if let Some(sidecar) = sidecar_of(&path) {
+            if let Err(error) = move_file(&sidecar, &folder.join(SIDECAR), false) {
+                let _ = move_file(&folder.join(FILE), &path, true);
+                let _ = fs::remove_dir_all(&folder);
+                return Err(EngineError::io(&sidecar, error));
+            }
         }
         match item {
             Some(TabItem::Document(id)) => {
@@ -235,11 +247,13 @@ impl Engine {
                 deleted.path.display()
             )));
         }
+        sidecar_free(&deleted.folder, &deleted.path)?;
         if let Some(parent) = deleted.path.parent() {
             fs::create_dir_all(parent).map_err(|error| EngineError::io(parent, error))?;
         }
         move_file(&kept, &deleted.path, true)
             .map_err(|error| EngineError::io(&deleted.path, error))?;
+        restore_sidecar(&deleted.folder, &deleted.path)?;
         self.deletions.kept.pop();
         let _ = fs::remove_dir_all(&deleted.folder);
         self.file_came_or_went(&deleted.path);
@@ -298,11 +312,13 @@ impl Engine {
             )));
         }
         let folder = store.join(id);
+        sidecar_free(&folder, &path)?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|error| EngineError::io(parent, error))?;
         }
         move_file(&folder.join(FILE), &path, true)
             .map_err(|error| EngineError::io(&path, error))?;
+        restore_sidecar(&folder, &path)?;
         let _ = fs::remove_dir_all(&folder);
         self.deletions
             .kept
@@ -472,6 +488,36 @@ fn read_entry(store: &Path, id: &str) -> Option<KeptDeletion> {
         deleted: UNIX_EPOCH + Duration::from_millis(made),
         occupied,
     })
+}
+
+/// The metadata file of the page at `path`, when it has one that is a file, not a link.
+fn sidecar_of(path: &Path) -> Option<PathBuf> {
+    crate::page_meta::sidecar_path(path).filter(|sidecar| is_real_file(sidecar))
+}
+
+/// Refuses to restore a deletion holding a metadata file while another is where it would go.
+fn sidecar_free(folder: &Path, path: &Path) -> Result<(), EngineError> {
+    let Some(target) = crate::page_meta::sidecar_path(path) else {
+        return Ok(());
+    };
+    if is_real_file(&folder.join(SIDECAR)) && fs::symlink_metadata(&target).is_ok() {
+        return Err(EngineError::Refused(format!(
+            "A comments file is already at {}, so the deleted file was not put back",
+            target.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Puts back the metadata file kept with a deletion, if it has one.
+fn restore_sidecar(folder: &Path, path: &Path) -> Result<(), EngineError> {
+    let kept = folder.join(SIDECAR);
+    match crate::page_meta::sidecar_path(path) {
+        Some(target) if is_real_file(&kept) => {
+            move_file(&kept, &target, true).map_err(|error| EngineError::io(&target, error))
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Moves `from` to `to`, copying across file systems; `to` must not exist when `new` says so.

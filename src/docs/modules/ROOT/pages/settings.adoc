@@ -166,6 +166,10 @@ check = true                     # look for a newer release at start-up
 
 [collaboration]                  # user file only
 enabled = false                  # true: Share Workspace... and Join Session... appear
+
+[comments]                       # user file only
+name = "Paul Snow"               # the author of your comments; default your Git name
+email = "paul@example.com"       # optional; default your Git email
 ----
 
 [[font-sets]]
@@ -603,6 +607,20 @@ Off, *Share Workspace...*, *Join Session...*, *Copy Invitation*, *Stop Sharing* 
 A session that is already running can still be stopped or left whatever this says.
 Accepted only in the user file, so a repository cannot turn collaboration on for you.
 See xref:collaboration.adoc[Working together].
+
+|`comments.name`
+|string
+|your global Git `user.name`, else your operating system's user name
+|The name written as the author of the comments and replies you add, in the `.afd` file beside the page.
+At most 64 bytes; a longer name is cut.
+Accepted only in the user file, so a repository cannot write comments in your name.
+
+|`comments.email`
+|string
+|your global Git `user.email`, else none
+|An optional email address written with your comments and replies.
+At most 254 bytes; a longer address is cut.
+Accepted only in the user file.
 |===
 
 See xref:pdf-export.adoc[Exporting to PDF].
@@ -1179,6 +1197,7 @@ Both files may set `[quality]`: a rule's severity from the workspace file wins, 
 `history.*` is also accepted only in the user file, because history is kept outside the repository.
 `spelling.dictionaries` is accepted only in the user file, so a repository cannot point the editor at files of its choosing.
 `collaboration.*` is also accepted only in the user file, so a repository cannot make the editor listen for or join a session.
+`comments.*` is also accepted only in the user file, so a repository cannot choose the name your comments carry.
 
 == Warnings
 

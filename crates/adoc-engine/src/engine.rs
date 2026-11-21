@@ -84,6 +84,14 @@ pub struct Engine {
     /// has started.
     pub(crate) latest_search: std::sync::Arc<std::sync::atomic::AtomicU64>,
     pub(crate) group_moves: BTreeMap<UndoGroup, Vec<crate::FileMove>>,
+    /// Each open page's comments, and those of pages closed with a write still to make, by
+    /// path (`comments.rs`).
+    pub(crate) page_comments: BTreeMap<DocumentId, crate::comments::PageComments>,
+    pub(crate) closing_comments: BTreeMap<PathBuf, crate::comments::PageComments>,
+    pub(crate) next_comment_ticket: u64,
+    /// The global Git identity, read once, for comments written here.
+    #[cfg(feature = "git")]
+    pub(crate) comment_identity: std::cell::OnceCell<Option<(String, Option<String>)>>,
     /// The files each group made, which undoing it deletes.
     pub(crate) group_created: BTreeMap<UndoGroup, Vec<crate::new_page::CreatedFile>>,
     /// The modules groups made, for their descriptors and folders on undo and redo.
@@ -242,6 +250,11 @@ impl Engine {
             next_search: 1,
             latest_search: std::sync::Arc::default(),
             group_moves: BTreeMap::new(),
+            page_comments: BTreeMap::new(),
+            closing_comments: BTreeMap::new(),
+            next_comment_ticket: 1,
+            #[cfg(feature = "git")]
+            comment_identity: std::cell::OnceCell::new(),
             group_created: BTreeMap::new(),
             group_modules: BTreeMap::new(),
             group_projects: BTreeMap::new(),
@@ -491,6 +504,7 @@ impl Engine {
                 client_owned: false,
             },
         );
+        self.load_comments(id);
         self.emit(EngineEvent::DocumentOpened(id));
         if asciidoc && !untitled && !self.restoring && !self.applying {
             // Opening a page changes no parse, so the audit's parts stay as they are.
@@ -553,6 +567,7 @@ impl Engine {
         self.forget_recovery(id);
         self.forget_html_exports(id);
         self.forget_caret(id);
+        self.forget_comments(id, &document.path);
         if self.rendered.layout.pinned == Some(id) {
             self.rendered.layout.pinned = None;
             self.emit(EngineEvent::PreviewLayoutChanged);
@@ -1083,6 +1098,7 @@ impl Engine {
             self.graph_file_changed(&path);
         }
 
+        self.map_comments(id, &forward);
         self.emit(EngineEvent::DocumentChanged {
             id,
             version: version_after,

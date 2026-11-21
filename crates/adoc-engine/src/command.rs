@@ -100,6 +100,8 @@ pub enum CommandArgs {
         text: String,
     },
     Path(PathBuf),
+    /// A change to a page's comments, for the `comments.*` commands.
+    Comment(crate::CommentRequest),
     /// A place in a file, which need not be open.
     Position(crate::NavigationPosition),
     Search(SearchRequest),

@@ -96,6 +96,14 @@ pub mod ids {
     pub const COLLAB_OPEN_FILE: CommandId = CommandId::new("collaboration.open_file");
     pub const COLLAB_FOLLOW: CommandId = CommandId::new("collaboration.follow");
     pub const COLLAB_STOP_FOLLOWING: CommandId = CommandId::new("collaboration.stop_following");
+    pub const COMMENTS_ADD: CommandId = CommandId::new("comments.add");
+    pub const COMMENTS_REPLY: CommandId = CommandId::new("comments.reply");
+    pub const COMMENTS_RESOLVE: CommandId = CommandId::new("comments.resolve");
+    pub const COMMENTS_REOPEN: CommandId = CommandId::new("comments.reopen");
+    pub const COMMENTS_EDIT: CommandId = CommandId::new("comments.edit");
+    pub const COMMENTS_DELETE: CommandId = CommandId::new("comments.delete");
+    pub const COMMENTS_NEXT: CommandId = CommandId::new("comments.next");
+    pub const COMMENTS_PREVIOUS: CommandId = CommandId::new("comments.previous");
     pub const SETTINGS_RELOAD: CommandId = CommandId::new("settings.reload");
     pub const VIEW_TOGGLE_PREVIEW: CommandId = CommandId::new("view.toggle_preview");
     pub const VIEW_DETACH_PREVIEW: CommandId = CommandId::new("view.detach_preview");
@@ -636,6 +644,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     crate::site_build::register_site_build(registry);
     crate::impact_inspection::register_impact_inspection(registry);
     crate::deletion::register_deletion(registry);
+    crate::comments::register_comments(registry);
     crate::appearance::register_appearance(registry);
     #[cfg(feature = "collab")]
     crate::collab_session::register_collaboration(registry);

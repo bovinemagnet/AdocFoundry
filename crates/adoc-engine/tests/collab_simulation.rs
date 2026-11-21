@@ -131,6 +131,19 @@ enum Op {
     Duplicate {
         guest: u8,
     },
+    /// An actor comments on up to `len` characters from `at` (#762).
+    Comment {
+        actor: u8,
+        file: u64,
+        at: u16,
+        len: u8,
+    },
+    /// An actor replies to the file's first comment, or resolves or reopens it.
+    Reply {
+        actor: u8,
+        file: u64,
+        resolve: bool,
+    },
 }
 
 fn schedule(seed: u64, steps: usize) -> Vec<Op> {
@@ -140,7 +153,7 @@ fn schedule(seed: u64, steps: usize) -> Vec<Op> {
             let actor = rng.below(3) as u8;
             let guest = 1 + rng.below(2) as u8;
             let file = 1 + rng.below(2);
-            match rng.below(110) {
+            match rng.below(120) {
                 0..=44 => Op::Edit {
                     actor,
                     file,
@@ -167,9 +180,20 @@ fn schedule(seed: u64, steps: usize) -> Vec<Op> {
                 96..=97 => Op::Reload { file },
                 98..=99 => Op::Duplicate { guest },
                 100..=104 => Op::GoTo { actor, file },
-                _ => Op::Follow {
+                105..=109 => Op::Follow {
                     actor,
                     leader: rng.below(3) as u8,
+                },
+                110..=115 => Op::Comment {
+                    actor,
+                    file,
+                    at: rng.below(65_536) as u16,
+                    len: 1 + rng.below(6) as u8,
+                },
+                _ => Op::Reply {
+                    actor,
+                    file,
+                    resolve: rng.below(100) < 40,
                 },
             }
         })
@@ -381,6 +405,50 @@ impl Simulation {
         Ok(())
     }
 
+    /// Every guest connected and not removed is told each page's comments as the host holds
+    /// them: the same comments, on the same text, resolved alike, with the same replies.
+    fn check_comments(&mut self) -> Checked {
+        // By id: where a detached comment was is the host's alone, so detached comments may
+        // be listed in another order.
+        let shown = |comments: Vec<adoc_engine::Comment>| -> Vec<_> {
+            let mut shown: Vec<_> = comments
+                .into_iter()
+                .map(|comment| {
+                    (
+                        comment.id,
+                        comment.detached,
+                        comment.quote,
+                        comment.resolved.is_some(),
+                        comment.replies.len(),
+                    )
+                })
+                .collect();
+            shown.sort();
+            shown
+        };
+        for file in [1, 2] {
+            let Some(host) = self.document(Actor::Host, file) else {
+                continue;
+            };
+            let theirs = shown(self.engine(Actor::Host).comments(host));
+            for peer in GUESTS {
+                if self.removed(peer) || self.offline.contains(&peer) {
+                    continue;
+                }
+                let Some(id) = self.document(Actor::Guest(peer), file) else {
+                    continue;
+                };
+                let mine = shown(self.engine(Actor::Guest(peer)).comments(id));
+                if mine != theirs {
+                    return Err(format!(
+                        "{peer:?} shows file {file}'s comments as {mine:?}, the host as {theirs:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Every guest connected and not removed holds each page's text as the host does.
     fn check_converged(&mut self) -> Checked {
         for file in [1, 2] {
@@ -496,6 +564,7 @@ impl Simulation {
                     self.session.settle();
                     self.check_converged()?;
                     self.check_following()?;
+                    self.check_comments()?;
                 }
             }
             Op::Drop { guest, lost } => {
@@ -579,6 +648,82 @@ impl Simulation {
                     }
                 }
             }
+            Op::Comment {
+                actor: n,
+                file,
+                at,
+                len,
+            } => {
+                let actor = actor(n);
+                if !self.present(actor) {
+                    return Ok(());
+                }
+                let Some(id) = self.document(actor, file) else {
+                    return Ok(());
+                };
+                let text = self.text(actor, id);
+                let places = boundaries(&text);
+                if places.len() < 2 {
+                    return Ok(());
+                }
+                let start = (usize::from(at) * places.len() / 65_536).min(places.len() - 2);
+                let end = (start + usize::from(len)).min(places.len() - 1);
+                // Refused while a guest cannot reach the host: nothing changes then.
+                let _ = self.engine(actor).invoke(
+                    ids::COMMENTS_ADD,
+                    CommandArgs::Comment(adoc_engine::CommentRequest::Add {
+                        id,
+                        range: SourceRange::new(places[start], places[end]),
+                        text: format!("Comment by {actor:?}"),
+                    }),
+                );
+                if self.text(actor, id) != text {
+                    return Err("a comment changed the text".to_owned());
+                }
+            }
+            Op::Reply {
+                actor: n,
+                file,
+                resolve,
+            } => {
+                let actor = actor(n);
+                if !self.present(actor) {
+                    return Ok(());
+                }
+                let Some(id) = self.document(actor, file) else {
+                    return Ok(());
+                };
+                let Some(first) = self.engine(actor).comments(id).into_iter().next() else {
+                    return Ok(());
+                };
+                let (command, request) = if resolve {
+                    let resolved = first.resolved.is_none();
+                    (
+                        if resolved {
+                            ids::COMMENTS_RESOLVE
+                        } else {
+                            ids::COMMENTS_REOPEN
+                        },
+                        adoc_engine::CommentRequest::Resolve {
+                            id,
+                            comment: first.id,
+                            resolved,
+                        },
+                    )
+                } else {
+                    (
+                        ids::COMMENTS_REPLY,
+                        adoc_engine::CommentRequest::Reply {
+                            id,
+                            comment: first.id,
+                            text: format!("Reply by {actor:?}"),
+                        },
+                    )
+                };
+                let _ = self
+                    .engine(actor)
+                    .invoke(command, CommandArgs::Comment(request));
+            }
             Op::Duplicate { guest } => {
                 let peer = GUESTS[usize::from(guest - 1)];
                 if self.duplicated.is_some() {
@@ -621,6 +766,7 @@ impl Simulation {
         self.check_replicas()?;
         self.check_converged()?;
         self.check_following()?;
+        self.check_comments()?;
         for (peer, _) in self.session.removed() {
             if self.duplicated != Some(peer) {
                 return Err(format!("the host removed {peer:?}, who did nothing wrong"));
