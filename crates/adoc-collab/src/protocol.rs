@@ -338,7 +338,7 @@ pub enum Message {
     CommentThread {
         file: u64,
         epoch: u32,
-        thread: SharedThread,
+        thread: Box<SharedThread>,
         selection: Option<RelativeSelection>,
     },
     /// A comment of `file` was deleted.
@@ -891,7 +891,7 @@ impl Message {
                 let mut payload = selection.as_ref().map_or_else(Vec::new, |selection| {
                     [selection.anchor.as_slice(), selection.head.as_slice()].concat()
                 });
-                payload.extend(json(thread)?);
+                payload.extend(json(thread.as_ref())?);
                 (
                     kind::COMMENT_THREAD,
                     json(&CommentThreadControl {
@@ -1320,7 +1320,7 @@ pub fn decode(frame: &[u8]) -> Result<Message, FrameError> {
             Message::CommentThread {
                 file,
                 epoch,
-                thread: read(rest)?,
+                thread: Box::new(read(rest)?),
                 selection,
             }
         }

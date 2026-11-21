@@ -597,7 +597,7 @@ impl Engine {
                     Message::CommentThread {
                         file,
                         epoch,
-                        thread,
+                        thread: Box::new(thread),
                         selection,
                     },
                 );
@@ -638,7 +638,7 @@ impl Engine {
                 if !state.threads.contains_key(&thread.id) && state.threads.len() >= MAX_COMMENTS {
                     return;
                 }
-                state.threads.insert(thread.id, (thread, selection));
+                state.threads.insert(thread.id, (*thread, selection));
             }
             Message::CommentRemoved { comment, .. } => {
                 if let Some(state) = guest.files.get_mut(&file) {

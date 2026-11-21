@@ -1028,4 +1028,3 @@ fn an_update_sent_again_after_a_reconnection_is_discarded() {
         Op::Drop { guest: 2, lost: 1 },
     ]);
 }
-

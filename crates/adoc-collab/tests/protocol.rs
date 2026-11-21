@@ -212,16 +212,16 @@ fn every_message() -> Vec<Message> {
         Message::CommentThread {
             file: 3,
             epoch: 2,
-            thread: thread(),
+            thread: Box::new(thread()),
             selection: Some(selection.clone()),
         },
         Message::CommentThread {
             file: 3,
             epoch: 2,
-            thread: SharedThread {
+            thread: Box::new(SharedThread {
                 detached: true,
                 ..thread()
-            },
+            }),
             selection: None,
         },
         Message::CommentRemoved {
@@ -297,25 +297,25 @@ fn comments_are_held_to_their_limits() {
         Message::CommentThread {
             file: 1,
             epoch: 1,
-            thread: SharedThread {
+            thread: Box::new(SharedThread {
                 replies: vec![thread().replies[0].clone(); MAX_COMMENT_REPLIES + 1],
                 ..thread()
-            },
+            }),
             selection: Some(selection.clone()),
         },
         Message::CommentThread {
             file: 1,
             epoch: 1,
-            thread: SharedThread {
+            thread: Box::new(SharedThread {
                 author: "a".repeat(MAX_NAME + 1),
                 ..thread()
-            },
+            }),
             selection: Some(selection.clone()),
         },
         Message::CommentThread {
             file: 1,
             epoch: 1,
-            thread: thread(),
+            thread: Box::new(thread()),
             selection: None,
         },
     ] {
@@ -325,7 +325,7 @@ fn comments_are_held_to_their_limits() {
     let frame = Message::CommentThread {
         file: 1,
         epoch: 1,
-        thread: thread(),
+        thread: Box::new(thread()),
         selection: Some(selection),
     }
     .encode()
