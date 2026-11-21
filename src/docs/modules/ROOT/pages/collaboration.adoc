@@ -345,7 +345,6 @@ The others then pull.
 * Other participants' carets and selections are drawn in the source editor only, not yet in the visual editor.
 * Images and other media are not shared, and guests have no navigation (the trees of navigation files) for shared components.
 * There is no relay server, so sharing works across a local network or a VPN, not across the internet through a network you do not control.
-* The Flatpak package for Linux cannot share or join a session yet, because it has no network permission. Use another Linux package to collaborate.
 
 == Related
 

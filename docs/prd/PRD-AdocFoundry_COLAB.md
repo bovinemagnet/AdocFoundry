@@ -447,9 +447,9 @@ Convergence, security, performance and release QA. The record is `docs/qa/collab
   - Bytes per edit are held on every run (`collab_update_sizes_stay_small`); CI times nothing.
 - **Packaging.**
   - The macOS bundle says why it reaches the local network (`NSLocalNetworkUsageDescription`, `packaging/test_bundle.py`).
-  - The Flatpak manifest has no network permission, so collaboration is unavailable there until decided.
+  - The Flatpak may use the network (`--share=network`, held by `packaging/test_bundle.py`), as the maintainer chose, so it can share and join; its update check then reaches the releases feed too, and announces new versions as for a deb or rpm.
 - **The protocol changed** (`Components` in C7, `Update::base` here) and `PROTOCOL_VERSION` stays 1: no build with collaboration has been released, so no peer speaks the earlier form.
-- **Not done here:** the manual checks on three platforms, and the Flatpak decision in `docs/qa/collab.md`.
+- **Not done here:** the manual checks on three platforms in `docs/qa/collab.md`.
 
 ## 15. References
 

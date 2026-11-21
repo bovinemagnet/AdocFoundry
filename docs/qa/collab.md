@@ -4,7 +4,7 @@ The release record for collaborative editing (COLLAB 8/8, #695; `docs/prd/PRD-Ad
 
 A case is marked passed only when a named test holds it, or a person has run it and recorded the result here. Nothing unverified is marked as passing.
 
-**State:** every automated row below passes on macOS. The manual checks have not been run yet. One release decision is open (see the end).
+**State:** every automated row below passes on macOS. The manual checks have not been run yet. No release decision is open.
 
 ## Coverage matrix
 
@@ -105,7 +105,8 @@ Run with two copies of the app on two machines on one local network, unless the 
 | Change a shared file in another editor; the host is asked which to keep | [ ] | [ ] | [ ] |
 | Screen reader: the Session panel's participants, roles and caret places are read | [ ] | [ ] | [ ] |
 | Stop Sharing: guests are told, the port is closed | [ ] | [ ] | [ ] |
+| The Flatpak package shares and joins on the local network (Linux only) | | | [ ] |
 
-## Open release decision
+## Release decisions
 
-- **Flatpak.** The Flatpak package has no network permission, so it cannot share or join. Add `--share=network` to its manifest, or document collaboration as unavailable there (as the user guide now does)?
+- **Flatpak:** the package may use the network (`--share=network` in its manifest, held by `packaging/test_bundle.py`), so it can share and join; nothing listens or connects until the person chooses to.

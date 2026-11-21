@@ -12,7 +12,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
   - **Saving:** only the host writes files. The status bar says whether the host's file holds the text, and a change made on disk during a session is a conflict the host settles.
   - **Scope:** a guest's links and includes lead only to shared files, resolved with the host's Antora component names and versions. Pictures are not shared, and no diagram program runs on shared text. Commands that change several files or the folder's structure are refused while sharing.
   - **Reliability:** a dropped connection resumes with its edits, and a page reloaded from disk starts everyone again from its text. A seeded simulation of three engines with dropped links, held deliveries, role changes, reloads and duplicated updates checks that everyone converges. A test runs the guest in a second process over loopback TLS.
-  - **Not yet:** the manual checks on two machines (`docs/qa/collab.md`), carets in the visual editor, shared pictures and navigation, sharing beyond a local network or VPN, and the Flatpak package, which has no network permission.
+  - **Not yet:** the manual checks on two machines (`docs/qa/collab.md`), carets in the visual editor, shared pictures and navigation, and sharing beyond a local network or VPN.
   - **For developers:** new crates `adoc-collab` (the replica over `yrs` and the session protocol) and `adoc-share` (the TLS transport). `adoc-engine` gains the `collab` feature, which only the app names; the release workflow builds the app apart from the other binaries.
 
 ## 0.13.0 — 2026-11-19

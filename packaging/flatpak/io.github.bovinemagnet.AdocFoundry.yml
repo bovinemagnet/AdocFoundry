@@ -12,6 +12,9 @@ sdk: org.freedesktop.Sdk
 command: adocfoundry
 finish-args:
   - --share=ipc
+  # Collaborative editing: Share listens and Join connects, only when the person chooses to;
+  # the update check reads the releases feed.
+  - --share=network
   - --socket=wayland
   - --socket=fallback-x11
   - --device=dri
