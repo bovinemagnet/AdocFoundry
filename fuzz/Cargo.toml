@@ -120,3 +120,10 @@ path = "fuzz_targets/pdf_literal.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "page_meta"
+path = "fuzz_targets/page_meta.rs"
+test = false
+doc = false
+bench = false

@@ -60,6 +60,8 @@ def main():
         for line in text.splitlines():
             if line.strip():
                 write("pdf_literal", line.encode())
+    for sidecar in sorted(FIXTURES.rglob("*.afd")):
+        write("page_meta", sidecar.read_bytes())
     for name, notation in (("asciimath.txt", ASCIIMATH), ("latex.txt", LATEX)):
         for formula, *typst in formulas(name):
             write("math_is_safe", notation + formula.encode())

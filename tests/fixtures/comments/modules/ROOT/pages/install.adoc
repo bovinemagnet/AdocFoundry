@@ -1,0 +1,5 @@
+= Install
+
+On macOS the installer refuses an unsigned package, so sign it first.
+
+On Windows the installer asks before it starts.
