@@ -645,12 +645,18 @@ fn commented(clock_settings: Settings) -> (tempfile::TempDir, Engine, ManualCloc
     (directory, engine, clock, id)
 }
 
-/// Pumps at each deadline until nothing is due.
+/// Pumps at each deadline until nothing is due. A change on disk's deadline (the watcher seeing
+/// the comments file written) is by the system's time, which the manual clock does not move, so
+/// that one is waited for.
 fn run_out(engine: &mut Engine, clock: &ManualClock) {
-    for _ in 0..50 {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
         let Some(due) = engine.next_due() else {
             return;
         };
+        if due <= clock.now() && engine.pump() == 0 {
+            thread::sleep(Duration::from_millis(20));
+        }
         clock.advance(due.saturating_duration_since(clock.now()));
         engine.pump();
         assert!(engine.wait_for_workers(Duration::from_secs(10)));
