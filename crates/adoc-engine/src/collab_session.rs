@@ -43,6 +43,8 @@ const CANNOT_OPEN: &str = "the host cannot open the file just now";
 /// The most link events one `pump` handles; any more are due at the next.
 pub const SESSION_EVENTS_PER_PUMP: usize = 64;
 
+mod comments;
+
 /// Someone in a session, as the host sees them.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Participant {
@@ -167,6 +169,11 @@ struct PeerFile {
     selection: Option<RelativeSelection>,
     /// The file's state as the peer was last told it.
     told: Option<FileStatus>,
+    /// The file's comments as the peer was last told them, by id: a digest of each and the
+    /// selection it was sent with; and the text's version and comments' generation it was told
+    /// at (`comments.rs`).
+    threads: BTreeMap<u64, (u64, Option<RelativeSelection>)>,
+    comments_seen: Option<(u64, u64)>,
 }
 
 struct Guest {
@@ -222,6 +229,14 @@ struct GuestFile {
     /// The `client` of the snapshot this side's replica was last made from, which each update
     /// sent names (`Message::Update::base`).
     base: u64,
+    /// The file's comments as the host last told them, by id, with their places.
+    threads: BTreeMap<
+        u64,
+        (
+            adoc_collab::protocol::SharedThread,
+            Option<RelativeSelection>,
+        ),
+    >,
 }
 
 fn refused(message: &str) -> EngineError {
@@ -1053,7 +1068,9 @@ impl Engine {
             .filter(|presence| presence.waiting.is_some())
             .filter_map(|presence| presence.throttle.due())
             .min();
-        let now = (session.backlog || outgoing || unannounced || roster).then(|| self.clock.now());
+        let comments = self.host_comments_unannounced(session);
+        let now = (session.backlog || outgoing || unannounced || roster || comments)
+            .then(|| self.clock.now());
         [now, presence].into_iter().flatten().min()
     }
 
@@ -1209,6 +1226,13 @@ impl Engine {
                 selection,
                 ..
             } => self.host_awareness(session, peer, file, epoch, selection),
+            Message::Comment {
+                file,
+                epoch,
+                request,
+                change,
+                selection,
+            } => self.host_comment(session, peer, file, epoch, request, change, selection),
             Message::Focus { file, following } => {
                 let Side::Host(host) = &mut session.side else {
                     return Ok(());
@@ -1324,6 +1348,8 @@ impl Engine {
         let me = fresh_client(&mut host.clients);
         let id = self.open_for_session(&access, &path)?;
         self.share_document_at(id, SharedFileId(file), me, next_epoch)?;
+        // Its comments, even outside the workspace's folders: it was confined when offered.
+        self.load_offered_comments(id);
         if let Side::Host(host) = &mut session.side {
             if let Some(offered) = host.offered.get_mut(&file) {
                 offered.document = Some(id);
@@ -1413,6 +1439,8 @@ impl Engine {
                 live: entry.connected,
                 selection,
                 told: entry.connected.then(|| status.clone()),
+                threads: BTreeMap::new(),
+                comments_seen: None,
             },
         );
         if entry.connected {
@@ -1832,6 +1860,7 @@ impl Engine {
                 self.host_epoch_moved(session, file, None);
             }
             self.host_announce(session, file, id);
+            self.host_announce_comments(session, file, id);
         }
     }
 
@@ -2032,6 +2061,12 @@ impl Engine {
                 self.guest_refresh_editing(session);
                 true
             }
+            message @ (Message::CommentThread { .. }
+            | Message::CommentRemoved { .. }
+            | Message::CommentRefused { .. }) => {
+                self.guest_comment_message(session, message);
+                false
+            }
             Message::Leave { .. } => {
                 guest.connected = false;
                 self.guest_refresh_editing(session);
@@ -2091,6 +2126,8 @@ impl Engine {
                 state.document = Some(id);
                 state.epoch = epoch;
                 state.selections.clear();
+                // The host tells the comments again after a snapshot, placed in its text.
+                state.threads.clear();
                 state.saved = None;
                 state.conflict = false;
                 state.next_in = 1;
@@ -2715,14 +2752,6 @@ pub const REFUSED_ON_GUEST_PAGES: &[crate::CommandId] = &[
     crate::commands::ids::FILE_DELETE,
     crate::commands::ids::DOCUMENT_LOCAL_HISTORY,
     crate::commands::ids::DOCUMENT_RESTORE_VERSION,
-    // Comments on a guest's page are the host's to keep; until the session carries them
-    // (COMMENTS 2/4), a guest makes none.
-    crate::commands::ids::COMMENTS_ADD,
-    crate::commands::ids::COMMENTS_REPLY,
-    crate::commands::ids::COMMENTS_RESOLVE,
-    crate::commands::ids::COMMENTS_REOPEN,
-    crate::commands::ids::COMMENTS_EDIT,
-    crate::commands::ids::COMMENTS_DELETE,
 ];
 
 impl Engine {

@@ -154,6 +154,85 @@ pub enum CommentRequest {
     Step { id: DocumentId, offset: usize },
 }
 
+/// A change to a page's comments, whoever asks for it: the user here, or a guest through the
+/// host. Ids are the comments' and replies' own.
+#[derive(Clone, Debug)]
+pub(crate) enum Change {
+    Add {
+        range: SourceRange,
+        text: String,
+    },
+    Reply {
+        comment: u64,
+        text: String,
+    },
+    Resolve {
+        comment: u64,
+        resolved: bool,
+    },
+    Edit {
+        comment: u64,
+        reply: Option<u64>,
+        text: String,
+    },
+    Delete {
+        comment: u64,
+        reply: Option<u64>,
+    },
+}
+
+/// Who changes comments, and as what: alone, every change is theirs to make; in a session
+/// (design §6) anyone adds and replies, the host, Editors and a comment's author resolve it, its
+/// author edits it, and its author or the host deletes it.
+#[derive(Clone, Debug)]
+pub(crate) struct Actor {
+    pub(crate) author: Author,
+    pub(crate) kind: ActorKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ActorKind {
+    Alone,
+    Host,
+    Editor,
+    Viewer,
+}
+
+impl Actor {
+    /// Whether a comment or reply by `name` (and `email`) is the actor's own: the same e-mail
+    /// when both have one, else the same name. A courtesy, not a security boundary: the host
+    /// admits each participant by name, and the file is anyone's with the repository.
+    fn owns(&self, name: &str, email: Option<&str>) -> bool {
+        match (self.author.email.as_deref(), email) {
+            (Some(mine), Some(theirs)) => mine.eq_ignore_ascii_case(theirs),
+            _ => self.author.name == name,
+        }
+    }
+
+    /// What the actor may do to a comment or reply by `name` (and `email`).
+    pub(crate) fn allowed(&self, name: &str, email: Option<&str>) -> Allowed {
+        let own = self.owns(name, email);
+        match self.kind {
+            ActorKind::Alone => Allowed::ALL,
+            ActorKind::Host => Allowed {
+                resolve: true,
+                edit: own,
+                delete: true,
+            },
+            ActorKind::Editor => Allowed {
+                resolve: true,
+                edit: own,
+                delete: own,
+            },
+            ActorKind::Viewer => Allowed {
+                resolve: own,
+                edit: own,
+                delete: own,
+            },
+        }
+    }
+}
+
 /// A comment held by an open page.
 #[derive(Clone, Debug)]
 struct Live {
@@ -185,6 +264,8 @@ pub(crate) struct PageComments {
     /// A write failed: why, for the notice, until one succeeds.
     failed: Option<String>,
     search_detached_at: Option<Instant>,
+    /// Counts every change to the comments or their places, for whoever tells others of them.
+    generation: u64,
 }
 
 #[derive(Debug)]
@@ -209,6 +290,7 @@ impl PageComments {
             writing: None,
             failed: None,
             search_detached_at: None,
+            generation: 0,
         }
     }
 
@@ -476,9 +558,22 @@ impl Engine {
     /// The comments of document `id`, in the order of their text, detached ones last.
     #[must_use]
     pub fn comments(&self, id: DocumentId) -> Vec<Comment> {
+        #[cfg(feature = "collab")]
+        if let Some(mut comments) = self.guest_comments(id) {
+            comments.sort_by_key(|comment| {
+                (
+                    comment.detached,
+                    comment.range.start,
+                    comment.range.end,
+                    comment.id,
+                )
+            });
+            return comments;
+        }
         let Some(page) = self.page_comments.get(&id) else {
             return Vec::new();
         };
+        let actor = self.local_actor(id);
         let mut comments: Vec<Comment> = page
             .comments
             .iter()
@@ -520,10 +615,10 @@ impl Engine {
                             created: reply.created,
                             edited: reply.edited,
                             text: reply.text.clone(),
-                            can: Allowed::ALL,
+                            can: actor.allowed(&reply.author, reply.email.as_deref()),
                         })
                         .collect(),
-                    can: Allowed::ALL,
+                    can: actor.allowed(&stored.author, stored.email.as_deref()),
                 }
             })
             .collect();
@@ -541,18 +636,23 @@ impl Engine {
     /// The innermost open comment whose range holds `offset` in document `id`.
     #[must_use]
     pub fn comment_at(&self, id: DocumentId, offset: usize) -> Option<CommentId> {
-        self.page_comments
-            .get(&id)?
-            .comments
-            .iter()
-            .filter(|live| {
-                !live.stored.detached
-                    && live.stored.resolved.is_none()
-                    && live.range.start <= offset
-                    && offset <= live.range.end
+        self.comments(id)
+            .into_iter()
+            .filter(|comment| {
+                !comment.detached
+                    && comment.resolved.is_none()
+                    && comment.range.start <= offset
+                    && offset <= comment.range.end
             })
-            .min_by_key(|live| live.range.len())
-            .map(|live| CommentId(live.stored.id))
+            .min_by_key(|comment| comment.range.len())
+            .map(|comment| comment.id)
+    }
+
+    /// Counts every change to document `id`'s comments, for whoever tells others of them.
+    pub(crate) fn comments_generation(&self, id: DocumentId) -> u64 {
+        self.page_comments
+            .get(&id)
+            .map_or(0, |page| page.generation)
     }
 
     /// Whether document `id`'s comments can be used, or why not.
@@ -589,11 +689,29 @@ impl Engine {
 
     /// Reads the comments of document `id`, just opened.
     pub(crate) fn load_comments(&mut self, id: DocumentId) {
+        self.load_comments_checked(id, true);
+    }
+
+    /// Reads the comments of a page the host offers, if they are not read already: it was
+    /// confined when offered, so it keeps comments wherever it is.
+    #[cfg(feature = "collab")]
+    pub(crate) fn load_offered_comments(&mut self, id: DocumentId) {
+        if !self
+            .page_comments
+            .get(&id)
+            .is_some_and(|page| page.sidecar.is_some())
+        {
+            self.page_comments.remove(&id);
+            self.load_comments_checked(id, false);
+        }
+    }
+
+    fn load_comments_checked(&mut self, id: DocumentId, confine: bool) {
         let Some(document) = self.documents.get(&id) else {
             return;
         };
         let path = document.path.clone();
-        if !document.asciidoc || document.untitled || !self.keeps_comments(&path) {
+        if !document.asciidoc || document.untitled || (confine && !self.keeps_comments(&path)) {
             if document.untitled {
                 self.page_comments.insert(id, PageComments::empty(None));
             }
@@ -720,7 +838,66 @@ impl Engine {
                 .step_comment(id, offset, command == ids::COMMENTS_NEXT)
                 .map(CommandOutcome::Selection);
         }
-        let author = self.comment_author();
+        let change = match request {
+            CommentRequest::Add { range, text, .. } => Change::Add { range, text },
+            CommentRequest::Reply { comment, text, .. } => Change::Reply {
+                comment: comment.0,
+                text,
+            },
+            CommentRequest::Resolve {
+                comment, resolved, ..
+            } => Change::Resolve {
+                comment: comment.0,
+                resolved,
+            },
+            CommentRequest::Edit {
+                comment,
+                reply,
+                text,
+                ..
+            } => Change::Edit {
+                comment: comment.0,
+                reply: reply.map(|reply| reply.0),
+                text,
+            },
+            CommentRequest::Delete { comment, reply, .. } => Change::Delete {
+                comment: comment.0,
+                reply: reply.map(|reply| reply.0),
+            },
+            CommentRequest::Step { .. } => unreachable!("answered above"),
+        };
+        #[cfg(feature = "collab")]
+        if self.is_shared_guest(id) {
+            return self
+                .guest_comment(id, change)
+                .map(|()| CommandOutcome::Done);
+        }
+        let actor = self.local_actor(id);
+        self.change_comments(id, change, &actor)?;
+        Ok(CommandOutcome::Done)
+    }
+
+    /// Who the person using this engine is to document `id`'s comments: alone, or the host or
+    /// a participant of a session.
+    pub(crate) fn local_actor(&self, id: DocumentId) -> Actor {
+        #[cfg(feature = "collab")]
+        if let Some(actor) = self.session_actor(id) {
+            return actor;
+        }
+        let _ = id;
+        Actor {
+            author: self.comment_author(),
+            kind: ActorKind::Alone,
+        }
+    }
+
+    /// Makes `change` to document `id`'s comments for `actor`, if `actor` may.
+    pub(crate) fn change_comments(
+        &mut self,
+        id: DocumentId,
+        change: Change,
+        actor: &Actor,
+    ) -> Result<(), EngineError> {
         let now = self.clock.wall();
         let text = self
             .documents
@@ -745,10 +922,10 @@ impl Engine {
                 std::iter::once(live.stored.id).chain(live.stored.replies.iter().map(|r| r.id))
             })
             .collect();
-        let touched = match request {
-            CommentRequest::Add {
-                range, text: body, ..
-            } => {
+        let author = actor.author.clone();
+        let not_allowed = |what: &str| EngineError::Refused(format!("You cannot {what}."));
+        let touched = match change {
+            Change::Add { range, text: body } => {
                 let body = checked_text(&body)?;
                 if range.is_empty()
                     || range.end > text.len()
@@ -786,13 +963,12 @@ impl Engine {
                 });
                 new
             }
-            CommentRequest::Reply {
+            Change::Reply {
                 comment,
                 text: body,
-                ..
             } => {
                 let body = checked_text(&body)?;
-                let at = page.live(comment)?;
+                let at = page.live(CommentId(comment))?;
                 let replies = &mut page.comments[at].stored.replies;
                 if replies.len() >= page_meta::MAX_REPLIES {
                     return Err(EngineError::Refused(MetaProblem::TooMany.to_string()));
@@ -808,47 +984,66 @@ impl Engine {
                 });
                 new
             }
-            CommentRequest::Resolve {
-                comment, resolved, ..
-            } => {
-                let at = page.live(comment)?;
-                page.comments[at].stored.resolved = resolved.then_some(Resolution {
+            Change::Resolve { comment, resolved } => {
+                let at = page.live(CommentId(comment))?;
+                let stored = &mut page.comments[at].stored;
+                if !actor
+                    .allowed(&stored.author, stored.email.as_deref())
+                    .resolve
+                {
+                    return Err(not_allowed("resolve or reopen this comment"));
+                }
+                stored.resolved = resolved.then_some(Resolution {
                     by: author.name,
                     at: now,
                 });
-                comment.0
+                comment
             }
-            CommentRequest::Edit {
+            Change::Edit {
                 comment,
                 reply,
                 text: body,
-                ..
             } => {
                 let body = checked_text(&body)?;
-                let at = page.live(comment)?;
+                let at = page.live(CommentId(comment))?;
                 let stored = &mut page.comments[at].stored;
                 match reply {
                     None => {
+                        if !actor.allowed(&stored.author, stored.email.as_deref()).edit {
+                            return Err(not_allowed("edit someone else's comment"));
+                        }
                         stored.text = body;
                         stored.edited = Some(now);
-                        comment.0
+                        comment
                     }
                     Some(reply) => {
                         let reply = stored
                             .replies
                             .iter_mut()
-                            .find(|stored| stored.id == reply.0)
-                            .ok_or_else(|| EngineError::NotFound(format!("reply {reply}")))?;
+                            .find(|stored| stored.id == reply)
+                            .ok_or_else(|| {
+                                EngineError::NotFound(format!("reply {}", CommentId(reply)))
+                            })?;
+                        if !actor.allowed(&reply.author, reply.email.as_deref()).edit {
+                            return Err(not_allowed("edit someone else's reply"));
+                        }
                         reply.text = body;
                         reply.edited = Some(now);
                         reply.id
                     }
                 }
             }
-            CommentRequest::Delete { comment, reply, .. } => {
-                let at = page.live(comment)?;
+            Change::Delete { comment, reply } => {
+                let at = page.live(CommentId(comment))?;
                 match reply {
                     None => {
+                        let stored = &page.comments[at].stored;
+                        if !actor
+                            .allowed(&stored.author, stored.email.as_deref())
+                            .delete
+                        {
+                            return Err(not_allowed("delete someone else's comment"));
+                        }
                         let removed = page.comments.remove(at);
                         page.deleted.insert(removed.stored.id);
                         page.deleted
@@ -858,17 +1053,21 @@ impl Engine {
                     }
                     Some(reply) => {
                         let replies = &mut page.comments[at].stored.replies;
-                        let before = replies.len();
-                        replies.retain(|stored| stored.id != reply.0);
-                        if replies.len() == before {
-                            return Err(EngineError::NotFound(format!("reply {reply}")));
+                        let found = replies
+                            .iter()
+                            .find(|stored| stored.id == reply)
+                            .ok_or_else(|| {
+                                EngineError::NotFound(format!("reply {}", CommentId(reply)))
+                            })?;
+                        if !actor.allowed(&found.author, found.email.as_deref()).delete {
+                            return Err(not_allowed("delete someone else's reply"));
                         }
-                        page.deleted.insert(reply.0);
+                        replies.retain(|stored| stored.id != reply);
+                        page.deleted.insert(reply);
                         0
                     }
                 }
             }
-            CommentRequest::Step { .. } => unreachable!("answered above"),
         };
         if touched != 0 {
             page.changed.insert(touched);
@@ -881,9 +1080,10 @@ impl Engine {
                 page.changed.insert(comment.stored.id);
             }
         }
+        page.generation += 1;
         page.write_at = Some(self.clock.now() + COMMENT_SETTLE);
         self.emit(EngineEvent::CommentsChanged(id));
-        Ok(CommandOutcome::Done)
+        Ok(())
     }
 
     /// The range of the open comment after (or before) `offset`, wrapping round the page.
@@ -998,6 +1198,7 @@ impl Engine {
             }
         }
         if found {
+            page.generation += 1;
             page.write_at = Some(self.clock.now() + COMMENT_SETTLE);
             self.emit(EngineEvent::CommentsChanged(id));
         }
@@ -1118,6 +1319,7 @@ impl Engine {
                 };
                 if let Some(page) = page {
                     reread(page, text.as_deref());
+                    page.generation += 1;
                     page.write_at = Some(now);
                 }
             }
@@ -1165,6 +1367,7 @@ impl Engine {
             return true;
         }
         reread(page, text.as_deref());
+        page.generation += 1;
         if page.pending() {
             page.write_at = Some(self.clock.now() + COMMENT_SETTLE);
         }

@@ -629,6 +629,35 @@ impl Engine {
             .ok()
     }
 
+    /// The range `range` of shared document `id` as a selection relative to the shared text, for
+    /// a comment (#762): its start stays after text typed where it is, its end before, so text
+    /// typed at either edge falls outside it, as a comment's byte range does here.
+    pub(crate) fn shared_range(
+        &self,
+        id: DocumentId,
+        range: adoc_core::SourceRange,
+    ) -> Option<adoc_collab::RelativeSelection> {
+        let shared = self.shared.get(&id)?;
+        let text = &self.documents.get(&id)?.text;
+        let len = text.len();
+        let on_boundary = |offset: usize| offset <= len && text.is_char_boundary(offset);
+        if !on_boundary(range.start) || !on_boundary(range.end) {
+            return None;
+        }
+        let start = shared
+            .replica
+            .selection(range.start, range.start, adoc_collab::Affinity::After)
+            .ok()?;
+        let end = shared
+            .replica
+            .selection(range.end, range.end, adoc_collab::Affinity::Before)
+            .ok()?;
+        Some(adoc_collab::RelativeSelection {
+            anchor: start.anchor,
+            head: end.head,
+        })
+    }
+
     /// Where another participant's `selection` is now in shared document `id`, as byte offsets
     /// on character boundaries of its text.
     pub(crate) fn shared_resolve(
