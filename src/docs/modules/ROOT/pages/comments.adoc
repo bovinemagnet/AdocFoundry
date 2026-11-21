@@ -1,0 +1,122 @@
+= Comments
+Paul Snow
+:revnumber: 0.0.0
+:description: Leave notes on the text of a page, reply to them and resolve them, without changing the page.
+
+A comment is a note on some text of a page.
+You can ask a question, suggest a change or leave a reminder, and others can reply.
+The comments are kept beside the page, so the page itself never changes and its Git diff never shows them.
+
+== Adding a comment
+
+. Select the text in the source editor.
+. Choose *Edit › Add Comment*, or press kbd:[Cmd+Alt+M] on macOS or kbd:[Ctrl+Alt+M] elsewhere.
+The command is also in the command palette.
+. A box opens in the *Comments* panel in the sidebar.
+Write the comment and choose *Comment*, or choose *Cancel*.
+
+If nothing is selected, AdocFoundry asks you to select some text first.
+
+== Seeing comments in the editor
+
+Commented text is marked in the source editor with a fill, and a mark in the gutter.
+When the caret is inside a comment, the status bar says whose it is.
+
+*Edit › Next Comment* and *Edit › Previous Comment* move to the next or previous open comment, going round the page.
+
+Comments follow their text as you type.
+
+* Text typed at the edge of a commented passage stays outside it.
+* Text typed inside it makes the passage longer.
+* Deleting part of it makes the passage shorter.
+
+== The Comments panel
+
+The *Comments* tab in the sidebar reads "Comments (n)".
+It is shown while the page has comments, or while you are writing one.
+
+The panel lists the open comments of the page in the order of their text.
+Each shows:
+
+* the text it is on, which you can choose to select that text in the editor;
+* the author;
+* when it was written, as a time for today and a date for earlier days, in UTC;
+* the comment itself, and its replies.
+
+The buttons are *Reply*, *Resolve* (*Reopen* for a resolved comment), *Edit* and *Delete*.
+Only those you may use are shown.
+
+=== Resolved comments
+
+A resolved comment is folded under *Resolved (n)* and is no longer marked in the editor.
+Choose *Reopen* to bring it back.
+
+=== Detached comments
+
+If the text a comment was on is deleted, the comment is _detached_.
+It is listed under *Detached (n)*, with "Was on" and the text it was on.
+
+If the text comes back, for example when you undo the deletion, the comment finds it again once typing pauses.
+
+== Where comments are kept
+
+Comments are written to a file beside the page, named after it with a leading dot and `.afd` added: `.install.adoc.afd` for `install.adoc`.
+It is a TOML file.
+The leading dot keeps it out of the published Antora site.
+
+The page is never changed, so nothing about comments appears in its Git diff.
+
+=== Sharing comments through Git
+
+Commit the `.afd` file to share comments with others.
+The file changes only when comments change, so editing a page on two branches does not make its comments file conflict.
+
+If someone else changes the file, for example when you pull, AdocFoundry reads it again and keeps what you added.
+When a page has changed elsewhere, each comment is found again by the text it was on.
+
+=== A file that cannot be used
+
+* A comments file with a merge conflict, or one AdocFoundry cannot read, shows the reason in the panel.
+It is never overwritten.
+* A file written by a newer version of the app is read-only.
+
+=== Renaming, moving and deleting pages
+
+Renaming, moving or deleting a page in the app takes its comments with it.
+*Undo Delete* and *Restore Deleted File* bring them back.
+
+A page that has never been saved keeps its comments only while it is open.
+
+== Your name on comments
+
+Comments carry the name and e-mail address from the `[comments]` table of your user settings file, as `name` and `email`.
+Without them AdocFoundry uses your Git name and e-mail address from your global Git settings, and then your computer's user name.
+See xref:settings.adoc[Settings].
+
+== Limits
+
+* 500 comments a page.
+* 100 replies to a comment.
+* 8 KiB of text in each comment or reply.
+
+== Comments in a shared session
+
+In a session (see xref:collaboration.adoc[Working together]), everyone who has a shared page open sees its comments.
+They are on the same text whoever types, and Viewers can comment and reply too.
+The host keeps them in its `.afd` file.
+
+* Anyone can add a comment or a reply.
+* The host, Editors and the author of a comment can resolve or reopen it.
+* Only the author edits a comment.
+* The author or the host can delete it.
+
+Guests see names, never e-mail addresses.
+
+A guest cannot comment while the host cannot be reached.
+If the host refuses a comment, a notification says why.
+
+== Related
+
+* xref:using-the-editor.adoc[Using the editor]
+* xref:collaboration.adoc[Working together]
+* xref:settings.adoc[Settings]

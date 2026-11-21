@@ -293,3 +293,14 @@ Where the implementation departs from this design, or settles what it left open:
 - **Loading.** A page the host offers keeps comments wherever it is, since it was confined when offered: its comments file is read when the page is shared for a guest (`load_offered_comments`).
 - **A guest away** cannot comment: the request is refused at once with "The host cannot be reached", never queued.
 - **The soak found a flaw in the test harness, not the engine.** The in-memory session's `settle` read the time before asking each engine what was due. Work due at once is due at the moment it is asked for, so it looked still to come, and `settle` stopped with comments untold beyond the first 32. `settle` now reads the time after, and `more_comments_than_one_pump_tells_all_reach_a_guest` holds it.
+
+### COMMENTS 3/4: the app
+
+Where the implementation departs from this design, or settles what it left open:
+
+- **No Show Comments command.** The Comments tab is in the sidebar whenever the active page has comments, a box is open, or the tab is chosen. Add Comment opens it, so a command of its own would add nothing (§8).
+- **Add Comment, Next Comment and Previous Comment** are in the Edit menu and the palette. Reply, Resolve, Reopen, Edit and Delete are the panel's buttons on each comment, as the Session panel's are on each participant. The binding is written `cmd-alt-m`, as the other specs write theirs, and is mapped to Ctrl-Alt-M off macOS.
+- **The panel's times** are a time today, else a date, in UTC, as the file holds them.
+- **Accessible labels:** each comment's card carries "Comment by <author> on “<quote>”", and every button its own selector. The editor's mark is never the only cue: the panel and the status bar name each comment.
+- **The visual editor** shows no marks yet; that is COMMENTS 4/4.
+- After a comment is sent or its box put away, the keyboard's focus goes back to the editor.
