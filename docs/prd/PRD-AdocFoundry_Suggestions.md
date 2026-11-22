@@ -209,3 +209,14 @@ The user guide's Comments page gains a "Suggested changes" section, and the deve
 - The diff shown in the card, within section 9 (the common prefix and suffix are the minimum; a word diff is welcome).
 - The suggestion colour, within the theme and the accessibility rule.
 - The binding, if `cmd-alt-s` is taken.
+
+### 13.1 Implementation notes (SUGGEST 1/4, the engine alone)
+
+- **Binding.** `cmd-alt-s` is Save All, so Suggest Change takes `cmd-alt-shift-m`, beside Add Comment's `cmd-alt-m`, mapped off macOS as every `cmd-` binding is (Ctrl).
+- **Uncertain places are kept.** A suggestion found again by its quote without certainty would become certain once written with the page's new revision. The file therefore keeps `uncertain = true` in its `suggestion` table while it is, and the reader honours it. Only the author's edit clears it, which sets `original` to the range's text.
+- **Editing a decided suggestion's replacement is refused** for everyone ("Reopen this suggestion first."); its note follows the comments' edit rule. Editing it sets `original`, clears the outcome and makes its place certain.
+- **`Allowed::resolve` on a suggestion means "may reopen it"**, true only once it is decided. Resolve of an undecided suggestion is refused ("Accept or reject a suggestion instead of resolving it.") and Reopen of an undecided one is refused ("This suggestion is not decided yet."), where plain Reopen of a comment is a no-op; a front end must not offer it.
+- **An undone accept.** Accepting records an in-memory reversal (the inserted range and the text it removed) with the open page. Undo, which applies exactly that inverse, puts the range back on `original` and Redo on the replacement, even when the edit deleted at the range's edge or the whole range. Any other edit touching the range drops it, and a suggestion awaiting its inverse is not searched for while detached. The reversal is not written to the file, as undo history is not. The outcome and the co-author credit stay.
+- **Format.** A file is `format = 2` only while it holds a suggestion. A `format = 1` file holding one is read (only a hand edit makes one); a format above 2 is read-only as before.
+- **Refusal wordings** (comments.rs): "Select at most 4 KiB of text to suggest a change."; "Suggest at most 8 KiB of text."; "A suggestion holds no control character but line breaks and tabs."; "The suggestion changes nothing."; "The text has changed since this was suggested."; "The text changed while you were suggesting; try again."; "This suggestion is decided already."; "Reopen this suggestion first."; "The text this suggestion was on is gone."; "You cannot accept a suggestion."; "Suggestions cannot be accepted in a session yet." (a guest, until SUGGEST 2/4).
+- **Module layout** as expected: the model in `comments.rs`, the stored form in `page_meta.rs`; tests in `tests/suggestions.rs`.

@@ -1210,7 +1210,8 @@ Renaming a file in the app moves its record; deleting it keeps the record, so co
 
 Comments on a page's text are kept in a metadata file beside the page, never in the page.
 `crates/adoc-engine/src/page_meta.rs` is the file and `crates/adoc-engine/src/comments.rs` is the model an open page holds.
-The engine has no user interface for them yet; the app's Comments panel follows in a later change.
+The app's Comments panel shows them.
+Suggested changes (see <<suggested-changes>>) are so far the engine's alone; the app, collaboration sessions and the visual editor follow in later changes.
 
 === The file
 
@@ -1220,7 +1221,8 @@ The leading dot keeps the file out of Antora's catalog and published site.
 The engine's own catalog leaves out every file whose name begins with a dot, as Antora 3.2 does.
 
 The file is TOML.
-It starts with `format = 1`, then one `[[comment]]` table for each comment, each with `[[comment.reply]]` tables.
+It starts with `format = 1`, or `format = 2` when it holds a suggestion, then one `[[comment]]` table for each comment, each with `[[comment.reply]]` tables.
+An older AdocFoundry shows the comments of a `format = 2` file read-only and never rewrites it.
 
 [cols="1,3"]
 |===
@@ -1228,6 +1230,10 @@ It starts with `format = 1`, then one `[[comment]]` table for each comment, each
 
 |`[[comment]]`
 |`id` (16 hexadecimal digits), `author`, optional `email`, `created`, optional `edited`, `start` and `end` (byte offsets), `revision` (`sha256:<hex>` of the page text the offsets refer to), `quote`, `before` and `after` (up to 32 bytes of text either side), `text`, `resolved` with `resolved_by` and `resolved_at`, and `detached`.
+
+|`[comment.suggestion]`
+|Present only on a suggestion: `original` (the text it was made on, fixed; at most 4 KiB and never empty), `replacement` (at most 8 KiB; empty to delete), `outcome` (`accepted` or `rejected`, set together with `resolved`) and `uncertain` (written while its place was found again without being sure of it).
+A suggestion's `text`, its note, may be empty.
 
 |`[[comment.reply]]`
 |`id`, `author`, optional `email`, optional `edited`, `created` and `text`.
@@ -1251,6 +1257,65 @@ Each changed comment is written with the offsets, revision and context of the pa
 
 Comment changes are not in the page's undo history and never mark the page unsaved.
 An untitled page keeps its comments in memory only.
+
+[[suggested-changes]]
+=== Suggested changes
+
+A suggestion is a comment that also carries `original` and `replacement` (design: `docs/prd/PRD-AdocFoundry_Suggestions.md`).
+It is on a range of the page's text, kept and mapped through edits as any comment is.
+Suggesting changes nothing in the page; only accepting does.
+
+A suggestion is in one of four states, derived from the file and the text, and never stored as a state.
+
+* Accepted or rejected: the `outcome` key is set.
+* Pending: no outcome, the comment is not detached, its place is certain and the text in its range equals `original`.
+* Outdated: any other undecided suggestion, because its range's text differs from `original`, it is detached, or it was found again in a place it cannot be sure of.
+
+An outdated suggestion cannot be accepted.
+It can be rejected, deleted or replied to.
+It becomes pending again whenever its range's text equals `original` again.
+
+A suggestion found again by its quote, which is when a file is read for a page whose `revision` differs or when a detached one is searched for, is certain only at the same place and not merely on the same words.
+Its stored `before` and `after` must both match the text around that occurrence whole, and no other occurrence may match as well.
+Otherwise it is placed as a comment would be, kept `uncertain` and outdated, so accepting never changes text nobody suggested on.
+It stays uncertain until its author edits it, which sets `original` to the range's current text.
+A suggestion at its stored offsets under a matching `revision` is certain.
+
+Accepting is one minimal edit in the page's undo history.
+The common prefix and suffix of `original` and `replacement` are left alone, cut at character boundaries, so only what differs is replaced.
+The suggestion's range then covers the replacement, whatever the edge rule would have made of it, and it is recorded as `accepted` and resolved by the person accepting.
+Undo restores the text, and the range returns to `original` through an in-memory reversal kept with the open page (never written to the file), so Undo and Redo move the range as the text moves.
+The reversal is dropped if anything else changes the text it relies on.
+The outcome and the co-author credit stay when an accept is undone (see <<co-authors>>); the commit dialog's choices remain the remedy.
+Reopen clears `outcome` and `resolved`, making the suggestion pending again if its range's text is `original`.
+
+Suggestions may overlap and are never merged.
+Accepting one is an edit like any other, so each suggestion whose range it touched is then outdated, since its text no longer equals its `original`.
+Those it did not touch are unaffected, and the text is never corrupted.
+
+Who may do what follows the comments' rule (see "In a collaboration session" below) with these additions.
+Accepting needs the host, an Editor or someone working alone, never a Viewer, and the suggestion must be pending.
+Rejecting is for the same people and a suggestion's author, while undecided.
+Reopening is for the same people and the author, once decided.
+Editing a suggestion's note is the comments' rule, and its replacement only while it is undecided.
+Accepting a suggestion credits its author as a co-author of the commit, as an edit made in a session does, unless the author is the one accepting or has no usable e-mail address.
+
+The commands are `comments.suggest` (Cmd-Alt-Shift-M, Ctrl-Alt-Shift-M elsewhere), `comments.accept` and `comments.reject`.
+`comments.edit` with `CommentRequest::EditSuggestion` changes a suggestion's replacement and note, and sets its `original` to the range's current text, its place certain and its outcome cleared.
+`comments.reopen` makes a decided suggestion pending again.
+The requests are `CommentRequest::Suggest`, `Accept` and `Reject`, with `EditSuggestion`.
+Suggesting is refused for an empty range, an original over 4 KiB, a replacement over 8 KiB, a control character other than a line break or tab, or a replacement equal to the original.
+Resolving an undecided suggestion is refused; accept or reject it instead.
+
+The query `Comment::suggestion` gives a `Suggestion` with `original`, `replacement`, `state` (`SuggestionState`: `Pending`, `Outdated`, `Accepted` or `Rejected`), `removed` and `inserted`.
+While pending, `removed` is the range less the common prefix and suffix and `inserted` is what replaces it, which is what a front end marks.
+Otherwise they are the whole range and the whole replacement.
+`Allowed` gains `accept` and `reject`, false on a plain comment and a reply.
+On a decided suggestion `Allowed::edit` stays true for the note, but `EditSuggestion` is refused until it is reopened.
+
+A guest's suggestion requests are refused until the session package follows (SUGGEST 2/4).
+A host works as it does alone, and its accept reaches the shared text as typing does.
+The code is in `crates/adoc-engine/src/comments.rs`, with tests in `crates/adoc-engine/tests/suggestions.rs`.
 
 === When the file is written
 
