@@ -404,3 +404,249 @@ fn the_hosts_own_accept_on_a_shared_page_is_undone_and_accepted_again() {
     session.settle();
     assert_eq!(texts(&mut session, &[ada]), accepted);
 }
+
+fn reopen(engine: &mut Engine, id: DocumentId, comment: CommentId) -> Result<(), EngineError> {
+    invoke(
+        engine,
+        ids::COMMENTS_REOPEN,
+        CommentRequest::Resolve {
+            id,
+            comment,
+            resolved: false,
+        },
+    )
+}
+
+fn edit_suggestion(
+    engine: &mut Engine,
+    id: DocumentId,
+    comment: CommentId,
+    replacement: &str,
+    note: &str,
+) -> Result<(), EngineError> {
+    invoke(
+        engine,
+        ids::COMMENTS_EDIT,
+        CommentRequest::EditSuggestion {
+            id,
+            comment,
+            replacement: replacement.to_owned(),
+            text: note.to_owned(),
+        },
+    )
+}
+
+/// The page's metadata file once it holds `wanted`, waiting for the writes still to come.
+fn sidecar_holding(session: &mut Session, wanted: &str) -> String {
+    let sidecar = session.directory.path().join(".install.adoc.afd");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let written = fs::read_to_string(&sidecar).unwrap_or_default();
+        if written.contains(wanted) || Instant::now() >= deadline {
+            return written;
+        }
+        session.settle();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The last thread `peer` was told of comment `comment`.
+fn told(
+    session: &Session,
+    peer: PeerId,
+    comment: CommentId,
+) -> adoc_engine::protocol::SharedThread {
+    session
+        .sent_to(peer)
+        .into_iter()
+        .rev()
+        .find_map(|message| match message {
+            Message::CommentThread { thread, .. } if thread.id == comment.0 => Some(*thread),
+            _ => None,
+        })
+        .expect("told of it")
+}
+
+#[test]
+fn a_guest_rejects_and_reopens_a_suggestion() {
+    let mut session = session();
+    let ada = session.guest(1, true);
+    let host = session.host_doc();
+    suggest(&mut session.host, host).unwrap();
+    session.settle();
+    let comment = the_comment(&session.host, host).id;
+
+    let id = guest_doc(&mut session, ada);
+    invoke(
+        session.engine(ada),
+        ids::COMMENTS_REJECT,
+        CommentRequest::Reject { id, comment },
+    )
+    .unwrap();
+    session.settle();
+    assert_eq!(host_state(&session), SuggestionState::Rejected);
+    assert_eq!(guest_state(&mut session, ada), SuggestionState::Rejected);
+    assert_eq!(texts(&mut session, &[ada]), PAGE, "the page is untouched");
+    let written = sidecar_holding(&mut session, "outcome = \"rejected\"");
+    assert!(written.contains("outcome = \"rejected\""), "{written}");
+
+    reopen(session.engine(ada), id, comment).unwrap();
+    session.settle();
+    assert_eq!(host_state(&session), SuggestionState::Pending);
+    assert_eq!(guest_state(&mut session, ada), SuggestionState::Pending);
+    assert!(refusals(&session, ada).is_empty());
+}
+
+#[test]
+fn a_guest_edits_its_own_suggestion_with_a_blank_note() {
+    let mut session = session();
+    let ada = session.guest(1, true);
+    let id = guest_doc(&mut session, ada);
+    invoke(
+        session.engine(ada),
+        ids::COMMENTS_SUGGEST,
+        CommentRequest::Suggest {
+            id,
+            range: {
+                let start = PAGE.find(QUOTE).unwrap();
+                SourceRange::new(start, start + QUOTE.len())
+            },
+            replacement: REPLACEMENT.to_owned(),
+            text: "Clearer.".to_owned(),
+        },
+    )
+    .unwrap();
+    session.settle();
+    let host = session.host_doc();
+    let comment = the_comment(&session.host, host).id;
+
+    edit_suggestion(
+        session.engine(ada),
+        id,
+        comment,
+        "macOS's Gatekeeper",
+        "  \n",
+    )
+    .unwrap();
+    session.settle();
+    assert!(
+        refusals(&session, ada).is_empty(),
+        "{:?}",
+        refusals(&session, ada)
+    );
+    let held = the_comment(&session.host, host);
+    assert_eq!(held.text, "", "the blank note is empty");
+    let suggestion = held.suggestion.unwrap();
+    assert_eq!(suggestion.original, QUOTE);
+    assert_eq!(suggestion.replacement, "macOS's Gatekeeper");
+    assert_eq!(told(&session, ada, comment).text, "", "sent empty");
+    let shown = the_comment(session.engine(ada), id);
+    assert_eq!(shown.text, "");
+    let shown = shown.suggestion.unwrap();
+    assert_eq!(shown.replacement, "macOS's Gatekeeper");
+    assert_eq!(shown.state, SuggestionState::Pending);
+}
+
+#[test]
+fn a_guest_refuses_what_the_host_would_in_its_words() {
+    let mut session = session();
+    let ada = session.guest(1, true);
+    let bea = session.guest(2, false);
+    let host = session.host_doc();
+    suggest(&mut session.host, host).unwrap();
+    session.settle();
+    let comment = the_comment(&session.host, host).id;
+
+    // A Viewer rejecting the host's suggestion.
+    let id = guest_doc(&mut session, bea);
+    let refused = invoke(
+        session.engine(bea),
+        ids::COMMENTS_REJECT,
+        CommentRequest::Reject { id, comment },
+    );
+    assert!(
+        matches!(&refused, Err(EngineError::Refused(reason)) if reason == "You cannot reject someone else's suggestion."),
+        "{refused:?}"
+    );
+
+    // An Editor's own suggestion, once decided, is reopened before its replacement is edited.
+    let id = guest_doc(&mut session, ada);
+    let start = PAGE.find("unsigned").unwrap();
+    invoke(
+        session.engine(ada),
+        ids::COMMENTS_SUGGEST,
+        CommentRequest::Suggest {
+            id,
+            range: SourceRange::new(start, start + "unsigned".len()),
+            replacement: "an unnotarised".to_owned(),
+            text: String::new(),
+        },
+    )
+    .unwrap();
+    session.settle();
+    let own = session
+        .host
+        .comments(host)
+        .into_iter()
+        .find(|shown| shown.id != comment)
+        .unwrap()
+        .id;
+    invoke(
+        session.engine(ada),
+        ids::COMMENTS_REJECT,
+        CommentRequest::Reject { id, comment: own },
+    )
+    .unwrap();
+    session.settle();
+    let refused = edit_suggestion(session.engine(ada), id, own, "a notarised", "");
+    assert!(
+        matches!(&refused, Err(EngineError::Refused(reason)) if reason == "Reopen this suggestion first."),
+        "{refused:?}"
+    );
+    assert!(
+        session.net.lock().unwrap().to_host.is_empty(),
+        "nothing sent"
+    );
+    assert!(refusals(&session, ada).is_empty() && refusals(&session, bea).is_empty());
+}
+
+/// A guest's edit of its suggestion carries the text it saw: the host refuses it when its own
+/// text at the range has changed meanwhile, so a replacement is never paired with text its
+/// author did not see.
+#[test]
+fn the_host_refuses_an_edit_of_a_suggestion_made_on_other_text() {
+    let mut session = session();
+    let ada = session.guest(1, true);
+    let id = guest_doc(&mut session, ada);
+    suggest(session.engine(ada), id).unwrap();
+    session.settle();
+    let host = session.host_doc();
+    let comment = the_comment(&session.host, host).id;
+    let before = told(&session, ada, comment);
+
+    edit_suggestion(session.engine(ada), id, comment, "the signing check", "").unwrap();
+    // The host types inside the suggestion's text before the request reaches it.
+    let start = session.host_text().find(QUOTE).unwrap();
+    type_at(&mut session.host, host, start + "the".len(), " new");
+    session.settle();
+    assert_eq!(
+        refusals(&session, ada),
+        ["The text changed while you were suggesting; try again."]
+    );
+    let held = the_comment(&session.host, host).suggestion.unwrap();
+    assert_eq!(
+        held.original, QUOTE,
+        "still on the text it was suggested on"
+    );
+    assert_eq!(
+        held.replacement, REPLACEMENT,
+        "the replacement is unchanged"
+    );
+    assert_eq!(held.state, SuggestionState::Outdated);
+    let after = told(&session, ada, comment);
+    assert_eq!(
+        after.suggestion.as_ref().map(|shown| shown.uncertain),
+        before.suggestion.as_ref().map(|shown| shown.uncertain),
+        "its certainty is unchanged"
+    );
+}

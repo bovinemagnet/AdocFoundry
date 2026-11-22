@@ -545,8 +545,10 @@ pub enum CommentChange {
     Reject {
         comment: u64,
     },
+    /// Suggests again on `original`, the text the guest sees at the suggestion's range.
     EditSuggestion {
         comment: u64,
+        original: String,
         replacement: String,
         text: String,
     },
@@ -1132,8 +1134,12 @@ impl Message {
                         }
                     }
                     CommentChange::EditSuggestion {
-                        replacement, text, ..
+                        original,
+                        replacement,
+                        text,
+                        ..
                     } => {
+                        suggestion_text(original, MAX_COMMENT_QUOTE, false)?;
                         suggestion_text(replacement, MAX_COMMENT_TEXT, true)?;
                         note_text(text, true)
                     }

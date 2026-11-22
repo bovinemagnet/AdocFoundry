@@ -294,8 +294,11 @@ pub(crate) enum Change {
     Reject {
         comment: u64,
     },
+    /// `original` is the text a guest saw at the range, checked against the range's text; none
+    /// here.
     EditSuggestion {
         comment: u64,
+        original: Option<String>,
         replacement: String,
         text: String,
     },
@@ -1293,6 +1296,7 @@ impl Engine {
                 ..
             } => Change::EditSuggestion {
                 comment: comment.0,
+                original: None,
                 replacement,
                 text,
             },
@@ -1489,6 +1493,7 @@ impl Engine {
             }
             Change::EditSuggestion {
                 comment,
+                original: expected,
                 replacement,
                 text: note,
             } => {
@@ -1518,6 +1523,11 @@ impl Engine {
                     .get(live.range.start..live.range.end)
                     .unwrap_or_default()
                     .to_owned();
+                if expected.is_some_and(|expected| expected != original) {
+                    return Err(EngineError::Refused(
+                        "The text changed while you were suggesting; try again.".to_owned(),
+                    ));
+                }
                 check_suggestion(&original, &replacement)?;
                 // Suggested again on the text as it is: its place is certain.
                 live.uncertain = false;

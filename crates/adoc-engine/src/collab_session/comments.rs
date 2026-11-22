@@ -496,6 +496,7 @@ impl Engine {
                 comment,
                 replacement,
                 text,
+                ..
             } => {
                 let note = checked_note(&text)?;
                 let (thread, state) = suggestion(comment)?;
@@ -510,8 +511,10 @@ impl Engine {
                 }
                 check_suggestion(&thread.quote, &replacement)?;
                 (
+                    // The text this guest sees, which the host checks against its own.
                     CommentChange::EditSuggestion {
                         comment,
+                        original: thread.quote.clone(),
                         replacement,
                         text: note,
                     },
@@ -649,12 +652,15 @@ impl Engine {
             // The host applies the accept, in nobody's undo history (`accept_suggestion`).
             CommentChange::Accept { comment } => Change::Accept { comment },
             CommentChange::Reject { comment } => Change::Reject { comment },
+            // Checked against the host's text at the range, as a new suggestion is.
             CommentChange::EditSuggestion {
                 comment,
+                original,
                 replacement,
                 text,
             } => Change::EditSuggestion {
                 comment,
+                original: Some(original),
                 replacement,
                 text,
             },

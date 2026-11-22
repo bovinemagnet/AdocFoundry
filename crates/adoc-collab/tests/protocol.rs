@@ -787,6 +787,7 @@ fn suggestions_round_trip() {
         (
             CommentChange::EditSuggestion {
                 comment: 4,
+                original: "Pa\r\nge".to_owned(),
                 replacement: String::new(),
                 text: String::new(),
             },
@@ -843,8 +844,21 @@ fn suggestion_fields_are_held_to_their_limits() {
         suggestion_message(
             CommentChange::EditSuggestion {
                 comment: 1,
+                original: "Page".to_owned(),
                 replacement,
                 text: text.to_owned(),
+            },
+            false,
+        )
+    };
+    // The text the guest saw, held as a suggestion's original is.
+    let edit_on = |original: String| {
+        suggestion_message(
+            CommentChange::EditSuggestion {
+                comment: 1,
+                original,
+                replacement: "y".to_owned(),
+                text: String::new(),
             },
             false,
         )
@@ -877,6 +891,8 @@ fn suggestion_fields_are_held_to_their_limits() {
             "x".repeat(MAX_COMMENT_TEXT),
         ),
         edit(String::new(), ""),
+        edit_on("x".repeat(MAX_COMMENT_QUOTE)),
+        edit_on("a\r\n\tb".to_owned()),
         thread_with("", "Page".to_owned(), String::new()),
     ] {
         assert!(accepted.encode().is_ok(), "{accepted:?}");
@@ -890,6 +906,9 @@ fn suggestion_fields_are_held_to_their_limits() {
         edit("x".repeat(MAX_COMMENT_TEXT + 1), ""),
         edit("bell\u{7}".to_owned(), ""),
         edit("y".to_owned(), "bell\u{7}"),
+        edit_on(String::new()),
+        edit_on("x".repeat(MAX_COMMENT_QUOTE + 1)),
+        edit_on("Pa\u{7}ge".to_owned()),
         thread_with("", String::new(), "y".to_owned()),
         thread_with("", "Page".to_owned(), "bell\u{7}".to_owned()),
         thread_with("", "x".repeat(MAX_COMMENT_QUOTE + 1), "y".to_owned()),
