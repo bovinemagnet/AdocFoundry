@@ -57,9 +57,12 @@ pub(crate) enum Change {
         email: String,
         changed: u64,
     },
+    /// Drops those who changed `path` no later than `fixed`; only those named in `only`, when
+    /// it names anyone.
     Forget {
         path: PathBuf,
         fixed: u64,
+        only: Option<Vec<String>>,
     },
     Move {
         from: PathBuf,
@@ -104,12 +107,15 @@ impl Files {
         true
     }
 
-    fn forget(&mut self, path: &Path, fixed: u64) -> bool {
+    fn forget(&mut self, path: &Path, fixed: u64, only: Option<&[String]>) -> bool {
         let Some(entries) = self.0.get_mut(path) else {
             return false;
         };
         let before = entries.len();
-        entries.retain(|entry| entry.changed > fixed);
+        let named = |email: &str| {
+            only.is_none_or(|only| only.iter().any(|named| named.eq_ignore_ascii_case(email)))
+        };
+        entries.retain(|entry| entry.changed > fixed || !named(&entry.email));
         let changed = entries.len() != before;
         if entries.is_empty() {
             self.0.remove(path);
@@ -137,8 +143,8 @@ impl Files {
             } => {
                 self.record(path, name, email, *changed);
             }
-            Change::Forget { path, fixed } => {
-                self.forget(path, *fixed);
+            Change::Forget { path, fixed, only } => {
+                self.forget(path, *fixed, only.as_deref());
             }
             Change::Move { from, to } => {
                 self.moved(from, to);
@@ -318,17 +324,19 @@ impl CoAuthors {
     }
 
     /// After a commit: each file it took, with the time its committed content was fixed. Whoever
-    /// changed a file later keeps their record, written with their latest time.
-    pub(crate) fn forget(&mut self, fixed: &[(PathBuf, u64)]) -> bool {
+    /// changed a file later keeps their record, written with their latest time; so does anyone
+    /// not in `only`, when it is given: those the commit dialog was never able to offer.
+    pub(crate) fn forget(&mut self, fixed: &[(PathBuf, u64)], only: Option<&[String]>) -> bool {
         let mut changed = false;
         for (path, fixed) in fixed {
-            if !self.files.forget(path, *fixed) {
+            if !self.files.forget(path, *fixed, only) {
                 continue;
             }
             changed = true;
             self.changes.push(Change::Forget {
                 path: path.clone(),
                 fixed: *fixed,
+                only: only.map(<[String]>::to_vec),
             });
             for entry in self.files.authors(path) {
                 self.changes.push(Change::Record {
@@ -376,6 +384,38 @@ impl CoAuthors {
     pub(crate) fn take_changes(&mut self) -> Option<Vec<Change>> {
         let changes = std::mem::take(&mut self.changes);
         (self.file.is_some() && !self.unusable && !changes.is_empty()).then_some(changes)
+    }
+}
+
+/// When each save's text was taken, so staging a page with unsaved changes is stamped with
+/// the time of the text on disk, not the time it is staged.
+#[derive(Debug, Default)]
+pub(crate) struct SaveStamps {
+    /// Saves being written, by document and version.
+    started: BTreeMap<(crate::DocumentId, u64), u64>,
+    /// When the text last written to each file, by real path, was taken.
+    saved: std::collections::HashMap<PathBuf, u64>,
+}
+
+impl SaveStamps {
+    pub(crate) fn started(&mut self, id: crate::DocumentId, version: u64, at: u64) {
+        self.started.insert((id, version), at);
+    }
+
+    /// A save ended; `path` holds its text when it was `written`.
+    pub(crate) fn finished(&mut self, id: crate::DocumentId, version: u64, written: Option<&Path>) {
+        let Some(at) = self.started.remove(&(id, version)) else {
+            return;
+        };
+        if let Some(path) = written {
+            self.saved.insert(real_path(path), at);
+        }
+    }
+
+    /// When the text on disk at `path` (a real path) was taken: unknown, so nothing it holds
+    /// is forgotten, when this engine never saved it.
+    pub(crate) fn saved(&self, path: &Path) -> u64 {
+        self.saved.get(path).copied().unwrap_or(0)
     }
 }
 
@@ -576,7 +616,7 @@ mod tests {
         let a = PathBuf::from("/w/a.adoc");
         store.record(&a, "Ada", "ada@example.org", 10);
         store.record(&a, "Bea", "bea@example.org", 30);
-        assert!(store.forget(&[(a.clone(), 20)]));
+        assert!(store.forget(&[(a.clone(), 20)], None));
         assert_eq!(
             store.for_paths(std::slice::from_ref(&a)),
             vec![CoAuthor {
@@ -584,7 +624,12 @@ mod tests {
                 email: "bea@example.org".to_owned(),
             }]
         );
-        assert!(!store.forget(&[(a, 20)]));
+        assert!(!store.forget(&[(a.clone(), 20)], None));
+        // Only those offered are forgotten.
+        store.record(&a, "Cy", "cy@example.org", 15);
+        assert!(!store.forget(&[(a.clone(), 40)], Some(&["dee@example.org".to_owned()])));
+        assert!(store.forget(&[(a.clone(), 40)], Some(&["CY@example.org".to_owned()])));
+        assert_eq!(store.for_paths(std::slice::from_ref(&a)).len(), 1);
     }
 
     #[test]
@@ -616,6 +661,7 @@ mod tests {
             &[Change::Forget {
                 path: PathBuf::from("/w/a.adoc"),
                 fixed: 20,
+                only: None,
             }],
         )
         .unwrap();

@@ -1136,7 +1136,7 @@ The host's shared documents keep their recovery records while dirty, as any page
 === Co-authors of shared edits
 
 Crediting the guests whose edits a commit holds is issue #761; the specification is `docs/prd/PRD-AdocFoundry_CoAuthors.md`.
-The tests are in `crates/adoc-engine/tests/coauthors.rs`, among them `a_commit_credits_only_those_who_changed_its_files`, `a_participant_who_only_read_is_never_credited`, `credit_survives_a_reconnection_and_a_new_epoch`, `a_guests_email_reaches_only_the_host`, `credit_outlives_the_session_and_the_engine`, `committed_files_start_again`, `an_edit_after_staging_is_credited_next_time` and `credit_follows_a_page_shared_through_a_link`.
+The tests are in `crates/adoc-engine/tests/coauthors.rs`, among them `a_commit_credits_only_those_who_changed_its_files`, `a_participant_who_only_read_is_never_credited`, `credit_survives_a_reconnection_and_a_new_epoch`, `a_guests_email_reaches_only_the_host`, `credit_outlives_the_session_and_the_engine`, `committed_files_start_again`, `an_edit_after_staging_is_credited_next_time`, `a_guest_who_first_edits_while_the_dialog_is_open_is_kept`, `staging_takes_what_was_saved_not_what_is_unsaved` and `credit_follows_a_page_shared_through_a_link`.
 
 ==== The guest's address
 
@@ -1187,11 +1187,22 @@ Each address is checked, and each is added as a `Co-authored-by: Name <email>` t
 A trailer is never added twice, and never for the committer.
 The engine adds no trailer of its own accord.
 
+`git.commit` also takes `"offered": [{"name", "email"}]`, the co-authors the front end showed, ticked or not.
+With it, a commit forgets only those offered, and the commit's author and committer.
+A guest whose first edit reached a file after the dialog listed its co-authors is still taken by the commit, because the commit saves the page again.
+Their record is kept, and they are offered in the next commit.
+Without `offered`, everyone the commit took is forgotten, as before.
+The app passes it.
+
 ==== Forgetting
 
 After a commit succeeds, the files it took are forgotten, each as it was when its content was fixed.
 That is when `git.commit` staged it, when the engine staged it (`git.stage`), or else when the commit started.
 A guest whose change came later keeps their record for the next commit.
+When the engine stages a page that is open with unsaved changes, `git.stage` takes the file on disk.
+The staging is then stamped with the time the text last written to the file was taken, which is when its save started, and not with the time of staging.
+A page this engine never saved is stamped 0, so nothing it holds is forgotten.
+Saves record this in `SaveStamps`.
 A signed commit carries those times through its worker.
 Renaming a file in the app moves its record; deleting it keeps the record, so committing the deletion credits whoever changed it.
 

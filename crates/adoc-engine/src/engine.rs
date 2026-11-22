@@ -91,6 +91,7 @@ pub struct Engine {
     /// Who changed which file in a collaboration session, read from the state folder on first
     /// use.
     pub(crate) coauthors: std::sync::OnceLock<crate::coauthors::CoAuthors>,
+    pub(crate) save_stamps: crate::coauthors::SaveStamps,
     pub(crate) next_comment_ticket: u64,
     /// The global Git identity, read once, for comments written here.
     #[cfg(feature = "git")]
@@ -256,6 +257,7 @@ impl Engine {
             page_comments: BTreeMap::new(),
             closing_comments: BTreeMap::new(),
             coauthors: std::sync::OnceLock::new(),
+            save_stamps: crate::coauthors::SaveStamps::default(),
             next_comment_ticket: 1,
             #[cfg(feature = "git")]
             comment_identity: std::cell::OnceCell::new(),

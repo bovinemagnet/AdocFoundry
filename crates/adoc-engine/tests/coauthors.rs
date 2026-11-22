@@ -382,6 +382,83 @@ mod committing {
         assert_eq!(session.host.coauthors_for_commit(&[b]), vec![guest1()]);
     }
 
+    /// What the commit dialog offered, as it passes it to `git.commit`.
+    fn commit_offering(
+        engine: &mut Engine,
+        message: &str,
+        paths: &[PathBuf],
+        offered: &[CoAuthor],
+    ) -> Result<CommandOutcome, adoc_engine::EngineError> {
+        let listed: Vec<_> = offered
+            .iter()
+            .map(|author| serde_json::json!({ "name": author.name, "email": author.email }))
+            .collect();
+        let paths: Vec<_> = paths.iter().map(|path| path.to_str().unwrap()).collect();
+        engine.invoke(
+            ids::GIT_COMMIT,
+            CommandArgs::Custom(serde_json::json!({
+                "message": message,
+                "paths": paths,
+                "coauthors": listed,
+                "offered": listed,
+            })),
+        )
+    }
+
+    #[test]
+    fn a_guest_who_first_edits_while_the_dialog_is_open_is_kept() {
+        let mut session = session(false);
+        let ada = editing_everywhere(&mut session);
+        let bea = session.guest(2, true);
+        open_b(&mut session, bea);
+        guest_types_in(&mut session, ada, 2, "Ada. ");
+        let b = page(&session, "b.adoc");
+        let offered = session.host.coauthors_for_commit(std::slice::from_ref(&b));
+        assert_eq!(offered, vec![guest1()]);
+        // While the host writes the message, someone else edits for the first time; the
+        // commit saves the page again, taking their edit too, but they were never offered.
+        guest_types_in(&mut session, bea, 2, "Bea. ");
+        commit_offering(
+            &mut session.host,
+            "docs: b",
+            std::slice::from_ref(&b),
+            &offered,
+        )
+        .unwrap();
+        assert_eq!(
+            session.host.coauthors_for_commit(&[b]),
+            vec![CoAuthor {
+                name: "guest 2".to_owned(),
+                email: "guest2@example.org".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn staging_takes_what_was_saved_not_what_is_unsaved() {
+        let mut session = session(false);
+        let ada = editing_everywhere(&mut session);
+        guest_types_in(&mut session, ada, 2, "Saved. ");
+        save_all(&mut session.host);
+        std::thread::sleep(Duration::from_millis(5));
+        // An edit the host has not saved: staging takes the file, without it.
+        guest_types_in(&mut session, ada, 2, "Unsaved. ");
+        let b = page(&session, "b.adoc");
+        let host_b = session.host.session_document(2).unwrap();
+        assert!(session.host.document(host_b).unwrap().dirty);
+        std::thread::sleep(Duration::from_millis(5));
+        session
+            .host
+            .invoke(ids::GIT_STAGE, CommandArgs::Path(b.clone()))
+            .unwrap();
+        assert!(session.host.wait_for_workers(Duration::from_secs(10)));
+        let offered = session.host.coauthors_for_commit(&[]);
+        assert_eq!(offered, vec![guest1()]);
+        commit_offering(&mut session.host, "docs: b", &[], &offered).unwrap();
+        assert!(!repo(&session).head_message().is_empty());
+        assert_eq!(session.host.coauthors_for_commit(&[b]), vec![guest1()]);
+    }
+
     #[test]
     fn the_committer_is_never_a_co_author() {
         let mut session = session(false);

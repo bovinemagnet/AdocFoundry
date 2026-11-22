@@ -171,6 +171,8 @@ pub(crate) enum WorkerMessage {
         saved: Vec<PathBuf>,
         /// Each file the commit takes, with when its content was fixed.
         fixed: Vec<(PathBuf, u64)>,
+        /// Those it may forget, when its front end said whom it offered.
+        only: Option<Vec<String>>,
         result: Result<String, String>,
     },
     ImpactInspected {
@@ -863,8 +865,9 @@ impl Engine {
                 workdir,
                 saved,
                 fixed,
+                only,
                 result,
-            } => self.committed(workdir, saved, &fixed, result),
+            } => self.committed(workdir, saved, &fixed, only.as_deref(), result),
             WorkerMessage::SiteBuildLine { generation, line } => {
                 self.site_build_line(generation, line);
             }

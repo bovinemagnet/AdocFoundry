@@ -721,3 +721,16 @@ fn an_invalid_address_is_refused_before_connecting() {
         .authenticate("Ada", Some("not an address"), "0.0.0", None);
     assert!(matches!(refused, Err(ShareError::Email)));
 }
+
+#[test]
+fn a_guest_speaking_only_version_one_is_refused() {
+    let hosting = hosting("= Page\n", timings());
+    let invitation = hosting.host.invite().unwrap();
+    let mut raw = Raw::connect(&invitation);
+    raw.send(&Message::Hello {
+        min: 1,
+        max: 1,
+        app: "old".to_owned(),
+    });
+    assert!(raw.refused_with(ErrorCode::Incompatible));
+}

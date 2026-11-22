@@ -143,12 +143,13 @@ impl Engine {
         }
     }
 
-    /// After a commit: forgets what it took, each file as it was when its content was fixed.
-    fn coauthors_committed(&mut self, fixed: &[(PathBuf, u64)]) {
+    /// After a commit: forgets what it took, each file as it was when its content was fixed,
+    /// and only those in `only` when it is given.
+    fn coauthors_committed(&mut self, fixed: &[(PathBuf, u64)], only: Option<&[String]>) {
         for (path, _) in fixed {
             self.git.staged_at.remove(path);
         }
-        if self.coauthors_mut().forget(fixed) {
+        if self.coauthors_mut().forget(fixed, only) {
             self.save_coauthors();
         }
     }
@@ -166,13 +167,24 @@ impl Engine {
         };
         result.map_err(git_error)?;
         // When each file's staged content was fixed, so an edit after it is credited in the
-        // commit after the one that takes it.
+        // commit after the one that takes it: now, or for a page with unsaved changes, when the
+        // text staged from disk was saved.
         let now = millis(self.clock.wall());
         for path in paths {
+            let real = real_path(path);
             if stage {
-                self.git.staged_at.insert(real_path(path), now);
+                let unsaved = self
+                    .document_for_path(&normalize_path(path))
+                    .and_then(|id| self.document(id))
+                    .is_some_and(|document| document.dirty);
+                let at = if unsaved {
+                    self.save_stamps.saved(&real)
+                } else {
+                    now
+                };
+                self.git.staged_at.insert(real, at);
             } else {
-                self.git.staged_at.remove(&real_path(path));
+                self.git.staged_at.remove(&real);
             }
         }
         self.refresh_git(workdir);
@@ -194,6 +206,22 @@ fn identities(repo: &Repository) -> Vec<String> {
         .flatten()
         .map(|(_, email)| email)
         .collect()
+}
+
+/// The addresses of `git.commit`'s `offered`, the co-authors its front end showed (ticked or
+/// not), each `{ "email" }`; `None` without it.
+fn offered_of(args: &CommandArgs) -> Option<Vec<String>> {
+    let CommandArgs::Custom(value) = args else {
+        return None;
+    };
+    let listed = value.get("offered")?.as_array()?;
+    Some(
+        listed
+            .iter()
+            .filter_map(|author| author.get("email").and_then(serde_json::Value::as_str))
+            .map(str::to_owned)
+            .collect(),
+    )
 }
 
 /// The `coauthors` of `git.commit`'s arguments: each `{ "name", "email" }`, the address one a
@@ -355,6 +383,7 @@ fn git_commit(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, 
     }
     let paths = paths_of(ids::GIT_COMMIT, &args)?;
     let coauthors = coauthors_of(&args)?;
+    let offered = offered_of(&args);
     let mut saved = Vec::new();
     for path in &paths {
         let Some(id) = engine.document_for_path(path) else {
@@ -387,6 +416,13 @@ fn git_commit(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, 
         })
         .collect();
     let own = identities(&repo);
+    // A guest the front end could not offer (whose first edit came after it listed them) keeps
+    // their record; the author and committer, never offered, have nothing to keep.
+    let only = offered.map(|mut offered| {
+        offered.extend(own.iter().cloned());
+        offered.extend(coauthors.iter().map(|author| author.email.clone()));
+        offered
+    });
     let own: Vec<&str> = own.iter().map(String::as_str).collect();
     let message = with_trailers(&message, &coauthors, &own);
     if repo.signs_commits() {
@@ -407,6 +443,7 @@ fn git_commit(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, 
             workdir: failed,
             saved: unsaved,
             fixed: Vec::new(),
+            only: None,
             result: Err(format!("git commit crashed: {error}")),
         };
         let started = saved.clone();
@@ -416,13 +453,14 @@ fn git_commit(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, 
                 workdir,
                 saved,
                 fixed,
+                only,
                 result,
             });
         });
         return Ok(CommandOutcome::CommitStarted { saved: started });
     }
     let commit = repo.commit(&message).map_err(git_error)?;
-    engine.coauthors_committed(&fixed);
+    engine.coauthors_committed(&fixed, only.as_deref());
     engine.refresh_git(workdir);
     Ok(CommandOutcome::Committed { commit, saved })
 }
@@ -576,12 +614,13 @@ impl Engine {
         workdir: PathBuf,
         saved: Vec<PathBuf>,
         fixed: &[(PathBuf, u64)],
+        only: Option<&[String]>,
         result: Result<String, String>,
     ) {
         self.git.committing = false;
         match result {
             Ok(commit) => {
-                self.coauthors_committed(fixed);
+                self.coauthors_committed(fixed, only);
                 self.emit(EngineEvent::GitCommitted { commit, saved });
             }
             Err(error) => self.emit(EngineEvent::CommandFailed {
