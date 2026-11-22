@@ -5,6 +5,10 @@
 //! The file is read as untrusted, and written on the engine's writer by laying this engine's
 //! changes over what the file holds then, so two windows hosting at once keep each other's.
 
+// Recording needs the `collab` feature and committing the `git` one; built without either,
+// part of the record goes unused.
+#![cfg_attr(not(all(feature = "collab", feature = "git")), allow(dead_code))]
+
 use std::{
     collections::BTreeMap,
     fs,

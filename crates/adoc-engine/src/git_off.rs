@@ -27,6 +27,17 @@ pub(crate) fn init_repository(_: &Path) -> Result<(), String> {
 #[derive(Default)]
 pub(crate) struct GitState {}
 
+impl Engine {
+    /// No commits without Git: nobody to offer.
+    #[must_use]
+    pub fn coauthors_for_commit(&self, _: &[PathBuf]) -> Vec<crate::CoAuthor> {
+        Vec::new()
+    }
+
+    /// No commits without Git: nothing to prune.
+    pub fn prune_coauthors(&mut self) {}
+}
+
 impl GitState {
     pub(crate) fn next_due(&self) -> Option<std::time::Instant> {
         None

@@ -220,3 +220,239 @@ fn credit_outlives_the_session_and_the_engine() {
     let a = path(&session, "a.adoc");
     assert_eq!(session.host.coauthors_of(&[a]), vec![guest1()]);
 }
+
+/// Committing: the commit dialog's co-authors, the trailers, and what a commit forgets.
+#[cfg(feature = "git")]
+mod committing {
+    use std::{path::PathBuf, time::Duration};
+
+    use adoc_core::SourceRange;
+    use adoc_engine::{commands::ids, CoAuthor, CommandArgs, CommandOutcome, Engine};
+    use adoc_git::testing::TestRepo;
+
+    use super::{guest1, guest_types_in, open_b, A, B};
+    use crate::collab_common::*;
+
+    const C: &str = "= C\n\nThird page.\n";
+
+    fn session(linked: bool) -> Session {
+        Session::in_repo(&[("a.adoc", A), ("b.adoc", B), ("c.adoc", C)], linked)
+    }
+
+    fn page(session: &Session, name: &str) -> PathBuf {
+        session.root().join(name)
+    }
+
+    fn repo(session: &Session) -> TestRepo {
+        TestRepo::open(&session.directory.path().join("tree"))
+    }
+
+    fn save_all(engine: &mut Engine) {
+        let ids: Vec<_> = engine.documents().map(|document| document.id).collect();
+        for id in ids {
+            if engine.document(id).is_some_and(|document| document.dirty) {
+                engine.save(id).unwrap();
+            }
+        }
+        assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    }
+
+    fn commit(
+        engine: &mut Engine,
+        message: &str,
+        paths: &[PathBuf],
+        coauthors: &[CoAuthor],
+    ) -> Result<CommandOutcome, adoc_engine::EngineError> {
+        let coauthors: Vec<_> = coauthors
+            .iter()
+            .map(|author| serde_json::json!({ "name": author.name, "email": author.email }))
+            .collect();
+        let paths: Vec<_> = paths.iter().map(|path| path.to_str().unwrap()).collect();
+        engine.invoke(
+            ids::GIT_COMMIT,
+            CommandArgs::Custom(serde_json::json!({
+                "message": message,
+                "paths": paths,
+                "coauthors": coauthors,
+            })),
+        )
+    }
+
+    /// The host has every file open with the guest: a, b and c are files 1, 2 and 3.
+    fn editing_everywhere(session: &mut Session) -> adoc_engine::protocol::PeerId {
+        let ada = session.guest(1, true);
+        open_b(session, ada);
+        session.engine(ada).open_session_file(3).unwrap();
+        session.settle();
+        ada
+    }
+
+    #[test]
+    fn a_commit_credits_only_those_who_changed_its_files() {
+        let mut session = session(false);
+        let ada = editing_everywhere(&mut session);
+        for file in [1, 3] {
+            let id = session.host.session_document(file).unwrap();
+            type_at(&mut session.host, id, 0, "Host. ");
+        }
+        session.settle();
+        guest_types_in(&mut session, ada, 2, "Guest. ");
+        guest_types_in(&mut session, ada, 3, "Guest. ");
+        save_all(&mut session.host);
+        let (a, b, c) = (
+            page(&session, "a.adoc"),
+            page(&session, "b.adoc"),
+            page(&session, "c.adoc"),
+        );
+        assert!(session.host.coauthors_for_commit(&[a]).is_empty());
+        assert_eq!(
+            session.host.coauthors_for_commit(&[b.clone()]),
+            vec![guest1()]
+        );
+        assert_eq!(session.host.coauthors_for_commit(&[c]), vec![guest1()]);
+        let offered = session.host.coauthors_for_commit(&[b.clone()]);
+        commit(&mut session.host, "docs: b", &[b], &offered).unwrap();
+        assert_eq!(
+            repo(&session).head_message(),
+            "docs: b\n\nCo-authored-by: guest 1 <guest1@example.org>\n"
+        );
+    }
+
+    #[test]
+    fn committed_files_start_again() {
+        let mut session = session(false);
+        let ada = editing_everywhere(&mut session);
+        guest_types_in(&mut session, ada, 2, "Guest. ");
+        guest_types_in(&mut session, ada, 3, "Guest. ");
+        save_all(&mut session.host);
+        let (b, c) = (page(&session, "b.adoc"), page(&session, "c.adoc"));
+        // A commit refused forgets nothing.
+        assert!(commit(&mut session.host, "  ", &[b.clone()], &[guest1()]).is_err());
+        assert_eq!(
+            session.host.coauthors_for_commit(&[b.clone()]),
+            vec![guest1()]
+        );
+        commit(&mut session.host, "docs: b", &[b.clone()], &[guest1()]).unwrap();
+        assert!(session.host.coauthors_for_commit(&[b]).is_empty());
+        assert_eq!(session.host.coauthors_for_commit(&[c]), vec![guest1()]);
+    }
+
+    #[test]
+    fn an_edit_after_staging_is_credited_next_time() {
+        let mut session = session(false);
+        let ada = editing_everywhere(&mut session);
+        guest_types_in(&mut session, ada, 2, "Before staging. ");
+        save_all(&mut session.host);
+        let b = page(&session, "b.adoc");
+        session
+            .host
+            .invoke(ids::GIT_STAGE, CommandArgs::Path(b.clone()))
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+        guest_types_in(&mut session, ada, 2, "After staging. ");
+        save_all(&mut session.host);
+        // The index is committed: what was staged, without the later edit.
+        assert_eq!(session.host.coauthors_for_commit(&[]), vec![guest1()]);
+        commit(&mut session.host, "docs: b", &[], &[guest1()]).unwrap();
+        assert!(repo(&session).head_message().contains("guest1@example.org"));
+        assert_eq!(session.host.coauthors_for_commit(&[b]), vec![guest1()]);
+    }
+
+    #[test]
+    fn the_committer_is_never_a_co_author() {
+        let mut session = session(false);
+        let host = session.guest_with_email(1, true, Some("HOST@Example.org"));
+        guest_types_in(&mut session, host, 1, "Typed. ");
+        save_all(&mut session.host);
+        let a = page(&session, "a.adoc");
+        assert_eq!(session.host.coauthors_of(&[a.clone()]).len(), 1);
+        assert!(session.host.coauthors_for_commit(&[a]).is_empty());
+    }
+
+    #[test]
+    fn a_renamed_file_keeps_its_credit() {
+        let mut session = session(false);
+        let ada = editing_everywhere(&mut session);
+        guest_types_in(&mut session, ada, 2, "Guest. ");
+        save_all(&mut session.host);
+        session.host.end_session();
+        let (b, d) = (page(&session, "b.adoc"), page(&session, "d.adoc"));
+        let id = session.host.open(&b).unwrap();
+        let CommandOutcome::Preview(preview) = session
+            .host
+            .invoke(
+                ids::PAGE_RENAME,
+                CommandArgs::Rename {
+                    id,
+                    new_path: d.clone(),
+                },
+            )
+            .unwrap()
+        else {
+            panic!("a rename previews");
+        };
+        session
+            .host
+            .invoke(
+                ids::WORKSPACE_APPLY_PREVIEW,
+                CommandArgs::Custom(serde_json::json!({ "preview_id": preview.id.get() })),
+            )
+            .unwrap();
+        assert!(d.exists());
+        assert_eq!(session.host.coauthors_for_commit(&[d]), vec![guest1()]);
+        assert!(session.host.coauthors_of(&[b]).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn credit_follows_a_page_shared_through_a_link() {
+        let mut session = session(true);
+        let ada = session.guest(1, true);
+        guest_types_in(&mut session, ada, 1, "Typed. ");
+        save_all(&mut session.host);
+        // Staged through the link, so the status is read again (a watcher may report the
+        // file by its real path, which is no root's).
+        session
+            .host
+            .invoke(ids::GIT_STAGE, CommandArgs::Path(page(&session, "a.adoc")))
+            .unwrap();
+        assert!(session.host.wait_for_workers(Duration::from_secs(10)));
+        let changed: Vec<PathBuf> = session
+            .host
+            .changed_writer_files()
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect();
+        assert_eq!(changed.len(), 1, "{changed:?}");
+        assert_eq!(session.host.coauthors_for_commit(&changed), vec![guest1()]);
+        let real = std::fs::canonicalize(page(&session, "a.adoc")).unwrap();
+        assert_eq!(session.host.coauthors_for_commit(&[real]), vec![guest1()]);
+    }
+
+    #[test]
+    fn a_file_back_to_its_committed_text_is_pruned() {
+        let mut session = session(false);
+        let ada = editing_everywhere(&mut session);
+        guest_types_in(&mut session, ada, 2, "Guest. ");
+        save_all(&mut session.host);
+        let b = page(&session, "b.adoc");
+        let id = session.host.session_document(2).unwrap();
+        let length = session.host.document(id).unwrap().text_string().len();
+        session
+            .host
+            .invoke(
+                ids::EDIT_REPLACE_RANGE,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(0, length),
+                    text: B.to_owned(),
+                },
+            )
+            .unwrap();
+        save_all(&mut session.host);
+        session.settle();
+        session.host.prune_coauthors();
+        assert!(session.host.coauthors_of(&[b.clone()]).is_empty());
+        assert!(session.host.coauthors_for_commit(&[b]).is_empty());
+    }
+}

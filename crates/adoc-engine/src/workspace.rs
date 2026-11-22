@@ -169,6 +169,8 @@ pub(crate) enum WorkerMessage {
     Committed {
         workdir: PathBuf,
         saved: Vec<PathBuf>,
+        /// Each file the commit takes, with when its content was fixed.
+        fixed: Vec<(PathBuf, u64)>,
         result: Result<String, String>,
     },
     ImpactInspected {
@@ -860,8 +862,9 @@ impl Engine {
             WorkerMessage::Committed {
                 workdir,
                 saved,
+                fixed,
                 result,
-            } => self.committed(workdir, saved, result),
+            } => self.committed(workdir, saved, &fixed, result),
             WorkerMessage::SiteBuildLine { generation, line } => {
                 self.site_build_line(generation, line);
             }

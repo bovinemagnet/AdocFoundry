@@ -674,6 +674,33 @@ impl Repository {
         }
     }
 
+    /// The name and email a commit's author is given, found as Git finds it: `author.*`, else
+    /// `user.*`, or the `GIT_AUTHOR_*` variables.
+    pub fn author_identity(&self) -> Result<(String, String), GitError> {
+        self.repo
+            .author()
+            .and_then(Result::ok)
+            .map(|signature| (signature.name.to_string(), signature.email.to_string()))
+            .filter(|(name, email)| !name.is_empty() && !email.is_empty())
+            .ok_or(GitError::NoIdentity)
+    }
+
+    /// The files whose index entry differs from `HEAD`'s tree, added and deleted ones included,
+    /// as absolute paths: what a commit of the index would take.
+    pub fn staged_paths(&self) -> Result<Vec<PathBuf>, GitError> {
+        Ok(self
+            .status()?
+            .into_iter()
+            .filter(|status| {
+                !matches!(
+                    status.index,
+                    Change::Unmodified | Change::Untracked | Change::Ignored
+                )
+            })
+            .map(|status| self.workdir().join(status.path))
+            .collect())
+    }
+
     /// Whether the configuration asks for signed commits (`commit.gpgsign`), which this crate
     /// cannot make.
     #[must_use]

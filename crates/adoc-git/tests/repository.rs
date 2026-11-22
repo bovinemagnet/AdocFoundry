@@ -599,3 +599,38 @@ fn a_path_that_leaves_the_working_tree_is_outside_it() {
         Some("= Page\n".to_owned())
     );
 }
+
+#[test]
+fn staged_paths_name_what_differs_from_head() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.write("kept.adoc", "kept\n");
+    test.write("changed.adoc", "one\n");
+    test.write("gone.adoc", "gone\n");
+    test.write("unstaged.adoc", "same\n");
+    test.commit_all("first");
+    test.write("changed.adoc", "one\ntwo\n");
+    test.write("added.adoc", "new\n");
+    test.remove("gone.adoc");
+    test.write("unstaged.adoc", "edited, not staged\n");
+    let repo = repo_in(dir.path());
+    let paths = ["changed.adoc", "added.adoc", "gone.adoc"].map(|name| dir.path().join(name));
+    repo.stage(&paths.iter().map(PathBuf::as_path).collect::<Vec<_>>())
+        .unwrap();
+    let mut staged = repo_in(dir.path()).staged_paths().unwrap();
+    staged.sort();
+    let mut expected = paths.to_vec();
+    expected.sort();
+    assert_eq!(staged, expected);
+}
+
+#[test]
+fn the_author_is_found_as_the_committer_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.set_identity("Ada Writer", "ada@example.com");
+    assert_eq!(
+        repo_in(dir.path()).author_identity().unwrap(),
+        ("Ada Writer".to_owned(), "ada@example.com".to_owned())
+    );
+}
