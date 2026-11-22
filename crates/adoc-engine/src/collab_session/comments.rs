@@ -218,6 +218,8 @@ impl Engine {
                         }
                     }),
                     detached,
+                    // Suggestions reach a guest with SUGGEST 2/4.
+                    suggestion: None,
                     replies: thread
                         .replies
                         .iter()
@@ -338,6 +340,15 @@ impl Engine {
                     return refused("delete someone else's comment");
                 }
                 (CommentChange::Delete { comment, reply }, None)
+            }
+            // Suggestions reach the host with SUGGEST 2/4.
+            Change::Suggest { .. }
+            | Change::Accept { .. }
+            | Change::Reject { .. }
+            | Change::EditSuggestion { .. } => {
+                return Err(EngineError::Refused(
+                    "Suggestions cannot be made in a session yet.".to_owned(),
+                ));
             }
         };
         let Some(session) = self.collab_session.as_mut() else {

@@ -138,7 +138,7 @@ pub use command::{
 };
 pub use comments::{
     find_quote, map_range, Allowed, Author, Comment, CommentId, CommentRequest, CommentsState,
-    Reply, COMMENT_SETTLE,
+    Reply, Suggestion, SuggestionState, COMMENT_SETTLE,
 };
 pub use deletion::{KeptDeletion, DELETED_DIR};
 pub use discovery::{IncomingReference, ReferenceKind, ResourceEntry, ResourceQuery};

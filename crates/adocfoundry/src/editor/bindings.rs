@@ -669,6 +669,10 @@ mod tests {
             ids::COMMENTS_REOPEN,
             ids::COMMENTS_EDIT,
             ids::COMMENTS_DELETE,
+            ids::COMMENTS_ACCEPT,
+            ids::COMMENTS_REJECT,
+            // Until the app gives Suggest Change its action (SUGGEST 3/4).
+            ids::COMMENTS_SUGGEST,
         ];
         let engine = Engine::new(Settings::default());
         let missing: Vec<&str> = engine

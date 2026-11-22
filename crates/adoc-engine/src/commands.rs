@@ -104,6 +104,9 @@ pub mod ids {
     pub const COMMENTS_DELETE: CommandId = CommandId::new("comments.delete");
     pub const COMMENTS_NEXT: CommandId = CommandId::new("comments.next");
     pub const COMMENTS_PREVIOUS: CommandId = CommandId::new("comments.previous");
+    pub const COMMENTS_SUGGEST: CommandId = CommandId::new("comments.suggest");
+    pub const COMMENTS_ACCEPT: CommandId = CommandId::new("comments.accept");
+    pub const COMMENTS_REJECT: CommandId = CommandId::new("comments.reject");
     pub const SETTINGS_RELOAD: CommandId = CommandId::new("settings.reload");
     pub const VIEW_TOGGLE_PREVIEW: CommandId = CommandId::new("view.toggle_preview");
     pub const VIEW_DETACH_PREVIEW: CommandId = CommandId::new("view.detach_preview");
