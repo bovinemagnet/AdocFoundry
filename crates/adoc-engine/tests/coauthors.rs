@@ -55,8 +55,14 @@ fn a_guests_change_is_recorded() {
     open_b(&mut session, ada);
     guest_types_in(&mut session, ada, 2, "Typed. ");
     let (a, b) = (path(&session, "a.adoc"), path(&session, "b.adoc"));
-    assert_eq!(session.host.coauthors_of(&[b.clone()]), vec![guest1()]);
-    assert!(session.host.coauthors_of(&[a.clone()]).is_empty());
+    assert_eq!(
+        session.host.coauthors_of(std::slice::from_ref(&b)),
+        vec![guest1()]
+    );
+    assert!(session
+        .host
+        .coauthors_of(std::slice::from_ref(&a))
+        .is_empty());
     let host_a = session.host.session_document(1).unwrap();
     type_at(&mut session.host, host_a, 0, "Host. ");
     session.settle();
@@ -150,7 +156,10 @@ fn credit_survives_a_reconnection_and_a_new_epoch() {
     session.settle();
     guest_types_in(&mut session, ada, 1, "After a reconnection. ");
     let (a, b) = (path(&session, "a.adoc"), path(&session, "b.adoc"));
-    assert_eq!(session.host.coauthors_of(&[a.clone()]), vec![guest1()]);
+    assert_eq!(
+        session.host.coauthors_of(std::slice::from_ref(&a)),
+        vec![guest1()]
+    );
 
     // The host starts b again from the disk, in a new epoch.
     fs::write(&b, "= B on disk\n").unwrap();
@@ -163,7 +172,10 @@ fn credit_survives_a_reconnection_and_a_new_epoch() {
     session.settle();
     assert_eq!(session.host.shared_file(host_b).unwrap().1, 2);
     guest_types_in(&mut session, ada, 2, "In a new epoch. ");
-    assert_eq!(session.host.coauthors_of(&[b.clone()]), vec![guest1()]);
+    assert_eq!(
+        session.host.coauthors_of(std::slice::from_ref(&b)),
+        vec![guest1()]
+    );
     assert_eq!(session.host.coauthors_of(&[a, b]), vec![guest1()]);
 }
 
@@ -306,11 +318,11 @@ mod committing {
         );
         assert!(session.host.coauthors_for_commit(&[a]).is_empty());
         assert_eq!(
-            session.host.coauthors_for_commit(&[b.clone()]),
+            session.host.coauthors_for_commit(std::slice::from_ref(&b)),
             vec![guest1()]
         );
         assert_eq!(session.host.coauthors_for_commit(&[c]), vec![guest1()]);
-        let offered = session.host.coauthors_for_commit(&[b.clone()]);
+        let offered = session.host.coauthors_for_commit(std::slice::from_ref(&b));
         commit(&mut session.host, "docs: b", &[b], &offered).unwrap();
         assert_eq!(
             repo(&session).head_message(),
@@ -327,12 +339,24 @@ mod committing {
         save_all(&mut session.host);
         let (b, c) = (page(&session, "b.adoc"), page(&session, "c.adoc"));
         // A commit refused forgets nothing.
-        assert!(commit(&mut session.host, "  ", &[b.clone()], &[guest1()]).is_err());
+        assert!(commit(
+            &mut session.host,
+            "  ",
+            std::slice::from_ref(&b),
+            &[guest1()]
+        )
+        .is_err());
         assert_eq!(
-            session.host.coauthors_for_commit(&[b.clone()]),
+            session.host.coauthors_for_commit(std::slice::from_ref(&b)),
             vec![guest1()]
         );
-        commit(&mut session.host, "docs: b", &[b.clone()], &[guest1()]).unwrap();
+        commit(
+            &mut session.host,
+            "docs: b",
+            std::slice::from_ref(&b),
+            &[guest1()],
+        )
+        .unwrap();
         assert!(session.host.coauthors_for_commit(&[b]).is_empty());
         assert_eq!(session.host.coauthors_for_commit(&[c]), vec![guest1()]);
     }
@@ -365,7 +389,7 @@ mod committing {
         guest_types_in(&mut session, host, 1, "Typed. ");
         save_all(&mut session.host);
         let a = page(&session, "a.adoc");
-        assert_eq!(session.host.coauthors_of(&[a.clone()]).len(), 1);
+        assert_eq!(session.host.coauthors_of(std::slice::from_ref(&a)).len(), 1);
         assert!(session.host.coauthors_for_commit(&[a]).is_empty());
     }
 
@@ -452,7 +476,10 @@ mod committing {
         save_all(&mut session.host);
         session.settle();
         session.host.prune_coauthors();
-        assert!(session.host.coauthors_of(&[b.clone()]).is_empty());
+        assert!(session
+            .host
+            .coauthors_of(std::slice::from_ref(&b))
+            .is_empty());
         assert!(session.host.coauthors_for_commit(&[b]).is_empty());
     }
 }

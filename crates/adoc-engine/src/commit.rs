@@ -209,7 +209,7 @@ fn coauthors_of(args: &CommandArgs) -> Result<Vec<CoAuthor>, EngineError> {
     let Some(listed) = value.get("coauthors") else {
         return Ok(Vec::new());
     };
-    let listed = listed.as_array().ok_or_else(|| invalid())?;
+    let listed = listed.as_array().ok_or_else(invalid)?;
     listed
         .iter()
         .map(|author| {

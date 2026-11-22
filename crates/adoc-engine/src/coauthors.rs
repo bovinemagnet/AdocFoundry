@@ -556,7 +556,7 @@ mod tests {
         assert!(store.record(&a, "Ada L", "ada@example.org", 10));
         assert!(!store.record(&a, "Ada", "ada@example.org", 20));
         assert!(store.record(&b, "Ada", "ada@example.org", 30));
-        assert_eq!(store.for_paths(&[a.clone()]), vec![ada()]);
+        assert_eq!(store.for_paths(std::slice::from_ref(&a)), vec![ada()]);
         assert_eq!(store.for_paths(&[a, b]), vec![ada()]);
     }
 
@@ -578,7 +578,7 @@ mod tests {
         store.record(&a, "Bea", "bea@example.org", 30);
         assert!(store.forget(&[(a.clone(), 20)]));
         assert_eq!(
-            store.for_paths(&[a.clone()]),
+            store.for_paths(std::slice::from_ref(&a)),
             vec![CoAuthor {
                 name: "Bea".to_owned(),
                 email: "bea@example.org".to_owned(),

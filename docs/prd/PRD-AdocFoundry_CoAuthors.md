@@ -120,3 +120,13 @@ A guest's comment or reply is recorded on the host with the guest's address as i
 
 1. **CO-AUTHORS 1/2: the address and the record** — sections 5.1 to 5.5, the engine's and transport's tests, `docs/qa/collab.md`'s security review rows for the address.
 2. **CO-AUTHORS 2/2: in the app** — section 5.6, the app test, the user guide, README, CHANGELOG, the manual checks (a real commit on GitHub showing its co-author).
+
+## 8. Implementation notes
+
+**CO-AUTHORS 1/2.**
+- The address rule is in the protocol (`adoc_collab::protocol::commit_email`) and again in the engine (`coauthors::is_commit_email`), since the engine builds without `adoc-collab` for the CLI, the language server and the MCP server. `the_address_rule_is_the_protocols` holds the two together.
+- `record` reports a write as due only for someone new to a file, as §5.2 says. Every later time is queued too, one per file and person, and goes with the next write. `forget` queues each remaining author's latest time, so the file agrees with memory after any write.
+- `prune_coauthors` reads each recorded file's text against `HEAD` from the repository, not from the status the engine last read, which may not be read yet. It touches only files in this workspace's repositories, so a record another window made in the same state file is never dropped.
+- A commit's fixing times come from `Repository::staged_paths`, read as the commit starts. If it cannot be read, nothing is forgotten.
+- Through a linked root the engine's Git status was not read again after a save (the watcher reports the file by its real path); staging reads it again. This is the Git status's behaviour, not co-authorship's, and is left for its own issue.
+- Open, for the maintainer: whose a comment is (§5.5) rests on an address a guest gives and nobody checks, and the host does not see it when admitting the guest (`docs/qa/collab.md`, Release decisions).

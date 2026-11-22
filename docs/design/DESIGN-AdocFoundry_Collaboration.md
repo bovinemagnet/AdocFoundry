@@ -109,7 +109,9 @@ Every guest is treated as possibly modified, and everything it sends as untruste
 - `Epoch`: a number per shared file, starting at 1. It is bumped whenever the file's replica is rebuilt from text: a reload from disk, a host-initiated resynchronisation, or a projection failure.
 - None of these is the engine's `DocumentId` or `OpenDocument::version`, which stay local to a process and are never sent. A state vector is never treated as permission.
 
-## 8. Protocol, version 1
+## 8. Protocol, version 2
+
+Version 2 (#761) added the guest's optional e-mail address to `Authenticate` and the `own` flags of comment threads; version 1 peers are told apart by `Hello`.
 
 **Frames.** Each frame is laid out as follows:
 - a 4-byte big-endian length, at most `MAX_FRAME`;
@@ -124,7 +126,7 @@ An unknown kind, malformed JSON, or a field outside its limit closes the connect
 | Message | From | Holds |
 |---|---|---|
 | `Hello` | both | Protocol versions supported (`min`, `max`), the application's version, capabilities. The host answers with the version chosen, or `Error { incompatible }`, and both show it |
-| `Authenticate` | guest | The invitation secret or a resume token; a display name |
+| `Authenticate` | guest | The invitation secret or a resume token; a display name; optionally an e-mail address to be credited by in the host's commits (`commit_email`), which the host never tells anyone |
 | `Join` | host | The decision after Admit: `PeerId`, role, session id; or `Error { denied }` |
 | `Roster` | host | Who is in the session (each participant's `PeerId`, name, role, whether connected, the shared file they are in or none, and whom they follow, the host first) and the shared folder's name; sent after `Join` and whenever it changes |
 | `Focus` | guest | The shared file the guest is in, or none (on a page of its own, an image or nothing), and whom it follows; sent when either changes and again after `Join` or resuming; a file not in the manifest closes the connection. The host tells the others in its `Roster`, at most once a pump (#767) |

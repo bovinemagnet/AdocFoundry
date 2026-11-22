@@ -337,7 +337,9 @@ fn guest_process() {
 
     let connecting = adoc_share::connect(&invitation, timings()).unwrap();
     say(&format!("code {}", connecting.safety_code()));
-    let (link, control) = connecting.authenticate("Guest", None, "0.0.0", None).unwrap();
+    let (link, control) = connecting
+        .authenticate("Guest", None, "0.0.0", None)
+        .unwrap();
     let mut guest = engine();
     guest.join_session(Box::new(link)).unwrap();
 

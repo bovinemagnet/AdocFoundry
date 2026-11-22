@@ -1132,6 +1132,69 @@ A guest's shared documents have no file of their own.
 They get no recovery record (`write_record` forgets one for a guest's document), and, having no file, they are not kept in the window session.
 The host's shared documents keep their recovery records while dirty, as any page does.
 
+[#co-authors]
+=== Co-authors of shared edits
+
+Crediting the guests whose edits a commit holds is issue #761; the specification is `docs/prd/PRD-AdocFoundry_CoAuthors.md`.
+The tests are in `crates/adoc-engine/tests/coauthors.rs`, among them `a_commit_credits_only_those_who_changed_its_files`, `a_participant_who_only_read_is_never_credited`, `credit_survives_a_reconnection_and_a_new_epoch`, `a_guests_email_reaches_only_the_host`, `credit_outlives_the_session_and_the_engine`, `committed_files_start_again`, `an_edit_after_staging_is_credited_next_time` and `credit_follows_a_page_shared_through_a_link`.
+
+==== The guest's address
+
+A guest may give an e-mail address when it joins, to be credited by in the host's commits.
+It travels in `Message::Authenticate` as `email`, which is optional, and is checked by `adoc_collab::protocol::commit_email`.
+An address is at most 254 bytes, with one `@` and something on each side of it, and holds no white space, control character, `<`, `>`, `,`, `"` or `\`.
+The protocol version is 2, so `Hello` tells an older peer apart.
+
+The transport hands the address to the host's engine in `LinkEvent::Knock { email }`, and the host keeps it on the guest's `Peer`.
+It is never put in a message to a guest, a `Member` of the roster, a comment thread sent to a guest, an error or a log line.
+
+==== What is recorded
+
+When a guest's update changes the text of a shared file, which is when the document's version moves as `apply_shared_update` applies it, the host records that guest against the file.
+The record names the file's real path, with links followed; for a file that has gone, it uses the real path of the file's folder and the file's name.
+It also holds the wall-clock time of the change in milliseconds.
+A guest without an address is not recorded.
+A guest is one co-author whatever the case of their address, and the latest name they used is kept.
+
+==== The record
+
+The record is `src/coauthors.rs` (`CoAuthors`, `CoAuthor`), kept until the file is committed.
+It is held in memory, and in `coauthors.json` in the engine's state folder when it has one:
+
+[source,json]
+----
+{"format": 1, "files": {"<real path>": [{"name": "…", "email": "…", "changed": 0}]}}
+----
+
+It is written on the writer, and only when someone is new to a file or after a commit, a rename or a prune.
+The writer reads the file as it is then and lays this engine's changes over it, so two windows hosting at once keep each other's records.
+
+The file is read as untrusted.
+It is at most 1 MiB, with at most 10,000 files and 100 co-authors for a file, and each name and address is held to the protocol's limits.
+A file that breaks them, or that is of a newer format, is left alone and never written over, and the record is then kept in memory only.
+
+==== Queries and commits
+
+Front ends ask the engine, and never read the record:
+
+`Engine::coauthors_of(paths)`:: What is recorded for those paths.
+`Engine::coauthors_for_commit(paths)`:: The co-authors of a commit of those paths and of everything already staged, less the commit's author and committer.
+`Engine::prune_coauthors`:: Called when a commit dialog opens.
+It drops the record of a file in this workspace's repositories whose text is back to that of `HEAD`, that nothing staged and that is not open with unsaved changes.
+
+`git.commit` takes `"coauthors": [{"name", "email"}]` among its `Custom` arguments.
+Each address is checked, and each is added as a `Co-authored-by: Name <email>` trailer after a blank line, or to the message's last paragraph when that is already a block of trailers.
+A trailer is never added twice, and never for the committer.
+The engine adds no trailer of its own accord.
+
+==== Forgetting
+
+After a commit succeeds, the files it took are forgotten, each as it was when its content was fixed.
+That is when `git.commit` staged it, when the engine staged it (`git.stage`), or else when the commit started.
+A guest whose change came later keeps their record for the next commit.
+A signed commit carries those times through its worker.
+Renaming a file in the app moves its record; deleting it keeps the record, so committing the deletion credits whoever changed it.
+
 == Comments and page metadata
 
 Comments on a page's text are kept in a metadata file beside the page, never in the page.
@@ -1230,6 +1293,10 @@ Who may do what is decided by `Actor::allowed` in `comments.rs`.
 Alone, every change is the user's to make.
 A comment is its author's own when the e-mail addresses are the same, if both have one, else when the names are the same.
 That is a courtesy, not a security boundary.
+
+A guest's comment or reply is recorded on the host with the address the guest gave as its `email`, so the page's `.afd` file holds it (see xref:#co-authors[co-authors of shared edits]).
+The host tells each guest which threads and replies are its own (`SharedThread::own`, `SharedReply::own`), decided for each guest by address, else by name, since a guest is never told an address.
+A guest can then edit its own comment in a later session under another name (`a_guest_edits_their_own_comment_under_another_name` in `tests/collab_comments.rs`).
 
 A guest's command sends `Message::Comment` with a `CommentChange` and a `request` number.
 An add carries its range as a selection relative to the shared text (`Engine::shared_range`).
@@ -1406,7 +1473,7 @@ It is refreshed with the status.
 |Stages every file in `changed_writer_files`.
 
 |`git.commit` (Commit)
-|Takes `CommandArgs::Custom` with a `"message"` and optional `"paths"`. With paths, open documents among them that have unsaved edits are saved first and the paths are staged. It returns `CommandOutcome::Committed { commit, saved }`; with `commit.gpgsign` it runs on a worker and returns `CommandOutcome::CommitStarted { saved }` at once, the result arriving as `EngineEvent::GitCommitted { commit, saved }` or `CommandFailed`. From the palette, with no arguments, it opens the dialog.
+|Takes `CommandArgs::Custom` with a `"message"` and optional `"paths"`. With paths, open documents among them that have unsaved edits are saved first and the paths are staged. It returns `CommandOutcome::Committed { commit, saved }`; with `commit.gpgsign` it runs on a worker and returns `CommandOutcome::CommitStarted { saved }` at once, the result arriving as `EngineEvent::GitCommitted { commit, saved }` or `CommandFailed`. From the palette, with no arguments, it opens the dialog. It also takes `"coauthors"`, described in xref:#co-authors[co-authors of shared edits].
 
 |`git.push` (Push)
 |Pushes the current branch to `[git] remote`. The push runs on a worker thread and publishes `EngineEvent::GitPushed { message }`.
