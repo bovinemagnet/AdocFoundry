@@ -8,7 +8,6 @@ mod appearance;
 mod attribute_inspection;
 mod auto_save;
 mod clock;
-#[cfg(feature = "git")]
 mod coauthors;
 #[cfg(feature = "collab")]
 mod collab;
@@ -17,6 +16,7 @@ mod collab_session;
 mod command;
 pub mod commands;
 mod comments;
+#[cfg(feature = "git")]
 mod commit;
 mod deletion;
 mod discovery;
