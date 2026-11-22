@@ -2666,7 +2666,7 @@ fn save_and_commit_commits_the_page_and_counts_it_unpushed(cx: &mut TestAppConte
 
     cx.update(|window, cx| {
         workspace.update(cx, |workspace, cx| {
-            workspace.commit(message, &paths, false, window, cx)
+            workspace.commit(message, &paths, &[], false, window, cx)
         });
     });
     settle_engine(&app, &mut cx);
@@ -2675,6 +2675,114 @@ fn save_and_commit_commits_the_page_and_counts_it_unpushed(cx: &mut TestAppConte
     assert!(labels.is_empty(), "committed: {labels:?}");
     let ahead = cx.update(|_, cx| app.read(cx).engine.git().repositories()[0].ahead);
     assert_eq!(ahead, Some(1), "one commit not pushed");
+}
+
+/// The commit dialog offers the guests who changed the files a commit takes, each ticked; one
+/// unticked is left out of the commit's message.
+#[gpui::test]
+fn the_commit_dialog_offers_co_authors(cx: &mut TestAppContext) {
+    use adoc_collab::testing::{GuestLink, HostLink, Net};
+    use adoc_engine::{
+        protocol::{PeerId, Role},
+        LinkEvent,
+    };
+
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let repo = adoc_git::testing::TestRepo::init(&root);
+    repo.set_identity("Host", "host@example.org");
+    repo.write("a.adoc", "= A\n");
+    repo.write("b.adoc", "= B\n");
+    repo.commit_all("first");
+    let mut host = Engine::new(Settings::default());
+    host.open_workspace(vec![root.clone()]).unwrap();
+    assert!(host.wait_for_workers(std::time::Duration::from_secs(10)));
+    let net = std::sync::Arc::new(std::sync::Mutex::new(Net::default()));
+    host.host_session(
+        Box::new(HostLink(net.clone())),
+        &root,
+        &["a.adoc".into(), "b.adoc".into()],
+        "Host",
+    )
+    .unwrap();
+    let peer = PeerId(1);
+    let mut guest = Engine::new(Settings::default().with_git_opt_in());
+    guest
+        .join_session(Box::new(GuestLink {
+            net: net.clone(),
+            me: peer,
+        }))
+        .unwrap();
+    net.lock().unwrap().to_host.push_back(LinkEvent::Knock {
+        peer,
+        name: "Ada".to_owned(),
+        email: Some("ada@example.org".to_owned()),
+    });
+    let pump = |host: &mut Engine, guest: &mut Engine| {
+        for _ in 0..10 {
+            guest.pump();
+            host.pump();
+        }
+    };
+    pump(&mut host, &mut guest);
+    host.admit_peer(peer).unwrap();
+    host.set_peer_role(peer, Role::Editor).unwrap();
+    pump(&mut host, &mut guest);
+    for file in [1, 2] {
+        guest.open_session_file(file).unwrap();
+        pump(&mut host, &mut guest);
+        let id = guest.session_document(file).unwrap();
+        guest
+            .invoke(
+                ids::EDIT_INSERT_TEXT,
+                adoc_engine::CommandArgs::Text {
+                    id,
+                    range: adoc_core::SourceRange::new(0, 0),
+                    text: "Ada. ".to_owned(),
+                },
+            )
+            .unwrap();
+        pump(&mut host, &mut guest);
+        let shared = host.session_document(file).unwrap();
+        host.save(shared).unwrap();
+    }
+    assert!(host.wait_for_workers(std::time::Duration::from_secs(10)));
+    let (a, b) = (root.join("a.adoc"), root.join("b.adoc"));
+    assert_eq!(host.coauthors_of(&[a.clone(), b.clone()]).len(), 1);
+    let app = app_with(host, cx);
+    let (workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    settle_engine(&app, &mut cx);
+
+    // Unticked: committed without the trailer.
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_commit_dialog("docs: a".to_owned(), vec![a.clone()], window, cx);
+        });
+    });
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("commit-coauthor-0").is_some());
+    click("commit-coauthor-0", &mut cx);
+    redraw(&app, &mut cx);
+    click("commit-only", &mut cx);
+    settle_engine(&app, &mut cx);
+    assert_eq!(repo.head_message(), "docs: a");
+
+    // Left ticked: credited.
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_commit_dialog("docs: b".to_owned(), vec![b.clone()], window, cx);
+        });
+    });
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("commit-coauthor-0").is_some());
+    click("commit-only", &mut cx);
+    settle_engine(&app, &mut cx);
+    assert_eq!(
+        repo.head_message(),
+        "docs: b\n\nCo-authored-by: Ada <ada@example.org>\n"
+    );
+    drop(guest);
 }
 
 // --- visual editor ---------------------------------------------------------------------------

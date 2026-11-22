@@ -5,7 +5,7 @@
 //! same way.
 
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     rc::Rc,
@@ -1838,8 +1838,9 @@ impl WorkspaceView {
             .into_any_element()
     }
 
-    /// Asks for a commit message, listing what will be committed, and commits (and pushes).
-    /// `paths` are committed as they are saved; otherwise what is staged.
+    /// Asks for a commit message, listing what will be committed and the guests who changed it
+    /// in a collaboration session, each ticked to be credited, and commits (and pushes). `paths`
+    /// are committed as they are saved; otherwise what is staged.
     pub fn open_commit_dialog(
         &mut self,
         message: String,
@@ -1859,6 +1860,11 @@ impl WorkspaceView {
                 .map(|(path, _)| sidebar::display_path(&path, roots))
                 .collect()
         };
+        let coauthors = self.app.update(cx, |app, _| {
+            app.engine.prune_coauthors();
+            app.engine.coauthors_for_commit(&paths)
+        });
+        let ticked = Rc::new(RefCell::new(vec![true; coauthors.len()]));
         let state = cx.new(|cx| {
             let mut state = gpui_component::input::TextareaState::new(window, cx);
             state.set_value(message, window, cx);
@@ -1876,16 +1882,44 @@ impl WorkspaceView {
                 .count();
             let commit = |push: bool| {
                 let (state, workspace, paths) = (state.clone(), workspace.clone(), paths.clone());
+                let (coauthors, ticked) = (coauthors.clone(), ticked.clone());
                 move |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
                     let message = state.read(cx).value().to_string();
+                    let credited: Vec<adoc_engine::CoAuthor> = coauthors
+                        .iter()
+                        .zip(ticked.borrow().iter())
+                        .filter(|(_, ticked)| **ticked)
+                        .map(|(author, _)| author.clone())
+                        .collect();
                     window.close_dialog(cx);
                     if let Some(workspace) = workspace.upgrade() {
                         workspace.update(cx, |workspace, cx| {
-                            workspace.commit(message, &paths, push, window, cx);
+                            workspace.commit(message, &paths, &credited, push, window, cx);
                         });
                     }
                 }
             };
+            let credit = (!coauthors.is_empty()).then(|| {
+                v_flex()
+                    .gap_1()
+                    .text_sm()
+                    .child(div().text_xs().child("Co-authors"))
+                    .children(coauthors.iter().enumerate().map(|(index, author)| {
+                        let ticked = ticked.clone();
+                        let checked = ticked.borrow()[index];
+                        div()
+                            .debug_selector(move || format!("commit-coauthor-{index}"))
+                            .child(
+                                Checkbox::new(("commit-coauthor", index))
+                                    .label(format!("{} <{}>", author.name, author.email))
+                                    .checked(checked)
+                                    .on_click(move |checked, window, _| {
+                                        ticked.borrow_mut()[index] = *checked;
+                                        window.refresh();
+                                    }),
+                            )
+                    }))
+            });
             dialog.title("Commit").width(px(560.)).child(
                 v_flex()
                     .gap_2()
@@ -1905,6 +1939,7 @@ impl WorkspaceView {
                             .text_sm()
                             .children(files.iter().map(|file| div().child(file.clone()))),
                     )
+                    .children(credit)
                     .child(
                         h_flex()
                             .gap_2()
@@ -1918,6 +1953,7 @@ impl WorkspaceView {
                                 Button::new("commit-only")
                                     .primary()
                                     .label("Commit")
+                                    .debug_selector(|| "commit-only".to_owned())
                                     .on_click(commit(false)),
                             ),
                     ),
@@ -1925,11 +1961,13 @@ impl WorkspaceView {
         });
     }
 
-    /// Commits with `message`, saving and staging `paths` first, then pushes when asked.
+    /// Commits with `message`, saving and staging `paths` first and crediting `coauthors`, then
+    /// pushes when asked.
     pub fn commit(
         &mut self,
         message: String,
         paths: &[std::path::PathBuf],
+        coauthors: &[adoc_engine::CoAuthor],
         push: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1938,7 +1976,15 @@ impl WorkspaceView {
             .iter()
             .map(|path| path.display().to_string())
             .collect();
-        let args = CommandArgs::Custom(serde_json::json!({ "message": message, "paths": paths }));
+        let coauthors: Vec<serde_json::Value> = coauthors
+            .iter()
+            .map(|author| serde_json::json!({ "name": author.name, "email": author.email }))
+            .collect();
+        let args = CommandArgs::Custom(serde_json::json!({
+            "message": message,
+            "paths": paths,
+            "coauthors": coauthors,
+        }));
         match self.invoke(ids::GIT_COMMIT, args, window, cx) {
             Some(CommandOutcome::Committed { commit, saved }) => {
                 self.committed(&commit, &saved, push, window, cx);
