@@ -911,3 +911,70 @@ fn a_suggestion_that_changes_nothing_is_not_accepted() {
     assert!(engine.undo_stack(id).unwrap().is_empty());
     assert_eq!(state(&engine, id, made), SuggestionState::Pending);
 }
+
+#[test]
+fn undoing_an_accept_at_a_range_edge_restores_its_range() {
+    // Each deletes at one edge of its range: its start, then its end.
+    for (name, original, replacement) in [
+        ("start.adoc", "very good", "good"),
+        ("end.adoc", "good today, really", "good today"),
+    ] {
+        let setup = Setup::new();
+        let page = setup.write_page(name, "= Edge\n\nIt is very good today, really.\n");
+        let mut engine = setup.engine();
+        let id = engine.open(&page).unwrap();
+        let before = text(&engine, id);
+        let after = before.replacen(original, replacement, 1);
+        let range = range_of(&engine, id, original);
+        let made = suggest(&mut engine, id, range, replacement, "").unwrap();
+        accept(&mut engine, id, made).unwrap();
+        assert_eq!(text(&engine, id), after, "{name}");
+        assert_eq!(range_text(&engine, id, made), replacement, "{name}");
+
+        assert!(engine.undo(id));
+        assert_eq!(text(&engine, id), before, "{name}");
+        assert_eq!(comment(&engine, id, made).range, range, "{name}");
+        assert_eq!(range_text(&engine, id, made), original, "{name}");
+        // Redone and undone again: over the replacement, then the original.
+        assert!(engine.redo(id));
+        assert_eq!(text(&engine, id), after, "{name}");
+        assert_eq!(range_text(&engine, id, made), replacement, "{name}");
+        assert!(engine.undo(id));
+        assert_eq!(comment(&engine, id, made).range, range, "{name}");
+        reopen(&mut engine, id, made);
+        assert_eq!(state(&engine, id, made), SuggestionState::Pending, "{name}");
+        accept(&mut engine, id, made).unwrap();
+        assert_eq!(text(&engine, id), after, "{name}");
+        assert_eq!(range_text(&engine, id, made), replacement, "{name}");
+    }
+}
+
+#[test]
+fn undoing_an_accepted_deletion_never_moves_it() {
+    let setup = Setup::new();
+    let original = "= Twice\n\nShip it, really, today.\n\nThen rest, really, at home.\n";
+    let page = setup.write_page("twice.adoc", original);
+    let sidecar = setup.root.join("modules/ROOT/pages/.twice.adoc.afd");
+    let mut engine = setup.engine();
+    let id = engine.open(&page).unwrap();
+    let range = range_of(&engine, id, " really,");
+    let made = suggest(&mut engine, id, range, "", "").unwrap();
+    accept(&mut engine, id, made).unwrap();
+    // Long enough for a detached comment to be searched for, and its words are still on the
+    // page, in the second sentence.
+    setup.settle(&mut engine);
+    let found = comment(&engine, id, made);
+    assert_eq!(found.range, SourceRange::new(range.start, range.start));
+
+    assert!(engine.undo(id));
+    assert_eq!(text(&engine, id), original);
+    let found = comment(&engine, id, made);
+    assert!(!found.detached);
+    assert_eq!(found.range, range, "back in its own place");
+    reopen(&mut engine, id, made);
+    assert_eq!(state(&engine, id, made), SuggestionState::Pending);
+    setup.settle(&mut engine);
+    assert_eq!(comment(&engine, id, made).range, range);
+    let written = fs::read_to_string(&sidecar).unwrap();
+    assert!(!written.contains("uncertain"), "{written}");
+}

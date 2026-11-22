@@ -386,6 +386,80 @@ struct Live {
     /// A suggestion found again at a place it cannot be sure of, so never pending until its
     /// author suggests again; written to its file as `uncertain` when it is written.
     uncertain: bool,
+    /// An accepted suggestion's edit, which Undo (then Redo) may yet reverse; kept in memory
+    /// only, as the undo history is.
+    reversal: Option<Reversal>,
+}
+
+/// The edit an accept made, as Undo or Redo would reverse it: when the page is next edited by
+/// exactly that reversal, the suggestion's range is put back over the text it then holds,
+/// which the comments' edge rule alone would not do (spec §6, "Undo").
+#[derive(Clone, Debug)]
+struct Reversal {
+    /// The text the accept's edit changes, where it is now: its replacement's part while the
+    /// accept stands, the original's part once undone.
+    span: SourceRange,
+    /// What reversing puts in place of `span`.
+    back: String,
+    /// What `span` holds now.
+    now: String,
+    /// The common start and end the edit left alone (`minimal_edit`).
+    prefix: usize,
+    suffix: usize,
+}
+
+impl Reversal {
+    /// The text around `span` the reversal relies on: the edit and its unchanged ends.
+    fn guarded(&self) -> SourceRange {
+        SourceRange::new(
+            self.span.start.saturating_sub(self.prefix),
+            self.span.end + self.suffix,
+        )
+    }
+
+    /// Follows `edits`, just applied: where its span starts after them when they hold exactly
+    /// the reversal and touch nothing else it relies on, so that it is now reversed; none when
+    /// it stands. `Err` when they changed what it relies on otherwise, so it can no longer be
+    /// told apart from any other edit.
+    fn follow(&mut self, edits: &[TextEdit]) -> Result<Option<usize>, ()> {
+        let guarded = self.guarded();
+        let mut shift: isize = 0;
+        let mut reversed = None;
+        for edit in edits {
+            if edit.range == self.span && edit.replacement == self.back && reversed.is_none() {
+                reversed = Some(self.span.start.saturating_add_signed(shift));
+            } else if touches(guarded, edit) {
+                return Err(());
+            }
+            if reversed.is_none() && edit.range.end <= self.span.start {
+                shift += edit.replacement.len() as isize - edit.range.len() as isize;
+            }
+        }
+        match reversed {
+            Some(start) => {
+                self.span = SourceRange::new(start, start + self.back.len());
+                std::mem::swap(&mut self.back, &mut self.now);
+                Ok(Some(start))
+            }
+            None => {
+                self.span = map_range(self.span, edits);
+                Ok(None)
+            }
+        }
+    }
+}
+
+/// Whether `edit` replaces or deletes any of `range`, or types inside it; typing at its edges
+/// does not touch it, nor does an edit beside it.
+fn touches(range: SourceRange, edit: &TextEdit) -> bool {
+    let SourceRange { start, end } = edit.range;
+    if range.is_empty() {
+        start < range.start && range.start < end
+    } else if start == end {
+        range.start < start && start < range.end
+    } else {
+        start < range.end && end > range.start
+    }
 }
 
 impl Live {
@@ -1032,19 +1106,41 @@ impl Engine {
         let mut changed = false;
         let mut detached = false;
         for live in &mut page.comments {
+            let reversed = match live
+                .reversal
+                .as_mut()
+                .map(|reversal| reversal.follow(edits))
+            {
+                Some(Ok(start)) => start,
+                Some(Err(())) => {
+                    live.reversal = None;
+                    None
+                }
+                None => None,
+            };
             if live.stored.detached {
                 live.range = map_range(live.range, edits);
                 live.range.end = live.range.start;
                 detached = true;
-                continue;
+            } else {
+                let inside = changes_inside(live.range, edits);
+                live.range = map_range(live.range, edits);
+                if live.range.is_empty() {
+                    live.stored.detached = true;
+                    detached = true;
+                }
+                if inside {
+                    page.changed.insert(live.stored.id);
+                    changed = true;
+                }
             }
-            let inside = changes_inside(live.range, edits);
-            live.range = map_range(live.range, edits);
-            if live.range.is_empty() {
-                live.stored.detached = true;
-                detached = true;
-            }
-            if inside {
+            if let (Some(start), Some(reversal)) = (reversed, &live.reversal) {
+                // An accept undone or redone: over the original or the replacement again,
+                // whatever the edge rule made of it.
+                let from = start.saturating_sub(reversal.prefix);
+                let len = reversal.prefix + reversal.span.len() + reversal.suffix;
+                live.range = SourceRange::new(from, from + len);
+                live.stored.detached = live.range.is_empty();
                 page.changed.insert(live.stored.id);
                 changed = true;
             }
@@ -1283,6 +1379,7 @@ impl Engine {
                     },
                     range,
                     uncertain: false,
+                    reversal: None,
                 });
                 new
             }
@@ -1340,6 +1437,7 @@ impl Engine {
                     },
                     range,
                     uncertain: false,
+                    reversal: None,
                 });
                 new
             }
@@ -1404,6 +1502,7 @@ impl Engine {
                 check_suggestion(&original, &replacement)?;
                 // Suggested again on the text as it is: its place is certain.
                 live.uncertain = false;
+                live.reversal = None;
                 live.stored.suggestion = Some(StoredSuggestion {
                     original,
                     replacement,
@@ -1613,6 +1712,13 @@ impl Engine {
             suggestion.replacement[prefix..suggestion.replacement.len() - suffix].to_owned(),
         );
         let covered = SourceRange::new(start, start + suggestion.replacement.len());
+        let reversal = Reversal {
+            span: SourceRange::new(edit.range.start, edit.range.start + edit.replacement.len()),
+            back: suggestion.original[prefix..suggestion.original.len() - suffix].to_owned(),
+            now: edit.replacement.clone(),
+            prefix,
+            suffix,
+        };
         let credit = live
             .stored
             .email
@@ -1639,8 +1745,9 @@ impl Engine {
                 .iter_mut()
                 .find(|live| live.stored.id == comment)
             {
-                // Whatever the edge rule made of it: undone, it holds its original again.
+                // Whatever the edge rule made of it; and Undo puts it back over its original.
                 live.range = covered;
+                live.reversal = Some(reversal);
                 if let Some(suggestion) = live.stored.suggestion.as_mut() {
                     suggestion.outcome = Some(Outcome::Accepted);
                 }
@@ -1762,7 +1869,13 @@ impl Engine {
         };
         page.search_detached_at = None;
         let mut found = false;
-        for live in page.comments.iter_mut().filter(|live| live.stored.detached) {
+        // An accepted suggestion whose accept may yet be undone is where Undo will put it, never
+        // moved onto the same words elsewhere.
+        for live in page
+            .comments
+            .iter_mut()
+            .filter(|live| live.stored.detached && live.reversal.is_none())
+        {
             if let Some((range, certain)) = find_again(&text, &live.stored, live.range.start) {
                 live.range = range;
                 live.stored.detached = false;
@@ -2034,6 +2147,7 @@ fn read_into(page: &mut PageComments, bytes: &[u8], text: &str) {
                             stored,
                             range,
                             uncertain,
+                            reversal: None,
                         }
                     })
                     .collect();
@@ -2103,6 +2217,7 @@ fn reread(page: &mut PageComments, text: Option<&str>) {
                 live.stored.replies = replies;
                 live.range = mine.range;
                 live.stored.detached = mine.stored.detached;
+                live.reversal.clone_from(&mine.reversal);
                 // Placed where it is here, as sure as it is here, and as the file says.
                 live.uncertain = mine.uncertain
                     || live
@@ -2280,6 +2395,42 @@ mod tests {
             let plain = actor.allowed_on(own, None);
             assert!(!plain.accept && !plain.reject, "plain: {kind:?} own {own}");
         }
+    }
+
+    #[test]
+    fn a_reversal_is_followed_only_while_what_it_relies_on_is_intact() {
+        // "It is very good." with "very " deleted at 6: Undo types it back there.
+        let accepted = || Reversal {
+            span: SourceRange::new(6, 6),
+            back: "very ".to_owned(),
+            now: String::new(),
+            prefix: 0,
+            suffix: 4,
+        };
+        let edit = |start, end, text: &str| TextEdit::new(SourceRange::new(start, end), text);
+
+        // Text typed before it moves it; the reversal itself is found among other edits.
+        let mut reversal = accepted();
+        assert_eq!(reversal.follow(&[edit(0, 0, "So ")]), Ok(None));
+        assert_eq!(reversal.span, SourceRange::new(9, 9));
+        assert_eq!(
+            reversal.follow(&[edit(0, 3, ""), edit(9, 9, "very "), edit(13, 13, "!")]),
+            Ok(Some(6))
+        );
+        // Now it awaits Redo, which deletes "very " again.
+        assert_eq!(reversal.span, SourceRange::new(6, 11));
+        assert_eq!(
+            (reversal.back.as_str(), reversal.now.as_str()),
+            ("", "very ")
+        );
+        assert_eq!(reversal.follow(&[edit(6, 11, "")]), Ok(Some(6)));
+
+        // Anything else changing the text it relies on ends it, as does a different reversal.
+        assert_eq!(accepted().follow(&[edit(7, 8, "")]), Err(()));
+        assert_eq!(accepted().follow(&[edit(6, 6, "rather ")]), Ok(None));
+        assert_eq!(accepted().follow(&[edit(5, 7, "")]), Err(()));
+        // Text typed at its far edge leaves it.
+        assert_eq!(accepted().follow(&[edit(10, 10, "!")]), Ok(None));
     }
 
     #[test]
