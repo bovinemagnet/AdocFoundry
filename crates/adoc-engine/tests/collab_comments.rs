@@ -411,11 +411,9 @@ fn guests_are_never_told_an_email_address() {
     session.settle();
     let id = guest_doc(&mut session, ada);
     assert!(session.engine(ada).comments(id)[0].author.email.is_none());
-    assert!(session.sent_to(ada).iter().all(|message| !matches!(
-        message,
-        Message::CommentThread { thread, .. } if thread.email.is_some()
-            || thread.replies.iter().any(|reply| reply.email.is_some())
-    )));
+    assert!(session.sent_to(ada).iter().all(|message| {
+        !String::from_utf8_lossy(&message.encode().unwrap()).contains("hester@example.org")
+    }));
 }
 
 /// At most 32 comments are told a guest for a file in a pump: the rest follow in the next ones,

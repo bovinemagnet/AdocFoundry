@@ -81,7 +81,7 @@ fn thread_of(comment: &Comment) -> SharedThread {
     SharedThread {
         id: comment.id.0,
         author: shown_name(&comment.author.name),
-        email: None,
+        own: false,
         created: seconds(comment.created),
         edited: comment.edited.map(seconds),
         quote: cut(&comment.quote, adoc_collab::protocol::MAX_COMMENT_QUOTE).to_owned(),
@@ -100,7 +100,7 @@ fn thread_of(comment: &Comment) -> SharedThread {
             .map(|reply| SharedReply {
                 id: reply.id.0,
                 author: shown_name(&reply.author.name),
-                email: None,
+                own: false,
                 created: seconds(reply.created),
                 edited: reply.edited.map(seconds),
                 text: shown_text(&reply.text),
@@ -186,7 +186,7 @@ impl Engine {
                     id: CommentId(thread.id),
                     author: Author {
                         name: thread.author.clone(),
-                        email: thread.email.clone(),
+                        email: None,
                     },
                     created: time(thread.created),
                     edited: thread.edited.map(time),
@@ -211,15 +211,15 @@ impl Engine {
                             id: CommentId(reply.id),
                             author: Author {
                                 name: reply.author.clone(),
-                                email: reply.email.clone(),
+                                email: None,
                             },
                             created: time(reply.created),
                             edited: reply.edited.map(time),
                             text: reply.text.clone(),
-                            can: actor.allowed(&reply.author, reply.email.as_deref()),
+                            can: actor.allowed(&reply.author, None),
                         })
                         .collect(),
-                    can: actor.allowed(&thread.author, thread.email.as_deref()),
+                    can: actor.allowed(&thread.author, None),
                 }
             })
             .collect();

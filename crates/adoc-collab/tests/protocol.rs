@@ -3,10 +3,10 @@
 
 use adoc_collab::{
     protocol::{
-        decode, display_path, frame_length, CommentChange, Credential, ErrorCode, FileKind,
-        FrameError, ManifestFile, Message, PeerId, Role, SaveOutcome, Secret, SessionId,
+        commit_email, decode, display_path, frame_length, CommentChange, Credential, ErrorCode,
+        FileKind, FrameError, ManifestFile, Message, PeerId, Role, SaveOutcome, Secret, SessionId,
         SharedReply, SharedResolution, SharedThread, MANIFEST_PART, MAX_COMMENT_REPLIES,
-        MAX_COMMENT_TEXT, MAX_CONTROL, MAX_FRAME, MAX_NAME, MAX_PATH, MAX_TEXT,
+        MAX_COMMENT_TEXT, MAX_CONTROL, MAX_EMAIL, MAX_FRAME, MAX_NAME, MAX_PATH, MAX_TEXT,
     },
     EncodedUpdate, RelativeSelection, Replica, ReplicaId, StateVectorBytes, MAX_UPDATE,
 };
@@ -32,10 +32,12 @@ fn every_message() -> Vec<Message> {
         Message::Authenticate {
             credential: Credential::Invitation(Secret([7; 32])),
             name: "Ada".to_owned(),
+            email: None,
         },
         Message::Authenticate {
             credential: Credential::Resume(Secret([9; 32])),
             name: "Ada".to_owned(),
+            email: None,
         },
         Message::Join {
             peer: PeerId(1),
@@ -242,7 +244,7 @@ fn thread() -> SharedThread {
     SharedThread {
         id: 11,
         author: "Ada".to_owned(),
-        email: Some("ada@example.org".to_owned()),
+        own: true,
         created: 1_795_000_000,
         edited: None,
         quote: "Page".to_owned(),
@@ -255,7 +257,7 @@ fn thread() -> SharedThread {
         replies: vec![SharedReply {
             id: 12,
             author: "Bea".to_owned(),
-            email: None,
+            own: false,
             created: 1_795_000_050,
             edited: Some(1_795_000_060),
             text: "Because.".to_owned(),
@@ -446,6 +448,7 @@ fn fields_outside_their_limits_are_refused() {
         let message = Message::Authenticate {
             credential: Credential::Invitation(Secret([0; 32])),
             name: name.to_owned(),
+            email: None,
         };
         assert_eq!(
             message.encode(),
@@ -649,7 +652,98 @@ fn secrets_are_never_printed() {
     let message = Message::Authenticate {
         credential: Credential::Invitation(secret.clone()),
         name: "Ada".to_owned(),
+        email: None,
     };
     assert!(!format!("{message:?}").contains("abab"));
     assert_eq!(Secret::from_hex(&secret.to_hex()), Some(secret));
+}
+
+#[test]
+fn an_address_round_trips() {
+    let with = Message::Authenticate {
+        credential: Credential::Invitation(Secret([7; 32])),
+        name: "Ada".to_owned(),
+        email: Some("ada@example.org".to_owned()),
+    };
+    assert_eq!(round_trip(&with), with);
+    let without = Message::Authenticate {
+        credential: Credential::Invitation(Secret([7; 32])),
+        name: "Ada".to_owned(),
+        email: None,
+    };
+    assert_eq!(round_trip(&without), without);
+    let frame = without.encode().unwrap();
+    assert!(!String::from_utf8_lossy(&frame).contains("email"));
+}
+
+#[test]
+fn addresses_are_held_to_the_rule() {
+    for good in ["ada@example.org", "a.b+c@d.e"] {
+        assert_eq!(commit_email(good), Ok(()), "{good:?}");
+    }
+    let long = format!("{}@example.org", "a".repeat(MAX_EMAIL));
+    assert!(long.len() > MAX_EMAIL);
+    let refused = [
+        "",
+        "ada",
+        "@x",
+        "a@",
+        "a@b@c",
+        "a b@c",
+        "a@b\n",
+        "<a@b>",
+        "a,b@c",
+        "a\"b@c",
+        "a\\b@c",
+        long.as_str(),
+    ];
+    for bad in refused {
+        assert_eq!(
+            commit_email(bad),
+            Err(FrameError::Invalid("email")),
+            "{bad:?}"
+        );
+        let message = Message::Authenticate {
+            credential: Credential::Invitation(Secret([0; 32])),
+            name: "Ada".to_owned(),
+            email: Some(bad.to_owned()),
+        };
+        assert_eq!(
+            message.encode(),
+            Err(FrameError::Invalid("email")),
+            "{bad:?}"
+        );
+        let control = format!(
+            r#"{{"credential":{{"invitation":"{}"}},"name":"Ada","email":{}}}"#,
+            "0".repeat(64),
+            serde_json::to_string(bad).unwrap()
+        );
+        assert_eq!(
+            decode(&body(2, &control, &[])),
+            Err(FrameError::Invalid("email")),
+            "{bad:?}"
+        );
+    }
+}
+
+#[test]
+fn threads_say_whose_they_are() {
+    let replica = Replica::new("= Page\n", ReplicaId::new(7).unwrap()).unwrap();
+    let selection = replica
+        .selection(2, 4, adoc_collab::Affinity::After)
+        .unwrap();
+    let mut shared = thread();
+    shared.replies[0].own = true;
+    let message = Message::CommentThread {
+        file: 3,
+        epoch: 2,
+        thread: Box::new(shared),
+        selection: Some(selection),
+    };
+    let back = round_trip(&message);
+    let Message::CommentThread { thread, .. } = &back else {
+        panic!("{back:?}");
+    };
+    assert!(thread.own && thread.replies[0].own);
+    assert_eq!(back, message);
 }

@@ -384,7 +384,9 @@ async fn introduce(stream: &mut TlsStream<TcpStream>, inner: &Inner) -> Option<E
         app: inner.app.clone(),
     };
     write_message(stream, &hello).await.ok()?;
-    let Ok(Message::Authenticate { credential, name }) = read_frame(stream, HANDSHAKE_FRAME).await
+    let Ok(Message::Authenticate {
+        credential, name, ..
+    }) = read_frame(stream, HANDSHAKE_FRAME).await
     else {
         return None;
     };

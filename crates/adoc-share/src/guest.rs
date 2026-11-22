@@ -139,6 +139,7 @@ impl Connecting {
         let introduction = Message::Authenticate {
             credential: Credential::Invitation(self.invitation.secret.clone()),
             name: name.to_owned(),
+            email: None,
         };
         introduction.encode().map_err(|_| ShareError::Name)?;
         let shared = Arc::new(Shared::default());
@@ -302,6 +303,7 @@ async fn introduce(
         let authenticate = Message::Authenticate {
             credential: credential.clone(),
             name: name.to_owned(),
+            email: None,
         };
         write_message(stream, &authenticate)
             .await

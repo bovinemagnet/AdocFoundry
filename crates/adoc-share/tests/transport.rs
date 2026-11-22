@@ -196,6 +196,7 @@ impl Raw {
         self.send(&Message::Authenticate {
             credential,
             name: "Raw".to_owned(),
+            email: None,
         });
     }
 
