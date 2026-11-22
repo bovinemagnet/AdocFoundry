@@ -5,8 +5,9 @@ use adoc_collab::{
     protocol::{
         commit_email, decode, display_path, frame_length, CommentChange, Credential, ErrorCode,
         FileKind, FrameError, ManifestFile, Message, PeerId, Role, SaveOutcome, Secret, SessionId,
-        SharedReply, SharedResolution, SharedThread, MANIFEST_PART, MAX_COMMENT_REPLIES,
-        MAX_COMMENT_TEXT, MAX_CONTROL, MAX_EMAIL, MAX_FRAME, MAX_NAME, MAX_PATH, MAX_TEXT,
+        SharedOutcome, SharedReply, SharedResolution, SharedSuggestion, SharedThread,
+        SuggestionChange, MANIFEST_PART, MAX_COMMENT_QUOTE, MAX_COMMENT_REPLIES, MAX_COMMENT_TEXT,
+        MAX_CONTROL, MAX_EMAIL, MAX_FRAME, MAX_NAME, MAX_PATH, MAX_TEXT,
     },
     EncodedUpdate, RelativeSelection, Replica, ReplicaId, StateVectorBytes, MAX_UPDATE,
 };
@@ -187,6 +188,7 @@ fn every_message() -> Vec<Message> {
             request: 9,
             change: CommentChange::Add {
                 text: "Why?\n\tSee below.".to_owned(),
+                suggestion: None,
             },
             selection: Some(selection.clone()),
         },
@@ -254,6 +256,7 @@ fn thread() -> SharedThread {
             at: 1_795_000_100,
         }),
         detached: false,
+        suggestion: None,
         replies: vec![SharedReply {
             id: 12,
             author: "Bea".to_owned(),
@@ -275,7 +278,10 @@ fn comments_are_held_to_their_limits() {
         file: 1,
         epoch: 1,
         request: 1,
-        change: CommentChange::Add { text },
+        change: CommentChange::Add {
+            text,
+            suggestion: None,
+        },
         selection,
     };
     assert!(add("x".repeat(MAX_COMMENT_TEXT), Some(selection.clone()))
@@ -746,4 +752,170 @@ fn threads_say_whose_they_are() {
     };
     assert!(thread.own && thread.replies[0].own);
     assert_eq!(back, message);
+}
+
+fn suggestion_message(change: CommentChange, selection: bool) -> Message {
+    let replica = Replica::new("= Page\n", ReplicaId::new(7).unwrap()).unwrap();
+    Message::Comment {
+        file: 1,
+        epoch: 1,
+        request: 1,
+        change,
+        selection: selection.then(|| {
+            replica
+                .selection(2, 4, adoc_collab::Affinity::After)
+                .unwrap()
+        }),
+    }
+}
+
+#[test]
+fn suggestions_round_trip() {
+    let changes = [
+        (
+            CommentChange::Add {
+                text: "Clearer.".to_owned(),
+                suggestion: Some(SuggestionChange {
+                    original: "Page".to_owned(),
+                    replacement: "Leaf\n\tnew".to_owned(),
+                }),
+            },
+            true,
+        ),
+        (CommentChange::Accept { comment: 4 }, false),
+        (CommentChange::Reject { comment: 4 }, false),
+        (
+            CommentChange::EditSuggestion {
+                comment: 4,
+                replacement: String::new(),
+                text: String::new(),
+            },
+            false,
+        ),
+    ];
+    for (change, selection) in changes {
+        let message = suggestion_message(change, selection);
+        assert_eq!(round_trip(&message), message);
+    }
+    for outcome in [
+        None,
+        Some(SharedOutcome::Accepted),
+        Some(SharedOutcome::Rejected),
+    ] {
+        let message = Message::CommentThread {
+            file: 3,
+            epoch: 2,
+            thread: Box::new(SharedThread {
+                suggestion: Some(SharedSuggestion {
+                    original: "Page".to_owned(),
+                    replacement: "Leaf".to_owned(),
+                    outcome,
+                    uncertain: outcome.is_none(),
+                }),
+                ..thread()
+            }),
+            selection: Some(
+                Replica::new("= Page\n", ReplicaId::new(7).unwrap())
+                    .unwrap()
+                    .selection(2, 4, adoc_collab::Affinity::After)
+                    .unwrap(),
+            ),
+        };
+        assert_eq!(round_trip(&message), message);
+    }
+}
+
+#[test]
+fn suggestion_fields_are_held_to_their_limits() {
+    let add = |text: &str, original: String, replacement: String| {
+        suggestion_message(
+            CommentChange::Add {
+                text: text.to_owned(),
+                suggestion: Some(SuggestionChange {
+                    original,
+                    replacement,
+                }),
+            },
+            true,
+        )
+    };
+    let edit = |replacement: String, text: &str| {
+        suggestion_message(
+            CommentChange::EditSuggestion {
+                comment: 1,
+                replacement,
+                text: text.to_owned(),
+            },
+            false,
+        )
+    };
+    let thread_with = |text: &str, original: String, replacement: String| Message::CommentThread {
+        file: 1,
+        epoch: 1,
+        thread: Box::new(SharedThread {
+            text: text.to_owned(),
+            suggestion: Some(SharedSuggestion {
+                original,
+                replacement,
+                outcome: None,
+                uncertain: false,
+            }),
+            ..thread()
+        }),
+        selection: Some(
+            Replica::new("= Page\n", ReplicaId::new(7).unwrap())
+                .unwrap()
+                .selection(2, 4, adoc_collab::Affinity::After)
+                .unwrap(),
+        ),
+    };
+    for accepted in [
+        add("", "Page".to_owned(), String::new()),
+        add(
+            "",
+            "x".repeat(MAX_COMMENT_QUOTE),
+            "x".repeat(MAX_COMMENT_TEXT),
+        ),
+        edit(String::new(), ""),
+        thread_with("", "Page".to_owned(), String::new()),
+    ] {
+        assert!(accepted.encode().is_ok(), "{accepted:?}");
+    }
+    for refused in [
+        add("", "x".repeat(MAX_COMMENT_QUOTE + 1), "y".to_owned()),
+        add("", "Page".to_owned(), "x".repeat(MAX_COMMENT_TEXT + 1)),
+        add("", "Pa\u{7}ge".to_owned(), "y".to_owned()),
+        add("", "Page".to_owned(), "y\u{7}".to_owned()),
+        add("", String::new(), "y".to_owned()),
+        edit("x".repeat(MAX_COMMENT_TEXT + 1), ""),
+        edit("bell\u{7}".to_owned(), ""),
+        edit("y".to_owned(), "bell\u{7}"),
+        thread_with("", String::new(), "y".to_owned()),
+        thread_with("", "Page".to_owned(), "bell\u{7}".to_owned()),
+        thread_with("", "x".repeat(MAX_COMMENT_QUOTE + 1), "y".to_owned()),
+        // An empty note is allowed only with a suggestion.
+        suggestion_message(
+            CommentChange::Add {
+                text: String::new(),
+                suggestion: None,
+            },
+            true,
+        ),
+        Message::CommentThread {
+            file: 1,
+            epoch: 1,
+            thread: Box::new(SharedThread {
+                text: String::new(),
+                ..thread()
+            }),
+            selection: Some(
+                Replica::new("= Page\n", ReplicaId::new(7).unwrap())
+                    .unwrap()
+                    .selection(2, 4, adoc_collab::Affinity::After)
+                    .unwrap(),
+            ),
+        },
+    ] {
+        assert!(refused.encode().is_err(), "{refused:?}");
+    }
 }

@@ -24,6 +24,9 @@ use crate::{
 const TEXT: &str = "text";
 /// Transaction origins. Only [`LOCAL`] is tracked by the undo manager.
 const LOCAL: &str = "adoc-collab:local";
+/// A local change the undo manager does not track (a guest's accepted suggestion, applied by
+/// the host), sent as a [`LOCAL`] change is.
+const UNTRACKED: &str = "adoc-collab:untracked";
 const REMOTE: &str = "adoc-collab:remote";
 const INITIAL: &str = "adoc-collab:initial";
 
@@ -339,6 +342,20 @@ impl Replica {
     /// moves an offset inside a character without a word; this replica checks order, bounds and
     /// size. A refused batch changes nothing and sends nothing.
     pub fn apply_local(&mut self, edits: &[ByteEdit]) -> Result<AppliedChange, CollabError> {
+        self.apply_with(edits, LOCAL)
+    }
+
+    /// As [`Replica::apply_local`], but under an origin the undo manager does not track: the
+    /// change is sent to everyone and [`Replica::undo_local`] never undoes it.
+    pub fn apply_untracked(&mut self, edits: &[ByteEdit]) -> Result<AppliedChange, CollabError> {
+        self.apply_with(edits, UNTRACKED)
+    }
+
+    fn apply_with(
+        &mut self,
+        edits: &[ByteEdit],
+        origin: &'static str,
+    ) -> Result<AppliedChange, CollabError> {
         self.usable()?;
         let len = self.len();
         check_order(edits, len)?;
@@ -356,7 +373,7 @@ impl Replica {
             });
         }
         let applied = catch_unwind(AssertUnwindSafe(|| {
-            let mut txn = self.doc.transact_mut_with(LOCAL);
+            let mut txn = self.doc.transact_mut_with(origin);
             for edit in wanted.iter().rev() {
                 let start = edit.range.start as u32;
                 let removed = (edit.range.end - edit.range.start) as u32;

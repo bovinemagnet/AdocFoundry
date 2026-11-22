@@ -94,6 +94,7 @@ fn thread_of(comment: &Comment, guest: &Actor) -> SharedThread {
                 at: seconds(resolution.at),
             }),
         detached: comment.detached,
+        suggestion: None,
         replies: comment
             .replies
             .iter()
@@ -298,6 +299,7 @@ impl Engine {
                 (
                     CommentChange::Add {
                         text: checked(text)?,
+                        suggestion: None,
                     },
                     Some(selection),
                 )
@@ -434,7 +436,10 @@ impl Engine {
             return Ok(());
         }
         let change = match change {
-            CommentChange::Add { text } => {
+            CommentChange::Add {
+                text,
+                suggestion: None,
+            } => {
                 let range = selection
                     .and_then(|selection| {
                         adoc_collab::RelativeSelection::from_wire(selection.anchor, selection.head)
@@ -464,6 +469,16 @@ impl Engine {
                 text,
             },
             CommentChange::Delete { comment, reply } => Change::Delete { comment, reply },
+            CommentChange::Add { .. }
+            | CommentChange::Accept { .. }
+            | CommentChange::Reject { .. }
+            | CommentChange::EditSuggestion { .. } => {
+                refuse(
+                    session,
+                    "Suggested changes are not yet supported in a session.".to_owned(),
+                );
+                return Ok(());
+            }
         };
         if let Err(error) = self.change_comments(id, change, &actor) {
             refuse(session, reason(&error));

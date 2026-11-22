@@ -15,7 +15,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use crate::{EncodedUpdate, RelativeSelection, StateVectorBytes, MAX_ANCHOR, MAX_UPDATE};
 
 /// The one protocol version this build speaks.
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 /// The largest control part: its length is two bytes.
 pub const MAX_CONTROL: usize = u16::MAX as usize;
 /// The largest frame after its length prefix: room for [`MAX_UPDATE`] and a control part.
@@ -536,6 +536,19 @@ struct ComponentsControl {
 pub enum CommentChange {
     Add {
         text: String,
+        /// A suggested change to the selected text; the note may then be empty.
+        suggestion: Option<SuggestionChange>,
+    },
+    Accept {
+        comment: u64,
+    },
+    Reject {
+        comment: u64,
+    },
+    EditSuggestion {
+        comment: u64,
+        replacement: String,
+        text: String,
     },
     Reply {
         comment: u64,
@@ -556,6 +569,33 @@ pub enum CommentChange {
     },
 }
 
+/// The text a guest suggests in place of what it selected.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuggestionChange {
+    pub original: String,
+    pub replacement: String,
+}
+
+/// How a suggestion was decided.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SharedOutcome {
+    Accepted,
+    Rejected,
+}
+
+/// A suggested change as the host sends it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SharedSuggestion {
+    pub original: String,
+    pub replacement: String,
+    pub outcome: Option<SharedOutcome>,
+    /// Whether its place was found again by its quote without certainty.
+    pub uncertain: bool,
+}
+
 /// A comment as the host sends it: times are seconds since 1970, UTC.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -571,6 +611,7 @@ pub struct SharedThread {
     pub text: String,
     pub resolved: Option<SharedResolution>,
     pub detached: bool,
+    pub suggestion: Option<SharedSuggestion>,
     pub replies: Vec<SharedReply>,
 }
 
@@ -1081,10 +1122,28 @@ impl Message {
                     anchors(selection)?;
                 }
                 match change {
-                    CommentChange::Add { text }
-                    | CommentChange::Reply { text, .. }
-                    | CommentChange::Edit { text, .. } => comment_text(text),
-                    CommentChange::Resolve { .. } | CommentChange::Delete { .. } => Ok(()),
+                    CommentChange::Add { text, suggestion } => {
+                        if let Some(suggestion) = suggestion {
+                            suggestion_text(&suggestion.original, MAX_COMMENT_QUOTE, false)?;
+                            suggestion_text(&suggestion.replacement, MAX_COMMENT_TEXT, true)?;
+                            note_text(text, true)
+                        } else {
+                            comment_text(text)
+                        }
+                    }
+                    CommentChange::EditSuggestion {
+                        replacement, text, ..
+                    } => {
+                        suggestion_text(replacement, MAX_COMMENT_TEXT, true)?;
+                        note_text(text, true)
+                    }
+                    CommentChange::Reply { text, .. } | CommentChange::Edit { text, .. } => {
+                        comment_text(text)
+                    }
+                    CommentChange::Resolve { .. }
+                    | CommentChange::Delete { .. }
+                    | CommentChange::Accept { .. }
+                    | CommentChange::Reject { .. } => Ok(()),
                 }
             }
             Self::CommentThread {
@@ -1496,6 +1555,30 @@ fn comment_text(value: &str) -> Result<(), FrameError> {
     Ok(())
 }
 
+/// A note: as [`comment_text`], but empty too when `empty` allows it (a suggestion's).
+fn note_text(value: &str, empty: bool) -> Result<(), FrameError> {
+    if empty && value.is_empty() {
+        return Ok(());
+    }
+    comment_text(value)
+}
+
+/// Text a suggestion carries: within `limit`, empty only when `empty` allows, and no control
+/// character but line breaks and tabs.
+fn suggestion_text(value: &str, limit: usize, empty: bool) -> Result<(), FrameError> {
+    if value.len() > limit {
+        return Err(FrameError::TooLarge(value.len()));
+    }
+    if (!empty && value.is_empty())
+        || value
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\n' | '\t' | '\r'))
+    {
+        return Err(FrameError::Invalid("suggestion"));
+    }
+    Ok(())
+}
+
 /// An address a commit's `Co-authored-by:` trailer can carry: at most [`MAX_EMAIL`] bytes,
 /// exactly one `@` with something on each side, and no white space, control character, `<`,
 /// `>`, `,`, `"` or `\`.
@@ -1518,7 +1601,11 @@ pub fn commit_email(email: &str) -> Result<(), FrameError> {
 
 fn check_thread(thread: &SharedThread) -> Result<(), FrameError> {
     display_name(&thread.author)?;
-    comment_text(&thread.text)?;
+    note_text(&thread.text, thread.suggestion.is_some())?;
+    if let Some(suggestion) = &thread.suggestion {
+        suggestion_text(&suggestion.original, MAX_COMMENT_QUOTE, false)?;
+        suggestion_text(&suggestion.replacement, MAX_COMMENT_TEXT, true)?;
+    }
     if thread.quote.len() > MAX_COMMENT_QUOTE {
         return Err(FrameError::TooLarge(thread.quote.len()));
     }
