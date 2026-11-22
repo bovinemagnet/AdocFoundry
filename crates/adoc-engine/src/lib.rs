@@ -122,6 +122,7 @@ pub use attribute_inspection::{
 };
 pub use auto_save::AUTO_SAVE_DELAY;
 pub use clock::{Clock, ManualClock, SystemClock};
+pub use coauthors::CoAuthor;
 #[cfg(feature = "collab")]
 pub use collab::{
     revision_of, DiskResolution, SharedFileId, SharedReceipt, SharedRole, SharedSaveState,
@@ -135,7 +136,6 @@ pub use command::{
     CollaborationStep, Command, CommandArgs, CommandCategory, CommandContext, CommandId,
     CommandOutcome, CommandRegistry, CommandSpec, RegistryError,
 };
-pub use coauthors::CoAuthor;
 pub use comments::{
     find_quote, map_range, Allowed, Author, Comment, CommentId, CommentRequest, CommentsState,
     Reply, COMMENT_SETTLE,

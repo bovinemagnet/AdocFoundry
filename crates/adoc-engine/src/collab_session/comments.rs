@@ -74,14 +74,14 @@ fn shown_text(text: &str) -> String {
     }
 }
 
-/// A host's comment as a guest is told it. E-mail addresses in the page's metadata file stay on
-/// the host's side: a guest is told names only, which is all it shows and all it checks whose a
-/// comment is by.
-fn thread_of(comment: &Comment) -> SharedThread {
+/// A host's comment as `guest` is told it. E-mail addresses in the page's metadata file stay on
+/// the host's side: a guest is told names only, and whether each comment and reply is its own,
+/// which the host decides by address (else by name).
+fn thread_of(comment: &Comment, guest: &Actor) -> SharedThread {
     SharedThread {
         id: comment.id.0,
         author: shown_name(&comment.author.name),
-        own: false,
+        own: guest.owns(&comment.author.name, comment.author.email.as_deref()),
         created: seconds(comment.created),
         edited: comment.edited.map(seconds),
         quote: cut(&comment.quote, adoc_collab::protocol::MAX_COMMENT_QUOTE).to_owned(),
@@ -100,12 +100,26 @@ fn thread_of(comment: &Comment) -> SharedThread {
             .map(|reply| SharedReply {
                 id: reply.id.0,
                 author: shown_name(&reply.author.name),
-                own: false,
+                own: guest.owns(&reply.author.name, reply.author.email.as_deref()),
                 created: seconds(reply.created),
                 edited: reply.edited.map(seconds),
                 text: shown_text(&reply.text),
             })
             .collect(),
+    }
+}
+
+/// A guest as the host's comments see it: its name, and the address it gave.
+fn peer_actor(entry: &super::Peer) -> Actor {
+    Actor {
+        author: Author {
+            name: entry.name.clone(),
+            email: entry.email.clone(),
+        },
+        kind: match entry.role {
+            Role::Viewer => ActorKind::Viewer,
+            Role::Editor | Role::Owner => ActorKind::Editor,
+        },
     }
 }
 
@@ -216,10 +230,10 @@ impl Engine {
                             created: time(reply.created),
                             edited: reply.edited.map(time),
                             text: reply.text.clone(),
-                            can: actor.allowed(&reply.author, None),
+                            can: actor.allowed_own(reply.own),
                         })
                         .collect(),
-                    can: actor.allowed(&thread.author, None),
+                    can: actor.allowed_own(thread.own),
                 }
             })
             .collect();
@@ -390,16 +404,7 @@ impl Engine {
         let Some(entry) = host.peers.get(&peer) else {
             return Ok(());
         };
-        let actor = Actor {
-            author: Author {
-                name: entry.name.clone(),
-                email: None,
-            },
-            kind: match entry.role {
-                Role::Viewer => ActorKind::Viewer,
-                Role::Editor | Role::Owner => ActorKind::Editor,
-            },
-        };
+        let actor = peer_actor(entry);
         let refuse = |session: &mut Session, reason: String| {
             let _ = session.link.send(
                 peer,
@@ -494,16 +499,7 @@ impl Engine {
         id: DocumentId,
     ) {
         let seen = self.comments_seen(id);
-        let threads: Vec<(SharedThread, Option<SourceRange>)> = self
-            .comments(id)
-            .iter()
-            .map(|comment| {
-                (
-                    thread_of(comment),
-                    (!comment.detached).then_some(comment.range),
-                )
-            })
-            .collect();
+        let comments = self.comments(id);
         let peers: Vec<PeerId> = {
             let Side::Host(host) = &session.side else {
                 return;
@@ -523,6 +519,24 @@ impl Engine {
         for peer in peers {
             let mut messages = Vec::new();
             let mut complete = true;
+            let threads: Vec<(SharedThread, Option<SourceRange>)> = {
+                let Side::Host(host) = &session.side else {
+                    return;
+                };
+                let Some(entry) = host.peers.get(&peer) else {
+                    continue;
+                };
+                let actor = peer_actor(entry);
+                comments
+                    .iter()
+                    .map(|comment| {
+                        (
+                            thread_of(comment, &actor),
+                            (!comment.detached).then_some(comment.range),
+                        )
+                    })
+                    .collect()
+            };
             {
                 let Side::Host(host) = &session.side else {
                     return;

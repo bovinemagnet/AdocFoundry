@@ -508,6 +508,14 @@ impl crate::Engine {
         self.coauthors.get_mut().expect("loaded above")
     }
 
+    /// The guests recorded as having changed any of `paths` in a collaboration session since
+    /// they were last committed, each address once.
+    #[must_use]
+    pub fn coauthors_of(&self, paths: &[PathBuf]) -> Vec<CoAuthor> {
+        let real: Vec<PathBuf> = paths.iter().map(|path| real_path(path)).collect();
+        self.coauthors().for_paths(&real)
+    }
+
     /// Writes the record's changes to its state file on the writer, if it has one.
     pub(crate) fn save_coauthors(&mut self) {
         let record = self.coauthors_mut();

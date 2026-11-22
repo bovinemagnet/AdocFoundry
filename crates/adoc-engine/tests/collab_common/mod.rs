@@ -69,8 +69,20 @@ impl Session {
         self.knock_with(peer, engine())
     }
 
-    /// A guest knocking as `peer` with an engine made by the caller.
-    pub fn knock_with(&mut self, peer: u32, mut guest: Engine) -> PeerId {
+    /// A guest knocking as `peer` with an engine made by the caller, giving the address
+    /// `guest<peer>@example.org` to be credited by.
+    pub fn knock_with(&mut self, peer: u32, guest: Engine) -> PeerId {
+        let email = format!("guest{peer}@example.org");
+        self.knock_with_email(peer, guest, Some(&email))
+    }
+
+    /// A guest knocking as `peer`, named `guest <peer>`, with the address given.
+    pub fn knock_with_email(
+        &mut self,
+        peer: u32,
+        mut guest: Engine,
+        email: Option<&str>,
+    ) -> PeerId {
         let peer = PeerId(peer);
         guest
             .join_session(Box::new(GuestLink {
@@ -86,7 +98,7 @@ impl Session {
             .push_back(LinkEvent::Knock {
                 peer,
                 name: format!("guest {}", peer.0),
-                email: None,
+                email: email.map(str::to_owned),
             });
         self.settle();
         peer
@@ -94,7 +106,13 @@ impl Session {
 
     /// A guest admitted, made an Editor if `edit`, with file 1 open.
     pub fn guest(&mut self, peer: u32, edit: bool) -> PeerId {
-        let peer = self.knock(peer);
+        let email = format!("guest{peer}@example.org");
+        self.guest_with_email(peer, edit, Some(&email))
+    }
+
+    /// A guest admitted as [`Session::guest`], with the address given.
+    pub fn guest_with_email(&mut self, peer: u32, edit: bool, email: Option<&str>) -> PeerId {
+        let peer = self.knock_with_email(peer, engine(), email);
         self.host.admit_peer(peer).unwrap();
         self.settle();
         if edit {

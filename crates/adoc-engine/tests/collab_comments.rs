@@ -429,3 +429,61 @@ fn more_comments_than_one_pump_tells_all_reach_a_guest() {
     session.settle();
     assert_eq!(agree(&mut session, ada).len(), 40);
 }
+
+#[test]
+fn a_guests_comment_carries_their_address_on_the_host() {
+    let mut session = session();
+    let ada = session.guest(1, true);
+    let id = guest_doc(&mut session, ada);
+    add(session.engine(ada), id, "Why?").unwrap();
+    session.settle();
+    assert_eq!(
+        session.host.comments(session.host_doc())[0]
+            .author
+            .email
+            .as_deref(),
+        Some("guest1@example.org")
+    );
+    let sidecar = session.directory.path().join(".install.adoc.afd");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !sidecar.exists() && Instant::now() < deadline {
+        session.settle();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let written = fs::read_to_string(&sidecar).unwrap();
+    assert!(written.contains("guest1@example.org"), "{written}");
+}
+
+#[test]
+fn a_guest_edits_their_own_comment_under_another_name() {
+    let mut session = session();
+    let ada = session.guest(1, true);
+    let id = guest_doc(&mut session, ada);
+    add(session.engine(ada), id, "Why?").unwrap();
+    session.settle();
+    let comment = session.host.comments(session.host_doc())[0].id;
+
+    // Later, as someone else by name, with the same address.
+    let again = session.guest_with_email(2, true, Some("Guest1@Example.org"));
+    let other = session.guest(3, true);
+    let mine = guest_doc(&mut session, again);
+    assert!(session.engine(again).comments(mine)[0].can.edit);
+    let theirs = guest_doc(&mut session, other);
+    assert!(!session.engine(other).comments(theirs)[0].can.edit);
+    invoke(
+        session.engine(again),
+        ids::COMMENTS_EDIT,
+        CommentRequest::Edit {
+            id: mine,
+            comment,
+            reply: None,
+            text: "Why not?".to_owned(),
+        },
+    )
+    .unwrap();
+    session.settle();
+    assert_eq!(
+        session.host.comments(session.host_doc())[0].text,
+        "Why not?"
+    );
+}
