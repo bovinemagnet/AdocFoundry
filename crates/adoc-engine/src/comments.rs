@@ -961,6 +961,7 @@ impl Engine {
                         text: body,
                         resolved: None,
                         detached: false,
+                        suggestion: None,
                         replies: Vec::new(),
                     },
                     range,
