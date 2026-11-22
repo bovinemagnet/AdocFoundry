@@ -31,7 +31,9 @@ use std::{
 use adoc_core::SourceRange;
 
 use crate::{
+    coauthors::{is_commit_email, millis, real_path},
     commands::{ids, register, spec},
+    engine::UndoMode,
     page_meta::{
         self, context, cut, digest, revision_of, sidecar_path, suggestion_text, MetaProblem,
         Outcome, PageMeta, Resolution, StoredComment, StoredReply, StoredSuggestion, MAX_AUTHOR,
@@ -1230,6 +1232,10 @@ impl Engine {
                 return Err(EngineError::Refused(reason.clone()));
             }
         }
+        if let Change::Accept { comment } = change {
+            // Accepting edits the page, which needs the engine, not only its comments.
+            return self.accept_suggestion(id, comment, actor);
+        }
         let taken: BTreeSet<u64> = page
             .comments
             .iter()
@@ -1337,31 +1343,7 @@ impl Engine {
                 });
                 new
             }
-            Change::Accept { comment } => {
-                let at = page.live(CommentId(comment))?;
-                let (_, state) = page.comments[at].allowed(actor, &text);
-                let Some(state) = state else {
-                    return Err(EngineError::InvalidRequest(
-                        "this comment suggests no change".to_owned(),
-                    ));
-                };
-                if actor.kind == ActorKind::Viewer {
-                    return Err(not_allowed("accept a suggestion"));
-                }
-                return Err(EngineError::Refused(
-                    match state {
-                        SuggestionState::Outdated => {
-                            "The text has changed since this was suggested."
-                        }
-                        SuggestionState::Accepted | SuggestionState::Rejected => {
-                            "This suggestion is decided already."
-                        }
-                        // Accepting edits the page: SUGGEST 1/4 Task 3.
-                        SuggestionState::Pending => "Accepting a suggestion is not available yet.",
-                    }
-                    .to_owned(),
-                ));
-            }
+            Change::Accept { .. } => unreachable!("accepted above"),
             Change::Reject { comment } => {
                 let at = page.live(CommentId(comment))?;
                 let (can, state) = page.comments[at].allowed(actor, &text);
@@ -1579,6 +1561,108 @@ impl Engine {
         page.generation += 1;
         page.write_at = Some(self.clock.now() + COMMENT_SETTLE);
         self.emit(EngineEvent::CommentsChanged(id));
+        Ok(())
+    }
+
+    /// Accepts suggestion `comment` on document `id` for `actor` (spec §6): one edit of the page
+    /// replacing only what differs, in its own undo step, after which the suggestion covers
+    /// exactly its replacement and is accepted; then its author is credited as a co-author when
+    /// they have an address and are not `actor`. Nothing changes when the edit is refused.
+    /// `change_comments` has checked that the page's comments can be changed.
+    fn accept_suggestion(
+        &mut self,
+        id: DocumentId,
+        comment: u64,
+        actor: &Actor,
+    ) -> Result<(), EngineError> {
+        let document = self
+            .documents
+            .get(&id)
+            .ok_or(EngineError::UnknownDocument(id))?;
+        let text = document.text.to_string();
+        let path = document.path.clone();
+        let page = self
+            .page_comments
+            .get(&id)
+            .ok_or_else(|| EngineError::Refused("This page does not take comments.".to_owned()))?;
+        let live = &page.comments[page.live(CommentId(comment))?];
+        let (can, state) = live.allowed(actor, &text);
+        let (Some(state), Some(suggestion)) = (state, live.stored.suggestion.as_ref()) else {
+            return Err(EngineError::InvalidRequest(
+                "this comment suggests no change".to_owned(),
+            ));
+        };
+        if !can.accept {
+            return Err(EngineError::Refused(
+                match state {
+                    SuggestionState::Outdated => "The text has changed since this was suggested.",
+                    SuggestionState::Accepted | SuggestionState::Rejected => {
+                        "This suggestion is decided already."
+                    }
+                    SuggestionState::Pending => "You cannot accept a suggestion.",
+                }
+                .to_owned(),
+            ));
+        }
+        // A file edited by hand may hold a suggestion that changes nothing.
+        check_suggestion(&suggestion.original, &suggestion.replacement)?;
+        let (prefix, suffix) = minimal_edit(&suggestion.original, &suggestion.replacement);
+        let start = live.range.start;
+        let edit = TextEdit::new(
+            SourceRange::new(start + prefix, live.range.end - suffix),
+            suggestion.replacement[prefix..suggestion.replacement.len() - suffix].to_owned(),
+        );
+        let covered = SourceRange::new(start, start + suggestion.replacement.len());
+        let credit = live
+            .stored
+            .email
+            .clone()
+            .filter(|email| is_commit_email(email) && !actor.owns(&live.stored.author, Some(email)))
+            .map(|email| (live.stored.author.clone(), email));
+        match actor.kind {
+            ActorKind::Alone | ActorKind::Host => {
+                let group = self.new_group();
+                self.apply_edits(id, vec![edit], UndoMode::Group(group))?;
+            }
+            // A guest's accept, applied by the host in nobody's undo history: SUGGEST 2/4.
+            ActorKind::Editor | ActorKind::Viewer => {
+                return Err(EngineError::Refused(
+                    "Suggestions cannot be accepted in a session yet.".to_owned(),
+                ));
+            }
+        }
+        let now = self.clock.wall();
+        let later = self.clock.now() + COMMENT_SETTLE;
+        if let Some(page) = self.page_comments.get_mut(&id) {
+            if let Some(live) = page
+                .comments
+                .iter_mut()
+                .find(|live| live.stored.id == comment)
+            {
+                // Whatever the edge rule made of it: undone, it holds its original again.
+                live.range = covered;
+                if let Some(suggestion) = live.stored.suggestion.as_mut() {
+                    suggestion.outcome = Some(Outcome::Accepted);
+                }
+                live.stored.resolved = Some(Resolution {
+                    by: actor.author.name.clone(),
+                    at: now,
+                });
+                page.changed.insert(comment);
+            }
+            page.generation += 1;
+            page.write_at = Some(later);
+        }
+        self.emit(EngineEvent::CommentsChanged(id));
+        if let Some((name, email)) = credit {
+            let at = millis(now);
+            if self
+                .coauthors_mut()
+                .record(&real_path(&path), &name, &email, at)
+            {
+                self.save_coauthors();
+            }
+        }
         Ok(())
     }
 

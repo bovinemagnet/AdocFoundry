@@ -11,8 +11,9 @@ use std::{
 
 use adoc_core::SourceRange;
 use adoc_engine::{
-    commands::ids, normalize_path, CommandArgs, Comment, CommentId, CommentRequest, DocumentId,
-    Engine, EngineError, ManualClock, Settings, SuggestionState, COMMENT_SETTLE, INDEX_SETTLE,
+    commands::ids, normalize_path, revision_of, CoAuthor, CommandArgs, Comment, CommentId,
+    CommentRequest, DocumentId, Engine, EngineError, EngineEvent, ManualClock, Settings,
+    SuggestionState, COMMENT_SETTLE, INDEX_SETTLE,
 };
 
 const WINDOWS: &str = "asks before it starts";
@@ -38,13 +39,21 @@ impl Setup {
     }
 
     fn engine(&self) -> Engine {
+        self.engine_keeping_state(None)
+    }
+
+    /// An engine keeping its state, co-authors included, in `state`.
+    fn engine_keeping_state(&self, state: Option<&Path>) -> Engine {
         let user = self.root.parent().unwrap().join("settings.toml");
         fs::write(
             &user,
             "[comments]\nname = \"Paul Snow\"\nemail = \"paul@example.org\"\n",
         )
         .unwrap();
-        let settings = Settings::load(Some(&user), None).unwrap().with_git_opt_in();
+        let settings = Settings::load(Some(&user), None)
+            .unwrap()
+            .with_git_opt_in()
+            .with_state_dir(state.map(Path::to_path_buf));
         let mut engine = Engine::with_clock(settings, Arc::new(self.clock.clone()));
         engine.open_workspace(vec![self.root.clone()]).unwrap();
         assert!(engine.wait_for_workers(Duration::from_secs(30)));
@@ -53,6 +62,13 @@ impl Setup {
 
     fn page(&self) -> PathBuf {
         self.root.join("modules/ROOT/pages/install.adoc")
+    }
+
+    /// A new page of `text` named `name`.
+    fn write_page(&self, name: &str, text: &str) -> PathBuf {
+        let page = self.root.join("modules/ROOT/pages").join(name);
+        fs::write(&page, text).unwrap();
+        page
     }
 
     fn sidecar(&self) -> PathBuf {
@@ -562,4 +578,336 @@ fn resolving_a_suggestion_is_refused() {
     let found = comment(&engine, id, made);
     assert!(found.resolved.is_none());
     assert_eq!(found.suggestion.unwrap().state, SuggestionState::Pending);
+}
+
+fn accept(engine: &mut Engine, id: DocumentId, suggestion: CommentId) -> Result<(), EngineError> {
+    invoke(
+        engine,
+        ids::COMMENTS_ACCEPT,
+        CommentRequest::Accept {
+            id,
+            comment: suggestion,
+        },
+    )
+}
+
+fn reopen(engine: &mut Engine, id: DocumentId, suggestion: CommentId) {
+    invoke(
+        engine,
+        ids::COMMENTS_REOPEN,
+        CommentRequest::Resolve {
+            id,
+            comment: suggestion,
+            resolved: false,
+        },
+    )
+    .unwrap();
+}
+
+fn range_text(engine: &Engine, id: DocumentId, suggestion: CommentId) -> String {
+    let range = comment(engine, id, suggestion).range;
+    text(engine, id)[range.start..range.end].to_owned()
+}
+
+#[test]
+fn accepting_applies_the_suggested_edit() {
+    const REPLACEMENT: &str = "asks once before it starts";
+    let setup = Setup::new();
+    let mut engine = setup.engine();
+    let id = engine.open(&setup.page()).unwrap();
+    let before = text(&engine, id);
+    let range = range_of(&engine, id, WINDOWS);
+    let made = suggest(&mut engine, id, range, REPLACEMENT, "").unwrap();
+    let events = engine.subscribe();
+    accept(&mut engine, id, made).unwrap();
+
+    assert_eq!(text(&engine, id), before.replacen(WINDOWS, REPLACEMENT, 1));
+    let changes = events
+        .try_iter()
+        .filter(|event| matches!(event, EngineEvent::DocumentChanged { id: changed, .. } if *changed == id))
+        .count();
+    assert_eq!(changes, 1, "one edit of the page");
+    assert_eq!(engine.undo_stack(id).unwrap().len(), 1, "one undo step");
+    assert!(engine.document(id).unwrap().dirty);
+    let found = comment(&engine, id, made);
+    assert_eq!(found.suggestion.unwrap().state, SuggestionState::Accepted);
+    assert!(found.resolved.is_some());
+    assert_eq!(
+        found.range,
+        SourceRange::new(range.start, range.start + REPLACEMENT.len())
+    );
+    assert!(!found.can.accept && !found.can.reject);
+    assert!(found.can.resolve, "it may be reopened");
+    let reason = refused(accept(&mut engine, id, made));
+    assert_eq!(reason, "This suggestion is decided already.");
+    assert_eq!(text(&engine, id), before.replacen(WINDOWS, REPLACEMENT, 1));
+
+    setup.settle(&mut engine);
+    let written = fs::read_to_string(setup.sidecar()).unwrap();
+    assert!(written.contains("outcome = \"accepted\""), "{written}");
+    assert_eq!(
+        fs::read_to_string(setup.page()).unwrap(),
+        before,
+        "accepting edits the page, not its file"
+    );
+}
+
+#[test]
+fn undoing_an_accept_restores_the_text() {
+    const REPLACEMENT: &str = "starts at once";
+    let setup = Setup::new();
+    let mut engine = setup.engine();
+    let id = engine.open(&setup.page()).unwrap();
+    let before = text(&engine, id);
+    let after = before.replacen(WINDOWS, REPLACEMENT, 1);
+    let range = range_of(&engine, id, WINDOWS);
+    let made = suggest(&mut engine, id, range, REPLACEMENT, "").unwrap();
+    accept(&mut engine, id, made).unwrap();
+    assert_eq!(text(&engine, id), after);
+
+    engine
+        .invoke(ids::EDIT_UNDO, CommandArgs::Document(id))
+        .unwrap();
+    assert_eq!(text(&engine, id), before);
+    assert_eq!(
+        state(&engine, id, made),
+        SuggestionState::Accepted,
+        "the outcome is a decision, not the text"
+    );
+    assert_eq!(comment(&engine, id, made).range, range);
+
+    reopen(&mut engine, id, made);
+    assert_eq!(state(&engine, id, made), SuggestionState::Pending);
+    accept(&mut engine, id, made).unwrap();
+    assert_eq!(text(&engine, id), after);
+    assert_eq!(state(&engine, id, made), SuggestionState::Accepted);
+}
+
+#[test]
+fn overlapping_suggestions_never_corrupt_the_text() {
+    let setup = Setup::new();
+    let original = "= Fox\n\nThe quick brown fox jumps over the lazy dog.\n";
+    let page = setup.write_page("fox.adoc", original);
+    let mut engine = setup.engine();
+    let id = engine.open(&page).unwrap();
+    // No common start or end, so each edit replaces the whole of its range.
+    let range = range_of(&engine, id, "quick brown");
+    let a = suggest(&mut engine, id, range, "slow red", "").unwrap();
+    let range = range_of(&engine, id, "brown fox");
+    let b = suggest(&mut engine, id, range, "grey wolf", "").unwrap();
+    let range = range_of(&engine, id, "lazy dog");
+    let c = suggest(&mut engine, id, range, "sleepy cat", "").unwrap();
+
+    accept(&mut engine, id, a).unwrap();
+    let edited = original.replacen("quick brown", "slow red", 1);
+    assert_eq!(text(&engine, id), edited);
+    assert_eq!(state(&engine, id, b), SuggestionState::Outdated);
+    assert_eq!(state(&engine, id, c), SuggestionState::Pending);
+    assert_eq!(range_text(&engine, id, c), "lazy dog");
+    let reason = refused(accept(&mut engine, id, b));
+    assert_eq!(reason, "The text has changed since this was suggested.");
+    assert_eq!(text(&engine, id), edited, "exactly the one edit accepted");
+}
+
+#[test]
+fn accepting_cuts_the_edit_at_character_boundaries() {
+    let setup = Setup::new();
+    // "è" and "é" share their first byte: only whole characters are replaced.
+    let original = "= Units\n\nThe word mètre is French.\n";
+    let page = setup.write_page("units.adoc", original);
+    let mut engine = setup.engine();
+    let id = engine.open(&page).unwrap();
+    let word = range_of(&engine, id, "word");
+    let plain = add(&mut engine, id, word, "Which word?");
+    let range = range_of(&engine, id, "mètre");
+    let made = suggest(&mut engine, id, range, "métre", "").unwrap();
+    let removed = comment(&engine, id, made).suggestion.unwrap().removed;
+    assert_eq!(&original[removed.start..removed.end], "è");
+    setup.settle(&mut engine);
+    let written =
+        fs::read_to_string(setup.root.join("modules/ROOT/pages/.units.adoc.afd")).unwrap();
+
+    accept(&mut engine, id, made).unwrap();
+    let edited = text(&engine, id);
+    assert_eq!(edited, original.replacen("mètre", "métre", 1));
+    assert!(std::str::from_utf8(edited.as_bytes()).is_ok());
+    assert_eq!(range_text(&engine, id, made), "métre");
+    let untouched = comment(&engine, id, plain);
+    assert_eq!(untouched.range, word);
+    assert!(!untouched.detached);
+    setup.settle(&mut engine);
+    let rewritten =
+        fs::read_to_string(setup.root.join("modules/ROOT/pages/.units.adoc.afd")).unwrap();
+    let block = |file: &str| {
+        let start = file.find("Which word?").unwrap();
+        file[..start]
+            .rsplit("[[comment]]")
+            .next()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(
+        block(&rewritten),
+        block(&written),
+        "the comment before is not written again"
+    );
+}
+
+#[test]
+fn an_insertion_among_repeated_letters_is_applied_once() {
+    let setup = Setup::new();
+    let original = "= Letters\n\nSay aa now.\n";
+    let page = setup.write_page("letters.adoc", original);
+    let mut engine = setup.engine();
+    let id = engine.open(&page).unwrap();
+    let range = range_of(&engine, id, "aa");
+    let made = suggest(&mut engine, id, range, "aaa", "").unwrap();
+    accept(&mut engine, id, made).unwrap();
+    let edited = text(&engine, id);
+    assert_eq!(edited, "= Letters\n\nSay aaa now.\n");
+    assert_eq!(edited.matches("aaa").count(), 1);
+    assert_eq!(
+        comment(&engine, id, made).range,
+        SourceRange::new(range.start, range.start + 3),
+        "the range covers the replacement, whatever its edges"
+    );
+    assert_eq!(range_text(&engine, id, made), "aaa");
+
+    assert!(engine.undo(id));
+    assert_eq!(text(&engine, id), original);
+    assert_eq!(comment(&engine, id, made).range, range);
+    reopen(&mut engine, id, made);
+    assert_eq!(state(&engine, id, made), SuggestionState::Pending);
+}
+
+#[test]
+fn accepting_a_deletion_leaves_its_suggestion_on_no_text() {
+    let setup = Setup::new();
+    let original = "= Cut\n\nSign it first, really, then ship it.\n";
+    let page = setup.write_page("cut.adoc", original);
+    let mut engine = setup.engine();
+    let id = engine.open(&page).unwrap();
+    let range = range_of(&engine, id, " really,");
+    let made = suggest(&mut engine, id, range, "", "").unwrap();
+    accept(&mut engine, id, made).unwrap();
+    assert_eq!(text(&engine, id), "= Cut\n\nSign it first, then ship it.\n");
+    let found = comment(&engine, id, made);
+    assert_eq!(found.range, SourceRange::new(range.start, range.start));
+    assert_eq!(found.suggestion.unwrap().state, SuggestionState::Accepted);
+
+    assert!(engine.undo(id));
+    setup.settle(&mut engine);
+    assert_eq!(text(&engine, id), original);
+    reopen(&mut engine, id, made);
+    let found = comment(&engine, id, made);
+    assert!(!found.detached, "found again by its words");
+    assert_eq!(found.range, range);
+    assert_eq!(found.suggestion.unwrap().state, SuggestionState::Pending);
+}
+
+#[test]
+fn accepting_credits_the_suggestions_author() {
+    let setup = Setup::new();
+    let kept = tempfile::tempdir().unwrap();
+    let suggested = setup.root.join("modules/ROOT/pages/suggested.adoc");
+    let mut engine = setup.engine_keeping_state(Some(kept.path()));
+    let id = engine.open(&suggested).unwrap();
+    let ada = engine.comments(id)[0].id;
+    assert_eq!(state(&engine, id, ada), SuggestionState::Pending);
+    accept(&mut engine, id, ada).unwrap();
+    assert_eq!(
+        text(&engine, id),
+        "= Suggested\n\nThe installer asks once before it starts.\n"
+    );
+    let credited = vec![CoAuthor {
+        name: "Ada Lovelace".to_owned(),
+        email: "ada@example.org".to_owned(),
+    }];
+    assert_eq!(
+        engine.coauthors_of(std::slice::from_ref(&suggested)),
+        credited
+    );
+    // Dropping the engine waits for its writes.
+    drop(engine);
+    let mut engine = setup.engine_keeping_state(Some(kept.path()));
+    assert_eq!(
+        engine.coauthors_of(std::slice::from_ref(&suggested)),
+        credited
+    );
+
+    // One's own suggestion credits nobody.
+    let id = engine.open(&setup.page()).unwrap();
+    let range = range_of(&engine, id, WINDOWS);
+    let own = suggest(&mut engine, id, range, "starts at once", "").unwrap();
+    accept(&mut engine, id, own).unwrap();
+    assert_eq!(state(&engine, id, own), SuggestionState::Accepted);
+    assert!(engine.coauthors_of(&[setup.page()]).is_empty());
+
+    // Nor does a suggestion with no address.
+    let words = "= Nameless\n\nIt asks twice.\n";
+    let nameless = setup.write_page("nameless.adoc", words);
+    fs::write(
+        setup.root.join("modules/ROOT/pages/.nameless.adoc.afd"),
+        format!(
+            "format = 2\n\n[[comment]]\nid = \"00000000000000a1\"\nauthor = \"Grace Hopper\"\n\
+             created = 2026-11-22T09:00:00Z\nstart = 15\nend = 25\nrevision = \"{}\"\n\
+             quote = \"asks twice\"\nbefore = \"= Nameless\\n\\nIt \"\nafter = \".\\n\"\n\
+             text = \"\"\nresolved = false\n\n[comment.suggestion]\noriginal = \"asks twice\"\n\
+             replacement = \"asks once\"\n",
+            revision_of(words)
+        ),
+    )
+    .unwrap();
+    let id = engine.open(&nameless).unwrap();
+    let grace = engine.comments(id)[0].id;
+    assert_eq!(state(&engine, id, grace), SuggestionState::Pending);
+    accept(&mut engine, id, grace).unwrap();
+    assert_eq!(text(&engine, id), "= Nameless\n\nIt asks once.\n");
+    assert!(engine.coauthors_of(&[nameless]).is_empty());
+}
+
+#[test]
+fn nothing_is_accepted_from_a_read_only_comments_file() {
+    let setup = Setup::new();
+    let pages = setup.root.join("modules/ROOT/pages");
+    let suggested = pages.join("suggested.adoc");
+    let sidecar = pages.join(".suggested.adoc.afd");
+    let newer = fs::read_to_string(&sidecar)
+        .unwrap()
+        .replace("format = 2", "format = 3");
+    fs::write(&sidecar, &newer).unwrap();
+    let mut engine = setup.engine();
+    let id = engine.open(&suggested).unwrap();
+    let before = text(&engine, id);
+    let ada = engine.comments(id)[0].id;
+    let result = accept(&mut engine, id, ada);
+    assert!(matches!(result, Err(EngineError::Refused(_))), "{result:?}");
+    assert_eq!(text(&engine, id), before);
+    assert!(!engine.document(id).unwrap().dirty);
+    assert!(engine.undo_stack(id).unwrap().is_empty());
+    assert_eq!(fs::read_to_string(&sidecar).unwrap(), newer);
+}
+
+#[test]
+fn a_suggestion_that_changes_nothing_is_not_accepted() {
+    let setup = Setup::new();
+    let pages = setup.root.join("modules/ROOT/pages");
+    let suggested = pages.join("suggested.adoc");
+    let sidecar = pages.join(".suggested.adoc.afd");
+    // Edited by hand to suggest the text it is on.
+    let unchanged = fs::read_to_string(&sidecar).unwrap().replace(
+        "replacement = \"asks once\"",
+        "replacement = \"asks twice\"",
+    );
+    fs::write(&sidecar, unchanged).unwrap();
+    let mut engine = setup.engine();
+    let id = engine.open(&suggested).unwrap();
+    let before = text(&engine, id);
+    let made = engine.comments(id)[0].id;
+    assert_eq!(state(&engine, id, made), SuggestionState::Pending);
+    let reason = refused(accept(&mut engine, id, made));
+    assert_eq!(reason, "The suggestion changes nothing.");
+    assert_eq!(text(&engine, id), before);
+    assert!(engine.undo_stack(id).unwrap().is_empty());
+    assert_eq!(state(&engine, id, made), SuggestionState::Pending);
 }
