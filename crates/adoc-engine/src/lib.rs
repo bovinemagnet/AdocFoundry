@@ -8,6 +8,8 @@ mod appearance;
 mod attribute_inspection;
 mod auto_save;
 mod clock;
+#[cfg(feature = "git")]
+mod coauthors;
 #[cfg(feature = "collab")]
 mod collab;
 #[cfg(feature = "collab")]
@@ -15,7 +17,6 @@ mod collab_session;
 mod command;
 pub mod commands;
 mod comments;
-#[cfg(feature = "git")]
 mod commit;
 mod deletion;
 mod discovery;
@@ -134,6 +135,7 @@ pub use command::{
     CollaborationStep, Command, CommandArgs, CommandCategory, CommandContext, CommandId,
     CommandOutcome, CommandRegistry, CommandSpec, RegistryError,
 };
+pub use coauthors::CoAuthor;
 pub use comments::{
     find_quote, map_range, Allowed, Author, Comment, CommentId, CommentRequest, CommentsState,
     Reply, COMMENT_SETTLE,

@@ -88,6 +88,9 @@ pub struct Engine {
     /// path (`comments.rs`).
     pub(crate) page_comments: BTreeMap<DocumentId, crate::comments::PageComments>,
     pub(crate) closing_comments: BTreeMap<PathBuf, crate::comments::PageComments>,
+    /// Who changed which file in a collaboration session, read from the state folder on first
+    /// use.
+    pub(crate) coauthors: std::sync::OnceLock<crate::coauthors::CoAuthors>,
     pub(crate) next_comment_ticket: u64,
     /// The global Git identity, read once, for comments written here.
     #[cfg(feature = "git")]
@@ -252,6 +255,7 @@ impl Engine {
             group_moves: BTreeMap::new(),
             page_comments: BTreeMap::new(),
             closing_comments: BTreeMap::new(),
+            coauthors: std::sync::OnceLock::new(),
             next_comment_ticket: 1,
             #[cfg(feature = "git")]
             comment_identity: std::cell::OnceCell::new(),
