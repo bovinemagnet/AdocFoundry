@@ -1117,7 +1117,7 @@ impl Engine {
             return false;
         };
         match event {
-            LinkEvent::Knock { peer, name } => {
+            LinkEvent::Knock { peer, name, .. } => {
                 if host.peers.contains_key(&peer) {
                     return false;
                 }

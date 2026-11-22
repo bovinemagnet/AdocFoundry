@@ -82,6 +82,8 @@ pub enum ShareError {
     Invitation,
     /// A display name the protocol does not allow.
     Name,
+    /// An e-mail address the protocol does not allow.
+    Email,
     /// An address the host will not listen on.
     Address(String),
     /// The other side took too long.
@@ -101,6 +103,7 @@ impl fmt::Display for ShareError {
             }
             Self::Invitation => formatter.write_str("not an invitation"),
             Self::Name => formatter.write_str("that name cannot be used"),
+            Self::Email => formatter.write_str("that is not an e-mail address"),
             Self::TimedOut => formatter.write_str("the host took too long to answer"),
             Self::Stopped => formatter.write_str("sharing has stopped"),
         }

@@ -86,6 +86,7 @@ impl Session {
             .push_back(LinkEvent::Knock {
                 peer,
                 name: format!("guest {}", peer.0),
+                email: None,
             });
         self.settle();
         peer

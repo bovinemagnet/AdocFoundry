@@ -110,7 +110,7 @@ fn pair(pages: &[(&str, &str)]) -> Pair {
     let start = Instant::now();
     let (link, control) = adoc_share::connect(&invitation, timings())
         .unwrap()
-        .authenticate("Guest", "0.0.0", None)
+        .authenticate("Guest", None, "0.0.0", None)
         .unwrap();
     let mut guest = engine();
     guest.join_session(Box::new(link)).unwrap();

@@ -11,8 +11,14 @@ use crate::protocol::{ErrorCode, FrameError, Message, PeerId};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LinkEvent {
     /// For a host: a connection showed a valid invitation and waits for [`Link::admit`] or
-    /// [`Link::remove`]. Nothing about the workspace has been sent to it.
-    Knock { peer: PeerId, name: String },
+    /// [`Link::remove`]. Nothing about the workspace has been sent to it. `email` is the address
+    /// the guest gave to be credited by in commits, already checked with
+    /// [`crate::protocol::commit_email`]; the host never tells it anyone.
+    Knock {
+        peer: PeerId,
+        name: String,
+        email: Option<String>,
+    },
     /// For a host: an admitted peer reconnected with its resume token. For a guest: the link to
     /// the host is back. Its `Join` follows as a message.
     Resumed { peer: PeerId },
