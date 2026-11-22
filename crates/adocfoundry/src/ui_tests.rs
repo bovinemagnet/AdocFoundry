@@ -12000,6 +12000,45 @@ fn collab_share_needs_confirmation(cx: &mut TestAppContext) {
     assert!(cx.update(|_, cx| !app.read(cx).engine.in_session()));
 }
 
+#[gpui::test]
+fn the_join_dialog_fills_and_checks_the_address(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    std::fs::write(root.join("page.adoc"), "= Page\n").unwrap();
+    let user = directory.path().join("settings.toml");
+    std::fs::write(
+        &user,
+        "[collaboration]\nenabled = true\n\n[comments]\nemail = \"ada@example.org\"\n",
+    )
+    .unwrap();
+    let settings = Settings::load(Some(&user), None).unwrap().with_git_opt_in();
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (_workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    redraw(&app, &mut cx);
+
+    cx.dispatch_action(crate::editor::bindings::JoinSession);
+    redraw(&app, &mut cx);
+    let field = cx.debug_bounds("join-email").expect("an address field");
+    assert!(cx.debug_bounds("join-email-problem").is_none());
+    // Filled with the address: one more letter at its end is still one.
+    cx.simulate_click(field.center(), gpui::Modifiers::none());
+    cx.simulate_keystrokes("end");
+    cx.simulate_input("x");
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("join-email-problem").is_none());
+    cx.simulate_input(" not");
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("join-email-problem").is_some());
+    // Join waits until it is fixed or emptied.
+    cx.simulate_keystrokes("enter");
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("join-form").is_some());
+}
+
 /// A host engine and the app's engine as a guest, over the in-memory link, with the guest let
 /// in as a Viewer and the shared page open in a source editor.
 struct GuestSetup {
