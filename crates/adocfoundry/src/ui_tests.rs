@@ -2666,7 +2666,7 @@ fn save_and_commit_commits_the_page_and_counts_it_unpushed(cx: &mut TestAppConte
 
     cx.update(|window, cx| {
         workspace.update(cx, |workspace, cx| {
-            workspace.commit(message, &paths, &[], false, window, cx)
+            workspace.commit(message, &paths, &[], &[], false, window, cx)
         });
     });
     settle_engine(&app, &mut cx);

@@ -1894,7 +1894,8 @@ impl WorkspaceView {
                     window.close_dialog(cx);
                     if let Some(workspace) = workspace.upgrade() {
                         workspace.update(cx, |workspace, cx| {
-                            workspace.commit(message, &paths, &credited, push, window, cx);
+                            workspace
+                                .commit(message, &paths, &credited, &coauthors, push, window, cx);
                         });
                     }
                 }
@@ -1961,13 +1962,16 @@ impl WorkspaceView {
         });
     }
 
-    /// Commits with `message`, saving and staging `paths` first and crediting `coauthors`, then
-    /// pushes when asked.
+    /// Commits with `message`, saving and staging `paths` first and crediting `coauthors` of
+    /// those `offered`, then pushes when asked. Anyone not offered, whose first edit came after
+    /// the dialog listed them, is offered next time.
+    #[allow(clippy::too_many_arguments)]
     pub fn commit(
         &mut self,
         message: String,
         paths: &[std::path::PathBuf],
         coauthors: &[adoc_engine::CoAuthor],
+        offered: &[adoc_engine::CoAuthor],
         push: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1976,14 +1980,17 @@ impl WorkspaceView {
             .iter()
             .map(|path| path.display().to_string())
             .collect();
-        let coauthors: Vec<serde_json::Value> = coauthors
-            .iter()
-            .map(|author| serde_json::json!({ "name": author.name, "email": author.email }))
-            .collect();
+        let listed = |authors: &[adoc_engine::CoAuthor]| -> Vec<serde_json::Value> {
+            authors
+                .iter()
+                .map(|author| serde_json::json!({ "name": author.name, "email": author.email }))
+                .collect()
+        };
         let args = CommandArgs::Custom(serde_json::json!({
             "message": message,
             "paths": paths,
-            "coauthors": coauthors,
+            "coauthors": listed(coauthors),
+            "offered": listed(offered),
         }));
         match self.invoke(ids::GIT_COMMIT, args, window, cx) {
             Some(CommandOutcome::Committed { commit, saved }) => {
