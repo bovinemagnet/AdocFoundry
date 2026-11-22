@@ -132,3 +132,7 @@ A guest's comment or reply is recorded on the host with the guest's address as i
 - `git.commit` also takes `offered`, the co-authors the front end showed, ticked or not; a commit then forgets only those (and its author and committer). A guest whose first edit reached a file after the dialog listed its co-authors, which the commit still takes as it saves the page again, keeps their record and is offered next time (`a_guest_who_first_edits_while_the_dialog_is_open_is_kept`).
 - Staging a page open with unsaved changes stamps it with when the text on disk was saved, not when it is staged, since staging takes the file (`SaveStamps`, `staging_takes_what_was_saved_not_what_is_unsaved`).
 - Open, for the maintainer: whose a comment is (§5.5) rests on an address a guest gives and nobody checks, and the host does not see it when admitting the guest (`docs/qa/collab.md`, Release decisions).
+
+**CO-AUTHORS 2/2.**
+- The Join dialog's name is the login name as before, and `comment_author`'s name only when there is none (`collaboration::guest_name`), as §5.6 says.
+- The commit dialog's co-authors are worked out once, when it opens, after `prune_coauthors`. The app test builds a real session on the host's engine over the in-memory link before the app takes it, so no test-only engine call was needed.

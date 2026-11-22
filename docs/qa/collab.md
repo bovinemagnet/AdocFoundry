@@ -114,6 +114,7 @@ Run with two copies of the app on two machines on one local network, unless the 
 | Screen reader: the Session panel's participants, roles and caret places are read | [ ] | [ ] | [ ] |
 | Follow someone moving between pages and typing: your view goes with them and keeps their caret in view; a click, a scroll or typing ends it (#767) | [ ] | [ ] | [ ] |
 | Comment on a shared page from each side, a Viewer included, while the other types around it; both see the same comments on the same text, and the host's `.afd` file holds them (#762) | [ ] | [ ] | [ ] |
+| A guest joins with an address; the host edits nothing, the guest changes one page; the host's commit dialog offers the guest for that page only, and the commit pushed to GitHub shows them as a co-author; the other guest's screen never shows the address (#761) | [ ] | [ ] | [ ] |
 | Stop Sharing: guests are told, the port is closed | [ ] | [ ] | [ ] |
 | The Flatpak package shares and joins on the local network (Linux only) | | | [ ] |
 
