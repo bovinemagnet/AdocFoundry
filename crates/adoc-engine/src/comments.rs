@@ -491,24 +491,26 @@ impl Live {
     }
 }
 
-/// A stored suggestion as a query shows it, at `range` in the current text.
-fn shown_suggestion(
-    stored: &StoredSuggestion,
+/// A suggestion of `replacement` for `original` as a query shows it, in `state` at `range` in
+/// the current text: the host's stored one, or one a guest was told.
+pub(crate) fn shown_suggestion(
+    original: &str,
+    replacement: &str,
     state: SuggestionState,
     range: SourceRange,
 ) -> Suggestion {
     let (removed, inserted) = if state == SuggestionState::Pending {
-        let (prefix, suffix) = minimal_edit(&stored.original, &stored.replacement);
+        let (prefix, suffix) = minimal_edit(original, replacement);
         (
             SourceRange::new(range.start + prefix, range.end - suffix),
-            stored.replacement[prefix..stored.replacement.len() - suffix].to_owned(),
+            replacement[prefix..replacement.len() - suffix].to_owned(),
         )
     } else {
-        (range, stored.replacement.clone())
+        (range, replacement.to_owned())
     };
     Suggestion {
-        original: stored.original.clone(),
-        replacement: stored.replacement.clone(),
+        original: original.to_owned(),
+        replacement: replacement.to_owned(),
         state,
         removed,
         inserted,
@@ -778,7 +780,7 @@ fn checked_text(text: &str) -> Result<String, EngineError> {
 }
 
 /// A suggestion's note, which may be empty: trimmed at its end, and empty when only spaces.
-fn checked_note(text: &str) -> Result<String, EngineError> {
+pub(crate) fn checked_note(text: &str) -> Result<String, EngineError> {
     let text = text.trim_end();
     let text = if text.trim().is_empty() { "" } else { text };
     if text.len() > MAX_TEXT {
@@ -789,7 +791,7 @@ fn checked_note(text: &str) -> Result<String, EngineError> {
 
 /// Refuses a suggestion of `replacement` for `original` that its file could not hold, or that
 /// changes nothing.
-fn check_suggestion(original: &str, replacement: &str) -> Result<(), EngineError> {
+pub(crate) fn check_suggestion(original: &str, replacement: &str) -> Result<(), EngineError> {
     if original.is_empty() {
         return Err(EngineError::InvalidRequest(
             "a suggestion is on a range of the page's text".to_owned(),
@@ -942,8 +944,9 @@ impl Engine {
                 let state = live.state(&range_text);
                 let own = actor.owns(&stored.author, stored.email.as_deref());
                 let suggestion = stored.suggestion.as_ref().zip(state);
-                let suggestion =
-                    suggestion.map(|(shown, state)| shown_suggestion(shown, state, live.range));
+                let suggestion = suggestion.map(|(shown, state)| {
+                    shown_suggestion(&shown.original, &shown.replacement, state, live.range)
+                });
                 Comment {
                     id: CommentId(stored.id),
                     author: Author {
@@ -1012,6 +1015,22 @@ impl Engine {
         self.page_comments
             .get(&id)
             .map_or(0, |page| page.generation)
+    }
+
+    /// The ids of document `id`'s suggestions found again at a place they cannot be sure of,
+    /// which guests are told so that they show what the host would refuse (spec §8).
+    #[cfg(feature = "collab")]
+    pub(crate) fn uncertain_suggestions(&self, id: DocumentId) -> BTreeSet<u64> {
+        self.page_comments
+            .get(&id)
+            .map(|page| {
+                page.comments
+                    .iter()
+                    .filter(|live| live.uncertain)
+                    .map(|live| live.stored.id)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Whether document `id`'s comments can be used, or why not.
@@ -1730,10 +1749,17 @@ impl Engine {
                 let group = self.new_group();
                 self.apply_edits(id, vec![edit], UndoMode::Group(group))?;
             }
-            // A guest's accept, applied by the host in nobody's undo history: SUGGEST 2/4.
+            // A guest's accept, which only the host applies (a guest's request goes to the
+            // host, `guest_comment`): in nobody's undo history, reaching everyone as the host's
+            // edit (spec §8).
+            #[cfg(feature = "collab")]
+            ActorKind::Editor | ActorKind::Viewer => {
+                self.apply_untracked_shared_edit(id, edit)?;
+            }
+            #[cfg(not(feature = "collab"))]
             ActorKind::Editor | ActorKind::Viewer => {
                 return Err(EngineError::Refused(
-                    "Suggestions cannot be accepted in a session yet.".to_owned(),
+                    "You cannot accept a suggestion.".to_owned(),
                 ));
             }
         }
