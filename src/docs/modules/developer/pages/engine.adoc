@@ -1435,6 +1435,9 @@ A guest that cannot reach the host is refused at once, and its engine emits `Eng
 
 `host_announce_comments` runs in the host's flush on each pump.
 Each live guest with the file open is told every comment that changed, or whose selection, as the host would send it now, differs byte for byte from the selection it last sent that guest, with `CommentThread`.
+The host never decides this by resolving the selection it sent on its own replica.
+`yrs` follows text that was undone and then redone to the copy the redo inserted, and only the replica that redid keeps that link, so the host and a guest can resolve one selection to different places (#786).
+A selection made again from the host's text as it is resolves alike on every replica.
 The thread's JSON is in the payload after the selection.
 At most 32 are sent for each file in a pump (`THREADS_PER_PUMP`), and `CommentRemoved` tells of a deleted one.
 `PeerFile::threads` and `comments_seen` (the text's version and the comments' generation) track what each guest was told.

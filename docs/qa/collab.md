@@ -20,7 +20,7 @@ A case is marked passed only when a named test holds it, or a person has run it 
 | | History from before the session | `local_undo_keeps_remote_edits_and_forgets_the_time_before_sharing` |
 | | Rapid typing | the simulation's runs of edits between deliveries; typing on two machines: **manual** |
 | Source and visual parity | Visual edits, partials, preview refresh, no echo | `collab_visual_edits_share_the_bridge`, `collab_remote_edit_is_not_echoed`, `a_shared_partial_edited_elsewhere_shows_in_the_preview` |
-| | Caret remapping | `collab_remote_carets_follow_edits` (engine and app), `a_selection_follows_its_text_on_every_replica` (adoc-collab) |
+| | Caret remapping | `collab_remote_carets_follow_edits` (engine and app), `a_selection_follows_its_text_on_every_replica`, `a_selection_on_redone_text_resolves_by_local_history` (adoc-collab; #786: a caret on text a peer undid and redid can be shown elsewhere until its owner moves it) |
 | Authentication | Expired or used invitation, wrong fingerprint | `collab_wrong_fingerprint_sends_nothing` (adoc-share) |
 | | Untrusted host | the pinned fingerprint and safety code: `collab_wrong_fingerprint_sends_nothing`; the two-process suite compares the safety codes |
 | | Role promotion and revocation | `collab_unauthorised_requests_are_refused`, `a_role_taken_away_while_edits_are_in_flight`, `collab_viewer_cannot_edit` (app); the simulation's role changes; the two-process suite's revocation |

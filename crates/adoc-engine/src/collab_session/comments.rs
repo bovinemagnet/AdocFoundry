@@ -803,9 +803,9 @@ impl Engine {
                 for (thread, range) in &threads {
                     let digest = digest(thread);
                     // Stale once the range would be told by other text than it was. Resolving
-                    // what was told here is no proof the guest places it alike: a selection
-                    // anchored on text since deleted can resolve on the host's replica to
-                    // somewhere other than on a guest's.
+                    // what was told here is no proof the guest places it alike: the host's
+                    // replica follows text it undid and redid to the redone copy, and a guest's
+                    // does not (#786). A selection made again from the text resolves alike.
                     let selection = range.and_then(|range| self.shared_range(id, range));
                     let stale = match open.threads.get(&thread.id) {
                         None => true,
