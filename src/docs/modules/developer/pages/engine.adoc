@@ -1213,7 +1213,7 @@ Renaming a file in the app moves its record; deleting it keeps the record, so co
 Comments on a page's text are kept in a metadata file beside the page, never in the page.
 `crates/adoc-engine/src/page_meta.rs` is the file and `crates/adoc-engine/src/comments.rs` is the model an open page holds.
 The app's Comments panel shows them.
-Suggested changes (see <<suggested-changes>>) so far work in the engine and in collaboration sessions; the app and the visual editor follow in later changes.
+Suggested changes (see <<suggested-changes>>) work in the engine, in collaboration sessions and in the app's source editor (Suggest Change, the Comments panel's cards, the editor's marks and the status bar); the visual editor follows in a later change.
 
 === The file
 

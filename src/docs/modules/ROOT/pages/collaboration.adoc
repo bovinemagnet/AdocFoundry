@@ -329,7 +329,9 @@ It does not change what you may edit.
 
 Everyone with a shared page open sees its comments, on the same text whoever types, and Viewers can comment and reply too.
 The host keeps them in its comments file beside the page.
-See xref:comments.adoc[Comments].
+Suggested changes work the same way.
+A Viewer may suggest but not accept, while an Editor and the host may accept, and the host applies each accept once.
+See xref:comments.adoc#_suggesting_a_change[Suggesting a change] and xref:comments.adoc[Comments].
 
 == Credit for guests
 
