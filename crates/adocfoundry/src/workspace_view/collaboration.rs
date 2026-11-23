@@ -66,6 +66,14 @@ fn caret_place(engine: &adoc_engine::Engine, peer: PeerId, place: Option<u64>) -
         .unwrap_or_default()
 }
 
+/// The line under a knocking guest's name giving the address they gave to be credited by: the
+/// guest's own claim, checked only for its form, so the host can spot one that is not theirs
+/// before admitting them. A line of its own, in the app's words, since the name beside it is the
+/// guest's text and could imitate it.
+fn knock_address_note(email: &str) -> String {
+    format!("Gives the address {email} (not checked)")
+}
+
 /// How a shared file stands, said briefly, for the panel and the status bar.
 pub(super) fn save_state_label(state: &SharedSaveState) -> &'static str {
     match state {
@@ -631,10 +639,23 @@ impl WorkspaceView {
                         .child("Waiting"),
                 );
                 for (peer, name) in knocks {
+                    let mut asking = v_flex()
+                        .flex_1()
+                        .child(div().child(format!("{name} asks to join")));
+                    if let Some(email) = engine.session_knock_email(peer) {
+                        let selector = format!("session-knock-email-{}", peer.0);
+                        asking = asking.child(
+                            div()
+                                .text_xs()
+                                .text_color(muted)
+                                .debug_selector(move || selector.clone())
+                                .child(knock_address_note(email)),
+                        );
+                    }
                     panel = panel.child(
                         h_flex()
                             .gap_2()
-                            .child(div().flex_1().child(format!("{name} asks to join")))
+                            .child(asking)
                             .child(action(
                                 format!("session-admit-{}", peer.0),
                                 "Admit",
@@ -892,5 +913,18 @@ impl WorkspaceView {
             }
         }
         panel.into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::knock_address_note;
+
+    #[test]
+    fn a_knocking_guests_address_is_marked_as_not_checked() {
+        assert_eq!(
+            knock_address_note("ada@example.com"),
+            "Gives the address ada@example.com (not checked)"
+        );
     }
 }

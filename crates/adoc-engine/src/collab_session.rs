@@ -513,6 +513,17 @@ impl Engine {
         }
     }
 
+    /// The address a guest waiting to be admitted gave to be credited by, for the host to see
+    /// before admitting it: the guest's own claim, checked only for its form. `None` once the
+    /// guest is admitted or turned away, for a guest's engine, and when it gave none.
+    #[must_use]
+    pub fn session_knock_email(&self, peer: PeerId) -> Option<&str> {
+        match self.collab_session.as_ref().map(|session| &session.side) {
+            Some(Side::Host(host)) => host.knocks.get(&peer)?.1.as_deref(),
+            _ => None,
+        }
+    }
+
     /// The admitted participants, for a host; for a guest, itself once joined.
     #[must_use]
     pub fn participants(&self) -> Vec<Participant> {

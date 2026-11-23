@@ -179,6 +179,29 @@ fn credit_survives_a_reconnection_and_a_new_epoch() {
     assert_eq!(session.host.coauthors_of(&[a, b]), vec![guest1()]);
 }
 
+/// The host sees the address a knocking guest gives before admitting it, so a wrong one can be
+/// spotted; only while the guest waits, and never on a guest's engine.
+#[test]
+fn the_host_sees_a_knocking_guests_address() {
+    let mut session = session();
+    let ada = session.knock_with_email(1, collab_common::engine(), Some("ada@example.com"));
+    let bea = session.knock_with_email(2, collab_common::engine(), None);
+    let cy = session.knock_with_email(3, collab_common::engine(), Some("cy@example.com"));
+    assert_eq!(
+        session.host.session_knock_email(ada),
+        Some("ada@example.com")
+    );
+    assert_eq!(session.host.session_knock_email(bea), None);
+    assert_eq!(session.host.session_knock_email(cy), Some("cy@example.com"));
+    assert_eq!(session.engine(ada).session_knock_email(ada), None);
+
+    session.host.admit_peer(ada).unwrap();
+    session.host.remove_peer(cy);
+    session.settle();
+    assert_eq!(session.host.session_knock_email(ada), None);
+    assert_eq!(session.host.session_knock_email(cy), None);
+}
+
 #[test]
 fn a_guests_email_reaches_only_the_host() {
     let mut session = session();
