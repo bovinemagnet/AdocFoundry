@@ -111,7 +111,7 @@ Every guest is treated as possibly modified, and everything it sends as untruste
 
 ## 8. Protocol, version 3
 
-Version 3 (#763) adds `SuggestionChange` to `CommentChange::Add`, the changes `Accept`, `Reject` and `EditSuggestion` (which carries `original`), and `SharedThread::suggestion` (`SharedSuggestion { original, replacement, outcome, uncertain }`). Version 2 (#761) added the guest's optional e-mail address to `Authenticate` and the `own` flags of comment threads. A version 2 or version 1 guest is refused at `Hello`.
+Version 3 (#763) adds `SuggestionChange` to `CommentChange::Add`, the changes `Accept` (which carries the `original` and `replacement` the guest saw, refused by the host when the suggestion no longer holds them), `Reject` and `EditSuggestion` (which carries `original`), and `SharedThread::suggestion` (`SharedSuggestion { original, replacement, outcome, uncertain }`). Version 2 (#761) added the guest's optional e-mail address to `Authenticate` and the `own` flags of comment threads. A version 2 or version 1 guest is refused at `Hello`.
 
 **Frames.** Each frame is laid out as follows:
 - a 4-byte big-endian length, at most `MAX_FRAME`;

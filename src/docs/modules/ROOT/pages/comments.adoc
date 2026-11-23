@@ -68,8 +68,9 @@ Only accepting a suggestion changes it.
 The visual editor shows suggestions too.
 A pending suggestion has the part that accepting it would remove struck through, and the text it would add drawn inline right after it, underlined, both in the theme's information colour.
 The added text is for display only.
-It is not part of the page, and you cannot select, copy or edit it.
+It is not part of the page, so you cannot copy or edit it, and the caret never lands inside it.
 The caret steps over it as it steps over an inline formula, and typing beside it edits only the page.
+A selection that spans it is highlighted across it, but copying or cutting that selection takes only the page's text.
 A pending suggestion is not filled in the comment colour.
 
 An outdated suggestion is filled like a comment, in the warning colour, with nothing struck through or added.
@@ -94,8 +95,16 @@ AdocFoundry refuses a suggestion in these cases:
 
 * Nothing is selected: "Select the text to change first."
 * More than 4 KiB of text is selected: "Select at most 4 KiB of text to suggest a change."
-* The text changed while the box was open: "The text changed while you were suggesting; try again."
-The box stays open with what you typed, so choose *Suggest* again.
+* The selected words changed while the box was open: "The text changed while you were suggesting; try again."
+
+The box follows its text as the page changes.
+Text typed before or after the selected words, by you or by anyone in a session, moves it along and does not refuse it.
+Only a change to the selected words themselves refuses it, such as typing inside them or deleting them.
+The box then stays open with what you typed.
+Choosing *Suggest* again cannot succeed on the same selection.
+Copy your replacement if you need it, choose *Cancel*, select the text as it is now and choose *Suggest Change* again.
+As a guest, you are refused on your own machine and the box stays open too.
+If the words changed on the host's copy first, the host refuses after the box has closed, with a notification.
 
 A replacement may be up to 8 KiB.
 
@@ -139,11 +148,20 @@ Accepting makes one small edit, and only the part that differs changes.
 The edit is in the page's undo history.
 *Undo* takes it back, and the suggestion's text with it, and *Redo* puts it back.
 The suggestion stays accepted.
+It also stays accepted, and its author stays credited, when you close the page without saving or reload it from disk.
+Choose *Reopen* to take the suggestion back.
+To withdraw the credit, untick the person in the commit dialog's co-author list.
+
+Accepting is refused with "This suggestion has changed since you saw it." when its author changed the replacement, or the text it is on, after the card was shown to you.
+This happens mostly in a session, when the author edits it while you choose *Accept*.
+The card then shows the new change, and *Accept* accepts that.
 
 Accepted and rejected suggestions are folded with the resolved comments, under "Accepted by …" or "Rejected by …".
 
 Accepting a suggestion credits its author as a co-author of your next commit, as edits in a session do.
-It does not when you are the author, or when the author gave no usable address.
+Working alone or hosting, accepting your own suggestion credits nobody.
+A guest who accepts its own suggestion in a session is credited, because its words reach the file as the host's edit.
+Nobody is credited when the author gave no usable address.
 See xref:collaboration.adoc#_credit_for_guests[Credit for guests].
 
 === Who may do what

@@ -11,24 +11,29 @@ A case is marked passed only when a named test holds it, or a person has run it 
 | Requirement | Case | Held by |
 |---|---|---|
 | Making one | A suggestion on the selection; refused beyond its limits, or when it changes nothing | `a_suggestion_is_made_on_the_selection`, `suggesting_is_refused_beyond_its_limits`, `a_suggestion_that_changes_nothing_is_not_accepted` |
-| | Text that changed while the box was open is refused | `a_suggestion_begun_on_other_text_is_refused` |
+| | Text that changed while the box was open is refused, its text deleted whole included | `a_suggestion_begun_on_other_text_is_refused` |
 | Its life | Rejecting leaves the text alone; an outdated suggestion cannot be accepted; Resolve is refused | `rejecting_leaves_no_trace_in_the_text`, `an_outdated_suggestion_cannot_be_accepted`, `resolving_a_suggestion_is_refused` |
 | | Found again only where it was, never on the same words elsewhere | `a_suggestion_whose_text_is_deleted_is_found_again_only_where_it_was`, `a_suggestion_never_moves_to_the_same_words_elsewhere`, `a_suggestion_is_found_again_after_an_outside_change` |
 | Accepting | One minimal edit, once, cut at character boundaries, among repeated letters | `accepting_applies_the_suggested_edit`, `accepting_cuts_the_edit_at_character_boundaries`, `an_insertion_among_repeated_letters_is_applied_once` |
 | | Overlapping suggestions never corrupt the text; a deletion leaves its suggestion on no text | `overlapping_suggestions_never_corrupt_the_text`, `accepting_a_deletion_leaves_its_suggestion_on_no_text` |
 | | Undo and redo, including at a range's edge | `undoing_an_accept_restores_the_text`, `undoing_an_accept_at_a_range_edge_restores_its_range`, `undoing_an_accepted_deletion_never_moves_it` |
 | | Credits the author as a co-author | `accepting_credits_the_suggestions_author` |
+| | An accept of a suggestion changed since its accepter saw it is refused, nothing applied | `an_accept_of_a_changed_suggestion_is_refused` |
 | | Nothing accepted from a read-only comments file | `nothing_is_accepted_from_a_read_only_comments_file` |
 | In a session | A Viewer's suggestion changes nothing until accepted; the host applies an accept once for everyone | `a_viewers_suggestion_changes_nothing_until_accepted`, `accepting_applies_the_suggested_edit_once_for_everyone`, `two_accepts_apply_once` |
-| | Who may accept; the host checks the text a guest began on | `a_viewer_cannot_accept`, `a_guest_cannot_accept_while_away`, `the_host_refuses_a_suggestion_made_on_other_text`, `the_host_compares_the_text_a_guest_began_on`, `the_host_refuses_an_edit_of_a_suggestion_made_on_other_text` |
+| | Who may accept; the host checks the text a guest began on, the suggestion landing on its words when text before them moved them | `a_viewer_cannot_accept`, `a_guest_cannot_accept_while_away`, `the_host_refuses_a_suggestion_made_on_other_text`, `the_host_compares_the_text_a_guest_began_on`, `the_host_refuses_an_edit_of_a_suggestion_made_on_other_text` |
+| | A guest refuses a suggestion whose words changed while its box was open, sending nothing | `a_guest_refuses_a_suggestion_on_text_changed_inside_its_box` |
+| | An accept carries the change its accepter saw: refused when the author edited the suggestion meanwhile, by the guest or the host | `an_accept_in_flight_of_a_changed_suggestion_is_refused` |
 | | A guest rejects, reopens and edits; refuses in the host's words | `a_guest_rejects_and_reopens_a_suggestion`, `a_guest_edits_its_own_suggestion_with_a_blank_note`, `a_guest_refuses_what_the_host_would_in_its_words` |
-| | Accepting a guest's suggestion credits the guest | `accepting_a_guests_suggestion_credits_the_guest` |
+| | Accepting a guest's suggestion credits the guest, its own accept included | `accepting_a_guests_suggestion_credits_the_guest`, `a_guest_accepting_its_own_suggestion_is_credited` |
 | | The host's undo and redo of its own accept; a redo after a guest's accept | `the_hosts_own_accept_on_a_shared_page_is_undone_and_accepted_again`, `a_redo_after_a_guest_accepts_again_applies_the_suggestion_once`, `a_guest_follows_the_range_through_the_hosts_undo_and_redo_of_an_accept` |
 | | A guest's accept is untracked and sent to everyone; redo cleared | `an_untracked_edit_is_sent_but_never_undone`, `clearing_the_redo_keeps_the_undo` (adoc-collab) |
-| | The wire held to its limits | `suggestions_round_trip`, `suggestion_fields_are_held_to_their_limits` (adoc-collab, `protocol.rs`) |
+| | The wire held to its limits, an accept's original and replacement included, encoding and decoding | `suggestions_round_trip`, `suggestion_fields_are_held_to_their_limits` (adoc-collab, `protocol.rs`) |
 | | Convergence under concurrent accepts, rejects and suggestions | `collab_simulation_converges` (`check_suggestions`), `a_redo_after_a_guest_accepted_again_changes_nothing` |
 | In the source editor | Suggest Change, the card, Accept and undo | `a_suggestion_is_made_accepted_and_shown` |
-| | A box whose text changed meanwhile is refused | `a_suggestion_box_refuses_text_changed_while_open` |
+| | The box follows its text: typing before the words moves the suggestion with them | `a_suggestion_box_follows_its_text_as_the_page_changes` |
+| | A box whose words changed meanwhile is refused and stays open with what was typed | `a_suggestion_box_refuses_text_changed_while_open` |
+| | The card is an accessibility group named by its label | `a_card_is_read_aloud_by_its_label` (the test platform builds no accessibility tree, so the element's role and label are checked; the screen reader itself is a manual check) |
 | | Framed, struck and in the gutter; the status bar names it | `a_suggestion_is_marked_in_the_source_editor` |
 | In the visual editor | The suggested text shown inline, the strike stopping before it, typing beside it writing only to the page | `the_visual_editor_shows_a_suggestion_inline` |
 | | The display text, offsets, caret and runs | `an_insertion_is_shown_but_never_in_the_display_text`, `the_caret_steps_over_an_insertion`, `suggestions_strike_and_underline_their_runs` |

@@ -34,7 +34,7 @@ A case is marked passed only when a named test holds it, or a person has run it 
 | | The wire held to its limits | `comments_are_held_to_their_limits`; fuzz target `collab_frame` |
 | In the app | Add Comment on the selection, the panel, the source editor's marks, the status bar, Next Comment, Resolve | `a_comment_is_added_from_the_selection_and_shown` |
 | | Suggest Change, the card, Accept and undo | `a_suggestion_is_made_accepted_and_shown` |
-| | A suggestion whose text changed while its box was open is refused | `a_suggestion_box_refuses_text_changed_while_open` |
+| | A suggestion whose words changed while its box was open is refused; text typed before them moves it with them | `a_suggestion_box_refuses_text_changed_while_open`, `a_suggestion_box_follows_its_text_as_the_page_changes` |
 | | A suggestion framed, struck and in the gutter; the status bar names it | `a_suggestion_is_marked_in_the_source_editor` |
 | | The visual editor's marks | `the_visual_editor_marks_a_pages_comments`, `comments_fill_the_runs_they_cover` |
 

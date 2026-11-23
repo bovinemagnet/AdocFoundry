@@ -340,6 +340,8 @@ Without anything more, every commit would carry everyone's edits under the host'
 Git has a convention for crediting others: a `Co-authored-by: Name <email>` line at the end of the commit message.
 GitHub, GitLab and other services show these lines beside the commit.
 AdocFoundry uses it to credit the guests who changed the files a commit takes.
+A guest whose suggestion is accepted is credited for that page as if it had typed the change, whoever accepts it, the guest itself included.
+As always, the guest needs a usable address.
 
 === Giving your address
 

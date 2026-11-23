@@ -1301,7 +1301,8 @@ Accepting needs the host, an Editor or someone working alone, never a Viewer, an
 Rejecting is for the same people and a suggestion's author, while undecided.
 Reopening is for the same people and the author, once decided.
 Editing a suggestion's note is the comments' rule, and its replacement only while it is undecided.
-Accepting a suggestion credits its author as a co-author of the commit, as an edit made in a session does, unless the author is the one accepting or has no usable e-mail address.
+Accepting a suggestion credits its author as a co-author of the commit, as an edit made in a session does, unless the author has no usable e-mail address, or the author is the one accepting while alone or hosting.
+A guest accepting its own suggestion is credited too, since its words reach the file as the host's edit.
 
 The commands are `comments.suggest` (Cmd-Alt-Shift-M, Ctrl-Alt-Shift-M elsewhere), `comments.accept` and `comments.reject`.
 `comments.edit` with `CommentRequest::EditSuggestion` changes a suggestion's replacement and note, and sets its `original` to the range's current text, its place certain and its outcome cleared.
@@ -1309,6 +1310,11 @@ The commands are `comments.suggest` (Cmd-Alt-Shift-M, Ctrl-Alt-Shift-M elsewhere
 The requests are `CommentRequest::Suggest`, `Accept` and `Reject`, with `EditSuggestion`.
 Suggesting is refused for an empty range, an original over 4 KiB, a replacement over 8 KiB, a control character other than a line break or tab, or a replacement equal to the original.
 Resolving an undecided suggestion is refused; accept or reject it instead.
+`CommentRequest::Accept` has `seen: Option<SeenSuggestion { original, replacement }>`, the change the front end showed.
+The app always passes it, and `None` accepts the suggestion as it is.
+`accept_suggestion` compares it with the stored suggestion after the role and state checks and before anything changes, and refuses a mismatch with "This suggestion has changed since you saw it."
+Alone or hosting, a given `original` of `CommentRequest::Suggest` is compared before the range is checked, so an empty range, its text deleted, gets "The text changed while you were suggesting; try again." too.
+The app keeps a Suggest box's range on its text by mapping it through every `DocumentChanged` edit of the page with `map_range`.
 
 The query `Comment::suggestion` gives a `Suggestion` with `original`, `replacement`, `state` (`SuggestionState`: `Pending`, `Outdated`, `Accepted` or `Rejected`), `removed` and `inserted`.
 While pending, `removed` is the range less the common prefix and suffix and `inserted` is what replaces it, which is what a front end marks.
@@ -1322,13 +1328,15 @@ The code is in `crates/adoc-engine/src/comments.rs`, with tests in `crates/adoc-
 
 The protocol carries suggestions (version 3).
 `CommentChange::Add` has an optional `suggestion` (`SuggestionChange { original, replacement }`).
-`CommentChange::Accept`, `CommentChange::Reject` and `CommentChange::EditSuggestion { comment, replacement, text, original }` are new.
+`CommentChange::Accept { comment, original, replacement }`, `CommentChange::Reject` and `CommentChange::EditSuggestion { comment, replacement, text, original }` are new.
+Both fields of an accept are required and held to a suggestion's limits on encoding and decoding.
 The host tells each thread with `SharedThread::suggestion`, a `SharedSuggestion` holding `original`, `replacement`, `outcome` (`SharedOutcome::Accepted` or `SharedOutcome::Rejected`) and `uncertain`.
 Encoding and decoding hold the fields to the same limits as alone.
 A suggestion's note may be empty; a plain comment's may not.
 
 A guest's suggestion changes no text until it is accepted.
 The guest sends the text it saw as `original`.
+A guest compares it with its own text at the range before sending, and refuses a mismatch locally with the same message.
 The host compares it with its own text in the range, and refuses a mismatch with "The text changed while you were suggesting; try again.", storing nothing.
 Editing a suggestion's replacement from a guest carries `original` too and is checked the same way, so a replacement is never paired with text its author did not see.
 
@@ -1338,14 +1346,18 @@ A Viewer cannot accept.
 Resolving an undecided suggestion is refused with "Accept or reject a suggestion instead of resolving it."
 
 A guest's accept is a request (`CommentChange::Accept`), and the guest never applies it itself.
-The host checks it as it checks its own (`accept_suggestion`).
+It sends the change it was told of.
+If the `seen` given differs from that, the guest refuses locally with "This suggestion has changed since you saw it." and sends nothing.
+The host maps the fields to `seen` and checks the request as it checks its own (`accept_suggestion`).
+So an author, a Viewer included, who edits a suggestion while someone's accept is on its way never has the new text applied unseen.
 It then applies the one minimal edit through `apply_untracked_shared_edit` in `crates/adoc-engine/src/collab.rs`.
 The edit is validated against the rope and applied to the replica with `Replica::apply_untracked`, an origin the undo manager does not track.
 It is sent to everyone like a local change, and the rope takes it as `EditOrigin::Remote`, so it is in nobody's undo history.
 It also clears the host's redo on that page (`Replica::clear_redo`), as a new edit of the host's own would, because a redo after it could apply the suggestion a second time.
 
 Two accepts of one suggestion apply it once, since the second finds it decided ("This suggestion is decided already.").
-Accepting a guest's suggestion credits the guest as a co-author, through the address its knock gave.
+Accepting a guest's suggestion credits the guest as a co-author, through the address its knock gave, and so does the guest accepting its own.
+Alone or hosting, accepting one's own suggestion credits nobody.
 The host's own accept on a shared page is in the host's undo history, as typing is.
 
 The reversal kept for undoing and redoing an accept is recorded for a guest's accept too.
