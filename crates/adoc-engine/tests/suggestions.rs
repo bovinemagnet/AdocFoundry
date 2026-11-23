@@ -122,6 +122,7 @@ fn suggest(
         CommentRequest::Suggest {
             id,
             range,
+            original: None,
             replacement: replacement.to_owned(),
             text: note.to_owned(),
         },
@@ -224,6 +225,47 @@ fn a_suggestion_is_made_on_the_selection() {
     let windows = range_of(&engine, id, "Windows");
     let quiet = suggest(&mut engine, id, windows, "", "").unwrap();
     assert_eq!(comment(&engine, id, quiet).text, "");
+}
+
+/// A front end's box holds the range it was begun on while the page may change: the text it
+/// showed goes with the request, and a range no longer holding it is refused, so a replacement
+/// is never paired with text its author did not see.
+#[test]
+fn a_suggestion_begun_on_other_text_is_refused() {
+    let setup = Setup::new();
+    let mut engine = setup.engine();
+    let id = engine.open(&setup.page()).unwrap();
+    let range = range_of(&engine, id, "the installer");
+    let begun = |range| CommentRequest::Suggest {
+        id,
+        range,
+        original: Some("the installer".to_owned()),
+        replacement: "Gatekeeper".to_owned(),
+        text: String::new(),
+    };
+    // Typed before the range while the box is open: the range now holds other text.
+    engine
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(range.start - "macOS ".len(), range.start - "macOS ".len()),
+                text: "Apple ".to_owned(),
+            },
+        )
+        .unwrap();
+    let before = engine.comments(id).len();
+    let reason = refused(invoke(&mut engine, ids::COMMENTS_SUGGEST, begun(range)));
+    assert_eq!(
+        reason,
+        "The text changed while you were suggesting; try again."
+    );
+    assert_eq!(engine.comments(id).len(), before, "nothing stored");
+
+    // Begun again on the text as it is, it is made.
+    let range = range_of(&engine, id, "the installer");
+    invoke(&mut engine, ids::COMMENTS_SUGGEST, begun(range)).unwrap();
+    assert_eq!(engine.comments(id).len(), before + 1);
 }
 
 #[test]

@@ -232,9 +232,12 @@ pub enum CommentRequest {
         offset: usize,
     },
     /// Suggests `replacement` for the text of `range`, with a note that may be empty.
+    /// `original` is the text the front end showed when the suggestion was begun: refused when
+    /// the range no longer holds it. `None` takes the range's text as it is.
     Suggest {
         id: DocumentId,
         range: SourceRange,
+        original: Option<String>,
         replacement: String,
         text: String,
     },
@@ -1278,12 +1281,13 @@ impl Engine {
             },
             CommentRequest::Suggest {
                 range,
+                original,
                 replacement,
                 text,
                 ..
             } => Change::Suggest {
                 range,
-                original: None,
+                original,
                 replacement,
                 text,
             },

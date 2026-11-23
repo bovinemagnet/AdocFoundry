@@ -38,10 +38,12 @@ pub(super) enum Draft {
         reply: Option<CommentId>,
         input: Entity<gpui_component::input::TextareaState>,
     },
-    /// A change to the text of `range`: `replacement` begins as that text, `input` is the note.
+    /// A change to the text of `range`, which held `original` when the box opened:
+    /// `replacement` begins as that text, `input` is the note.
     Suggest {
         document: DocumentId,
         range: SourceRange,
+        original: String,
         replacement: Entity<gpui_component::input::TextareaState>,
         input: Entity<gpui_component::input::TextareaState>,
     },
@@ -224,10 +226,12 @@ impl WorkspaceView {
             return;
         };
         let range = SourceRange::new(selection.start, selection.end);
+        let original = selected.clone();
         self.open_suggestion_box(
             |replacement, input| Draft::Suggest {
                 document,
                 range,
+                original,
                 replacement,
                 input,
             },
@@ -354,12 +358,17 @@ impl WorkspaceView {
                 },
             ),
             Draft::Suggest {
-                document, range, ..
+                document,
+                range,
+                original,
+                ..
             } => (
                 ids::COMMENTS_SUGGEST,
                 CommentRequest::Suggest {
                     id: *document,
                     range: *range,
+                    // Refused if the range no longer holds the text the box was opened on.
+                    original: Some(original.clone()),
                     replacement: replacement.unwrap_or_default(),
                     text,
                 },
@@ -1016,6 +1025,13 @@ impl WorkspaceView {
             || self
                 .active_document(cx)
                 .is_some_and(|document| !self.app.read(cx).engine.comments(document).is_empty())
+    }
+
+    /// What the open suggestion box's replacement holds.
+    #[cfg(test)]
+    pub fn suggestion_replacement_for_test(&self, cx: &App) -> Option<String> {
+        let replacement = self.comments.draft.as_ref()?.replacement()?;
+        Some(replacement.read(cx).value().to_string())
     }
 
     /// The status bar's word on a comment at the caret, if there is one.

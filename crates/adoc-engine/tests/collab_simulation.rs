@@ -953,6 +953,7 @@ impl Simulation {
                     CommandArgs::Comment(adoc_engine::CommentRequest::Suggest {
                         id,
                         range,
+                        original: None,
                         replacement: token,
                         text: String::new(),
                     }),

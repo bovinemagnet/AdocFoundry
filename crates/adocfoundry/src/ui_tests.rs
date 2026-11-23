@@ -12692,6 +12692,70 @@ fn a_suggestion_is_made_accepted_and_shown(cx: &mut TestAppContext) {
     assert_eq!(widget_text(&editor, &mut cx), text);
 }
 
+/// Suggested changes (#763, SUGGEST 3/4): the box holds the range it was begun on while the
+/// page may change; text typed before it meanwhile makes the engine refuse the suggestion, and
+/// the box stays open with the replacement typed.
+#[gpui::test]
+fn a_suggestion_box_refuses_text_changed_while_open(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let page = root.join("page.adoc");
+    let text = "= Page\n\nSome words to comment on.\n";
+    std::fs::write(&page, text).unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+    let start = text.find("words").unwrap();
+    cx.update(|_, cx| {
+        editor
+            .read(cx)
+            .state_for_test()
+            .clone()
+            .update(cx, |state, cx| {
+                state.set_selected_range(start..start + "words".len(), cx);
+            });
+    });
+    cx.dispatch_action(crate::editor::bindings::SuggestChange);
+    cx.run_until_parked();
+    cx.simulate_keystrokes("t e r m s");
+
+    // Typed before the range while the box is open.
+    let id = cx.update(|_, cx| editor.read(cx).document());
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id,
+                    range: adoc_core::SourceRange::new(start, start),
+                    text: "more ".to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        })
+    });
+    cx.run_until_parked();
+    click("comment-submit", &mut cx);
+    cx.run_until_parked();
+
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    assert!(comments.is_empty(), "{comments:?}");
+    assert!(
+        cx.debug_bounds("suggestion-replacement").is_some(),
+        "still open"
+    );
+    assert_eq!(
+        cx.update(|_, cx| workspace.read(cx).suggestion_replacement_for_test(cx)),
+        Some("terms".to_owned())
+    );
+}
+
 fn click_dynamic(selector: &str, cx: &mut VisualTestContext) {
     let bounds = cx
         .debug_bounds(Box::leak(selector.to_owned().into_boxed_str()))

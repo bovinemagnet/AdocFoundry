@@ -427,9 +427,9 @@ impl Engine {
             }
             Change::Suggest {
                 range,
+                original: shown,
                 replacement,
                 text,
-                ..
             } => {
                 let note = checked_note(&text)?;
                 let page = self
@@ -443,12 +443,13 @@ impl Engine {
                         "a suggestion is on a range of the page's text".to_owned(),
                     )
                 };
-                // The text this guest sees, which the host checks against its own.
-                let original = page
+                // The text this guest's front end showed when it began, else the text it sees
+                // now: the host checks it against its own.
+                let seen = page
                     .get(range.start..range.end)
                     .filter(|original| !original.is_empty())
-                    .ok_or_else(not_a_range)?
-                    .to_owned();
+                    .ok_or_else(not_a_range)?;
+                let original = shown.unwrap_or_else(|| seen.to_owned());
                 check_suggestion(&original, &replacement)?;
                 if comments.len() >= MAX_COMMENTS {
                     return Err(EngineError::Refused(

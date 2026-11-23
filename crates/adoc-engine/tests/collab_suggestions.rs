@@ -71,6 +71,7 @@ fn suggest_instead(
         CommentRequest::Suggest {
             id,
             range: SourceRange::new(start, start + QUOTE.len()),
+            original: None,
             replacement: replacement.to_owned(),
             text: String::new(),
         },
@@ -316,6 +317,40 @@ fn the_host_refuses_a_suggestion_made_on_other_text() {
     assert!(session.removed().is_empty());
 }
 
+/// A guest's box holds the range it was begun on while the guest's page changes: the text it
+/// showed is what the host compares with its own, never the guest's text at the range by then.
+#[test]
+fn the_host_compares_the_text_a_guest_began_on() {
+    let mut session = session();
+    let ada = session.guest(1, true);
+    let id = guest_doc(&mut session, ada);
+    let start = PAGE.find(QUOTE).unwrap();
+    let range = SourceRange::new(start, start + QUOTE.len());
+    // The guest types before the range while its box is open.
+    type_at(session.engine(ada), id, start - "macOS ".len(), "Apple ");
+    session.settle();
+    invoke(
+        session.engine(ada),
+        ids::COMMENTS_SUGGEST,
+        CommentRequest::Suggest {
+            id,
+            range,
+            original: Some(QUOTE.to_owned()),
+            replacement: REPLACEMENT.to_owned(),
+            text: String::new(),
+        },
+    )
+    .unwrap();
+    session.settle();
+    assert_eq!(
+        refusals(&session, ada),
+        ["The text changed while you were suggesting; try again."]
+    );
+    let host = session.host_doc();
+    assert!(session.host.comments(host).is_empty(), "nothing stored");
+    assert!(session.engine(ada).comments(id).is_empty());
+}
+
 #[test]
 fn a_guest_cannot_accept_while_away() {
     let mut session = session();
@@ -511,6 +546,7 @@ fn a_guest_edits_its_own_suggestion_with_a_blank_note() {
                 let start = PAGE.find(QUOTE).unwrap();
                 SourceRange::new(start, start + QUOTE.len())
             },
+            original: None,
             replacement: REPLACEMENT.to_owned(),
             text: "Clearer.".to_owned(),
         },
@@ -578,6 +614,7 @@ fn a_guest_refuses_what_the_host_would_in_its_words() {
         CommentRequest::Suggest {
             id,
             range: SourceRange::new(start, start + "unsigned".len()),
+            original: None,
             replacement: "an unnotarised".to_owned(),
             text: String::new(),
         },
