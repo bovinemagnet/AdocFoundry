@@ -17,6 +17,10 @@ Write the comment and choose *Comment*, or choose *Cancel*.
 
 If nothing is selected, AdocFoundry asks you to select some text first.
 
+The box follows its text while it is open.
+Text typed before or after the selected words, by you or by anyone in a session, moves the comment along with them.
+If the selected words are deleted while the box is open, AdocFoundry refuses the comment.
+
 == Seeing comments in the editor
 
 The source editor fills commented text and marks the gutter beside it.

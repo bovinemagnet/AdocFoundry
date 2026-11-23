@@ -24,9 +24,12 @@ use crate::editor::bindings::{AddComment, NextComment, PreviousComment, SuggestC
 /// What the panel is writing: a new comment on a range, a reply, an edit, or a suggested change,
 /// with its boxes.
 pub(super) enum Draft {
+    /// A comment on `range`, which follows the page's edits while the box is open
+    /// (`follow_edits`); `version` is the page's version it is in.
     New {
         document: DocumentId,
         range: SourceRange,
+        version: u64,
         input: Entity<gpui_component::input::TextareaState>,
     },
     Reply {
@@ -219,9 +222,16 @@ impl WorkspaceView {
             gpui_component::input::TextareaState::new(window, cx).placeholder("Write a comment")
         });
         input.update(cx, |input, cx| input.focus(window, cx));
+        let version = self
+            .app
+            .read(cx)
+            .engine
+            .document(document)
+            .map_or(0, |open| open.version);
         self.comments.draft = Some(Draft::New {
             document,
             range: SourceRange::new(selection.start, selection.end),
+            version,
             input,
         });
         self.sidebar_tab = SidebarTab::Comments;
@@ -266,9 +276,10 @@ impl WorkspaceView {
         self.sidebar_tab = SidebarTab::Comments;
     }
 
-    /// Keeps the Suggest box on its text: its range moves with every edit made to the page
-    /// while it is open, as comments' ranges do, so only a change to the text itself refuses
-    /// the suggestion.
+    /// Keeps the Add Comment and Suggest boxes on their text: the range moves with every edit
+    /// made to the page while the box is open, as comments' ranges do (#785). Text deleted
+    /// whole leaves the range empty, and the engine refuses a comment there; only a change to
+    /// the text itself refuses a suggestion.
     pub(super) fn follow_edits(&mut self, event: &EngineEvent) {
         let EngineEvent::DocumentChanged {
             id,
@@ -279,12 +290,20 @@ impl WorkspaceView {
         else {
             return;
         };
-        if let Some(Draft::Suggest {
-            document,
-            range,
-            version,
-            ..
-        }) = &mut self.comments.draft
+        if let Some(
+            Draft::New {
+                document,
+                range,
+                version,
+                ..
+            }
+            | Draft::Suggest {
+                document,
+                range,
+                version,
+                ..
+            },
+        ) = &mut self.comments.draft
         {
             if document == id && after > version {
                 *range = adoc_engine::map_range(*range, edits);

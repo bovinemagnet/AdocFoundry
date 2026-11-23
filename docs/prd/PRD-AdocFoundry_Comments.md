@@ -304,6 +304,7 @@ Where the implementation departs from this design, or settles what it left open:
 - **Accessible labels:** each comment's card carries "Comment by <author> on “<quote>”", and every button its own selector. The editor's mark is never the only cue: the panel and the status bar name each comment.
 - **The visual editor** shows no marks yet; that is COMMENTS 4/4.
 - After a comment is sent or its box put away, the keyboard's focus goes back to the editor.
+- **The Add Comment box follows its text** (#785, after SUGGEST 3/4 did the same for the Suggest box). The box held the selection's offsets as they were when it opened, so a change to the page before the selection while it was open (typing here, a participant's edit, a change reloaded from disk) put the comment on other text. `Draft::New` now keeps the page's version and `follow_edits` maps its range through each `DocumentChanged`'s edits with `map_range`, as it does a suggestion's. Selected text deleted whole leaves the range empty, and the engine refuses a comment on an empty range.
 
 ### COMMENTS 4/4: the visual editor and the release record
 
