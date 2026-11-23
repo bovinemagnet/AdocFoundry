@@ -13,7 +13,7 @@ A case is marked passed only when a named test holds it, or a person has run it 
 | The page never changes | Adding, replying, resolving, editing and deleting change neither the page's text nor whether it is unsaved, nor its undo history | `comments_never_change_the_page` |
 | | The comments file is hidden from Antora and the engine's catalog | `hidden_files_are_not_catalogued` (adoc-antora), `a_hidden_file_made_in_a_module_is_not_catalogued` |
 | A comment follows its text | Typed before, at its edges, inside; part of it deleted | `a_comment_follows_its_text_through_edits`, `a_range_moves_with_edits` |
-| | Concurrent edits in a session, both ways | `a_comment_follows_its_text_through_concurrent_edits`; the simulation's `check_comments` |
+| | Concurrent edits in a session, both ways | `a_comment_follows_its_text_through_concurrent_edits`; the simulation's `check_comments`; `a_comment_on_redone_text_is_placed_alike` (#786) |
 | | Its text deleted, then brought back by undo | `a_comment_whose_text_is_deleted_is_detached_and_undo_brings_it_back`, `a_detached_comment_is_due_once_typing_pauses` |
 | Found again | The page changed outside the app | `a_comment_is_found_again_after_an_outside_change`, `a_comment_whose_text_went_elsewhere_is_detached`, `the_nearer_of_two_quotes_wins` |
 | The file | Read beside the page, and round trip with unknown data kept | `a_pages_comments_are_read_from_beside_it`, `a_sidecar_round_trips`, `unknown_data_is_kept` |

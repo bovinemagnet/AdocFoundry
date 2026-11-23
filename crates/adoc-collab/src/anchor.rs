@@ -24,7 +24,10 @@ pub enum Affinity {
 
 /// A selection's two ends as positions relative to the text around them, encoded to send.
 /// Resolved against any replica of the same file, it gives byte offsets there, however the
-/// text changed meanwhile.
+/// text changed meanwhile. Replicas holding the same updates agree, except where text was undone
+/// and redone after the selection was made: `yrs` follows an undone item to its redone copy only
+/// on the replica that redid (#786). So one replica's resolution is no proof of another's; to be
+/// sure another places it alike, make the selection again from the text as it is.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelativeSelection {
     pub anchor: Vec<u8>,

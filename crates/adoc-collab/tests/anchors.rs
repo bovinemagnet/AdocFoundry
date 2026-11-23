@@ -105,3 +105,58 @@ fn a_selection_naming_a_participant_wider_than_53_bits_is_refused() {
         assert!(RelativeSelection::from_wire(anchor.to_vec(), head.to_vec()).is_err());
     }
 }
+
+/// A selection on text undone and redone resolves by the replica's own undo history (#786):
+/// `yrs` follows an undone item to the copy its redo inserted (`StickyIndex::get_offset` calls
+/// `follow_redone`), and that link is kept only by the replica that redid, never sent. So the
+/// replica that redid places the selection on the text, and every other one beside it. One
+/// replica resolving a selection proves nothing about where another does; whoever owns a
+/// selection tells it again, made from the text as it is (`host_announce_comments`). Should
+/// `yrs` ever send the link or stop following it, this test fails and that may be revisited.
+#[test]
+fn a_selection_on_redone_text_resolves_by_local_history() {
+    for bob_redoes in [false, true] {
+        let mut alice = Peer::host("ab", 1);
+        let mut bob = Peer::join(&alice, 2);
+        if bob_redoes {
+            alice.receive(&bob.edit(&[ByteEdit::new(1, 1, "\u{301}")]));
+            bob.replica.end_group();
+        } else {
+            bob.receive(&alice.edit(&[ByteEdit::new(1, 1, "\u{301}")]));
+            alice.replica.end_group();
+        }
+        // The accent selected as a comment's range is: its start after text typed there, its
+        // end before.
+        let start = alice.replica.selection(1, 1, Affinity::After).unwrap();
+        let end = alice.replica.selection(3, 3, Affinity::Before).unwrap();
+        let selection = RelativeSelection {
+            anchor: start.anchor,
+            head: end.head,
+        };
+        if bob_redoes {
+            alice.receive(&bob.undo());
+            alice.receive(&bob.redo());
+        } else {
+            bob.receive(&alice.undo());
+            bob.receive(&alice.redo());
+        }
+        assert_eq!(alice.rope, "a\u{301}b");
+        assert_eq!(bob.rope, alice.rope);
+        let (redid, other) = if bob_redoes {
+            (&bob, &alice)
+        } else {
+            (&alice, &bob)
+        };
+        assert_eq!(redid.replica.resolve(&selection), Some((1, 3)));
+        assert_eq!(other.replica.resolve(&selection), Some((3, 3)));
+        // Made again from the text as it is, it resolves alike everywhere.
+        let start = redid.replica.selection(1, 1, Affinity::After).unwrap();
+        let end = redid.replica.selection(3, 3, Affinity::Before).unwrap();
+        let again = RelativeSelection {
+            anchor: start.anchor,
+            head: end.head,
+        };
+        assert_eq!(redid.replica.resolve(&again), Some((1, 3)));
+        assert_eq!(other.replica.resolve(&again), Some((1, 3)));
+    }
+}

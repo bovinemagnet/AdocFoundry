@@ -1421,3 +1421,51 @@ fn a_redo_after_a_guest_accepted_again_changes_nothing() {
         Op::Settle,
     ]);
 }
+
+/// A comment on text the host undid and redid is placed alike by host and guest (seed 0x426 at
+/// 1,500 steps, #786). The host's replica follows its own redo to the text and a guest's does
+/// not, so the host cannot tell from resolving what it sent that a guest places it alike; it
+/// tells the range again whenever it would send another selection.
+#[test]
+fn a_comment_on_redone_text_is_placed_alike() {
+    converges(&[
+        Op::Edit {
+            actor: 2,
+            file: 2,
+            at: 59383,
+            len: 4,
+            piece: 2,
+            delete: true,
+        },
+        Op::Settle,
+        Op::Suggest {
+            actor: 1,
+            file: 2,
+            at: 62175,
+            len: 3,
+        },
+        Op::Settle,
+        Op::Accept {
+            actor: 1,
+            file: 2,
+            pick: 113,
+            also: Some(0),
+        },
+        Op::Undo {
+            actor: 0,
+            file: 2,
+            redo: false,
+        },
+        Op::Pump { actor: 0 },
+        Op::Undo {
+            actor: 0,
+            file: 2,
+            redo: true,
+        },
+        Op::Undo {
+            actor: 0,
+            file: 2,
+            redo: false,
+        },
+    ]);
+}
