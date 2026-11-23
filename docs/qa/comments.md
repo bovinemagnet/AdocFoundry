@@ -28,6 +28,7 @@ A case is marked passed only when a named test holds it, or a person has run it 
 | | Deleted and restored | `deleting_a_page_keeps_its_sidecar_for_restoring` |
 | Who writes them | Settings, else Git, user file only | `the_comment_author_comes_from_settings_first`, `comments_settings_are_user_only`, `identity_is_read_from_the_files_given` (adoc-git) |
 | In a session | A Viewer can comment but not edit | `a_viewer_can_comment_but_not_edit` |
+| | Suggestions in a session (#763) | `crates/adoc-engine/tests/collab_suggestions.rs`; the simulation's `check_suggestions` |
 | | The host decides; refusals keep the connection; stale requests refused | `what_a_participant_may_do_is_the_hosts_to_decide`, `a_request_from_an_earlier_epoch_is_refused`, `a_comment_on_a_file_not_opened_closes_the_connection` |
 | | Guests told names only, and every comment however many | `guests_are_never_told_an_email_address`, `more_comments_than_one_pump_tells_all_reach_a_guest`, `comments_are_told_again_after_a_reconnection` |
 | | The wire held to its limits | `comments_are_held_to_their_limits`; fuzz target `collab_frame` |

@@ -109,9 +109,9 @@ Every guest is treated as possibly modified, and everything it sends as untruste
 - `Epoch`: a number per shared file, starting at 1. It is bumped whenever the file's replica is rebuilt from text: a reload from disk, a host-initiated resynchronisation, or a projection failure.
 - None of these is the engine's `DocumentId` or `OpenDocument::version`, which stay local to a process and are never sent. A state vector is never treated as permission.
 
-## 8. Protocol, version 2
+## 8. Protocol, version 3
 
-Version 2 (#761) added the guest's optional e-mail address to `Authenticate` and the `own` flags of comment threads; version 1 peers are told apart by `Hello`.
+Version 3 (#763) adds `SuggestionChange` to `CommentChange::Add`, the changes `Accept`, `Reject` and `EditSuggestion` (which carries `original`), and `SharedThread::suggestion` (`SharedSuggestion { original, replacement, outcome, uncertain }`). Version 2 (#761) added the guest's optional e-mail address to `Authenticate` and the `own` flags of comment threads. A version 2 or version 1 guest is refused at `Hello`.
 
 **Frames.** Each frame is laid out as follows:
 - a 4-byte big-endian length, at most `MAX_FRAME`;

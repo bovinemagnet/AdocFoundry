@@ -1143,7 +1143,9 @@ The tests are in `crates/adoc-engine/tests/coauthors.rs`, among them `a_commit_c
 A guest may give an e-mail address when it joins, to be credited by in the host's commits.
 It travels in `Message::Authenticate` as `email`, which is optional, and is checked by `adoc_collab::protocol::commit_email`.
 An address is at most 254 bytes, with one `@` and something on each side of it, and holds no white space, control character, `<`, `>`, `,`, `"` or `\`.
-The protocol version is 2, so `Hello` tells an older peer apart.
+The protocol version is 3.
+Version 3 (#763) carries suggestions in the comment messages, and version 2 (#761) added the guest's optional e-mail address.
+A guest speaking only version 2 is refused at `Hello`.
 
 The transport hands the address to the host's engine in `LinkEvent::Knock { email }`, and the host keeps it on the guest's `Peer`.
 It is never put in a message to a guest, a `Member` of the roster, a comment thread sent to a guest, an error or a log line.
@@ -1211,7 +1213,7 @@ Renaming a file in the app moves its record; deleting it keeps the record, so co
 Comments on a page's text are kept in a metadata file beside the page, never in the page.
 `crates/adoc-engine/src/page_meta.rs` is the file and `crates/adoc-engine/src/comments.rs` is the model an open page holds.
 The app's Comments panel shows them.
-Suggested changes (see <<suggested-changes>>) are so far the engine's alone; the app, collaboration sessions and the visual editor follow in later changes.
+Suggested changes (see <<suggested-changes>>) so far work in the engine and in collaboration sessions; the app and the visual editor follow in later changes.
 
 === The file
 
@@ -1267,7 +1269,8 @@ Suggesting changes nothing in the page; only accepting does.
 
 A suggestion is in one of four states, derived from the file and the text, and never stored as a state.
 
-* Accepted or rejected: the `outcome` key is set.
+* Accepted: the `outcome` key is set to `accepted`.
+* Rejected: the `outcome` key is set to `rejected`.
 * Pending: no outcome, the comment is not detached, its place is certain and the text in its range equals `original`.
 * Outdated: any other undecided suggestion, because its range's text differs from `original`, it is detached, or it was found again in a place it cannot be sure of.
 
@@ -1313,9 +1316,43 @@ Otherwise they are the whole range and the whole replacement.
 `Allowed` gains `accept` and `reject`, false on a plain comment and a reply.
 On a decided suggestion `Allowed::edit` stays true for the note, but `EditSuggestion` is refused until it is reopened.
 
-A guest's suggestion requests are refused until the session package follows (SUGGEST 2/4).
-A host works as it does alone, and its accept reaches the shared text as typing does.
 The code is in `crates/adoc-engine/src/comments.rs`, with tests in `crates/adoc-engine/tests/suggestions.rs`.
+
+==== In a session
+
+The protocol carries suggestions (version 3).
+`CommentChange::Add` has an optional `suggestion` (`SuggestionChange { original, replacement }`).
+`CommentChange::Accept`, `CommentChange::Reject` and `CommentChange::EditSuggestion { comment, replacement, text, original }` are new.
+The host tells each thread with `SharedThread::suggestion`, a `SharedSuggestion` holding `original`, `replacement`, `outcome` (`SharedOutcome::Accepted` or `SharedOutcome::Rejected`) and `uncertain`.
+Encoding and decoding hold the fields to the same limits as alone.
+A suggestion's note may be empty; a plain comment's may not.
+
+A guest's suggestion changes no text until it is accepted.
+The guest sends the text it saw as `original`.
+The host compares it with its own text in the range, and refuses a mismatch with "The text changed while you were suggesting; try again.", storing nothing.
+Editing a suggestion's replacement from a guest carries `original` too and is checked the same way, so a replacement is never paired with text its author did not see.
+
+A guest works out each suggestion's state on its own text from what the host told it, and shows it as outdated when `uncertain`.
+It refuses locally what the host would refuse, in the host's words.
+A Viewer cannot accept.
+Resolving an undecided suggestion is refused with "Accept or reject a suggestion instead of resolving it."
+
+A guest's accept is a request (`CommentChange::Accept`), and the guest never applies it itself.
+The host checks it as it checks its own (`accept_suggestion`).
+It then applies the one minimal edit through `apply_untracked_shared_edit` in `crates/adoc-engine/src/collab.rs`.
+The edit is validated against the rope and applied to the replica with `Replica::apply_untracked`, an origin the undo manager does not track.
+It is sent to everyone like a local change, and the rope takes it as `EditOrigin::Remote`, so it is in nobody's undo history.
+It also clears the host's redo on that page (`Replica::clear_redo`), as a new edit of the host's own would, because a redo after it could apply the suggestion a second time.
+
+Two accepts of one suggestion apply it once, since the second finds it decided ("This suggestion is decided already.").
+Accepting a guest's suggestion credits the guest as a co-author, through the address its knock gave.
+The host's own accept on a shared page is in the host's undo history, as typing is.
+
+The reversal kept for undoing and redoing an accept is recorded for a guest's accept too.
+It moves the range back over the original and forward over the replacement.
+So an edit by anyone that exactly reverses the accepted text puts the range back over the original.
+
+The session code is in `crates/adoc-engine/src/collab_session/comments.rs` (`guest_comments`, `guest_comment` and `host_comment`), with tests in `crates/adoc-engine/tests/collab_suggestions.rs`.
 
 === When the file is written
 
@@ -1383,7 +1420,7 @@ A request from an earlier epoch is refused.
 A guest that cannot reach the host is refused at once, and its engine emits `EngineEvent::CommentRefused`.
 
 `host_announce_comments` runs in the host's flush on each pump.
-Each live guest with the file open is told every comment that changed, or whose last-sent selection no longer resolves to the host's own range, with `CommentThread`.
+Each live guest with the file open is told every comment that changed, or whose selection, as the host would send it now, differs byte for byte from the selection it last sent that guest, with `CommentThread`.
 The thread's JSON is in the payload after the selection.
 At most 32 are sent for each file in a pump (`THREADS_PER_PUMP`), and `CommentRemoved` tells of a deleted one.
 `PeerFile::threads` and `comments_seen` (the text's version and the comments' generation) track what each guest was told.
@@ -1402,6 +1439,10 @@ For a session, `crates/adoc-engine/tests/collab_comments.rs` meets a host and gu
 `comments_are_held_to_their_limits` in `crates/adoc-collab/tests/protocol.rs` holds the comment messages to the `MAX_COMMENT_*` limits.
 `a_comment_for_a_guest_to_be_told_is_due_at_once` in `tests/wake.rs` checks the pump wakes for a comment a guest is yet to be told.
 The simulation in `tests/collab_simulation.rs` has `Comment` and `Reply` operations, and `check_comments` checks that every guest is told each page's comments as the host holds them.
+`suggestions_round_trip` and `suggestion_fields_are_held_to_their_limits` in `crates/adoc-collab/tests/protocol.rs` hold the suggestion messages to their limits.
+The simulation also has `Suggest`, `Accept` and `Reject` operations, and two participants sometimes accept one suggestion in the same step.
+`check_suggestions` checks at every settle that every participant shows each suggestion as the host holds it, that no replacement appears in any text unless the host accepted it, and that an accepted replacement appears at most once.
+A replacement deleted whole and then restored by two participants' undos may appear twice, as any text may when two people delete it at once and both undo, so that case is exempt.
 
 == The pump and worker indexing
 
