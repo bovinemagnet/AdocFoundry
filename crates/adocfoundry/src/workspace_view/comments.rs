@@ -155,6 +155,18 @@ fn suggestion_label(author: &str, removed: &str, inserted: &str) -> String {
     }
 }
 
+/// The frame of comment `key`'s card: a group that assistive technology reads by `label`, who
+/// wrote it and on what (or, for a suggestion, the change in words), so neither the colour in
+/// the editor nor a suggestion's strike and underline is all that says what it is.
+fn comment_card(key: &str, label: String) -> gpui::Stateful<gpui::Div> {
+    let selector = format!("comment-{key}");
+    v_flex()
+        .id(SharedString::from(selector.clone()))
+        .debug_selector(move || selector.clone())
+        .role(gpui::Role::Group)
+        .aria_label(label)
+}
+
 /// The part of `text` between `prefix` bytes from its start and `suffix` from its end, or all of
 /// it when that is not a part of it.
 fn middle(text: &str, prefix: usize, suffix: usize) -> std::ops::Range<usize> {
@@ -772,12 +784,7 @@ impl WorkspaceView {
                 })
                 .into_any_element(),
         };
-        let mut card = v_flex()
-            .id(SharedString::from(format!("comment-{key}")))
-            .debug_selector({
-                let key = key.clone();
-                move || format!("comment-{key}")
-            })
+        let mut card = comment_card(&key, label.clone())
             .p_2()
             .gap_1()
             .rounded(cx.theme().radius)
@@ -889,8 +896,7 @@ impl WorkspaceView {
                 card = card.child(self.render_draft(draft, cx));
             }
         }
-        // Read aloud as who wrote it and on what, so the colour in the editor is never all
-        // that says where a comment is.
+        // The card is read aloud by its label (`comment_card`); tests find it by the same.
         div()
             .debug_selector(move || label.clone())
             .child(card)
@@ -1115,5 +1121,36 @@ impl WorkspaceView {
                 &suggestion.inserted,
             ),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::Element as _;
+
+    use super::*;
+
+    /// A card is a group that assistive technology reads by its label: who wrote it, and the
+    /// change it suggests in words, since its strike and underline are only seen.
+    #[test]
+    fn a_card_is_read_aloud_by_its_label() {
+        let label = suggestion_label("Ada", "word", "term");
+        assert_eq!(
+            label,
+            "Suggestion by Ada: replace \u{2018}word\u{2019} with \u{2018}term\u{2019}"
+        );
+        let card = comment_card("7", label.clone());
+        assert_eq!(card.a11y_role(), Some(gpui::Role::Group));
+        let mut node = gpui::accesskit::Node::new(gpui::Role::Group);
+        card.write_a11y_info(&mut node);
+        assert_eq!(node.label(), Some(label.as_str()));
+        assert_eq!(
+            suggestion_label("Ada", "word", ""),
+            "Suggestion by Ada: delete \u{2018}word\u{2019}"
+        );
+        assert_eq!(
+            suggestion_label("Ada", "", "term"),
+            "Suggestion by Ada: insert \u{2018}term\u{2019}"
+        );
     }
 }
