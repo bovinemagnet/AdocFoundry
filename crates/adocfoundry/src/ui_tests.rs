@@ -12801,6 +12801,94 @@ fn suggest_while_the_page_changes(
     (app, workspace, id, cx, directory)
 }
 
+/// Selects "words", opens Add Comment and types a note, then replaces the text at `at..to` of
+/// the page (offsets from the start of "words") with `typed` and sends the comment.
+fn comment_while_the_page_changes(
+    at: isize,
+    to: isize,
+    typed: &str,
+    cx: &mut TestAppContext,
+) -> (
+    Entity<AppState>,
+    adoc_engine::DocumentId,
+    VisualTestContext,
+    tempfile::TempDir,
+) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let page = root.join("page.adoc");
+    let text = "= Page\n\nSome words to comment on.\n";
+    std::fs::write(&page, text).unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+    let start = text.find("words").unwrap();
+    cx.update(|_, cx| {
+        editor
+            .read(cx)
+            .state_for_test()
+            .clone()
+            .update(cx, |state, cx| {
+                state.set_selected_range(start..start + "words".len(), cx);
+            });
+    });
+    cx.dispatch_action(crate::editor::bindings::AddComment);
+    cx.run_until_parked();
+    cx.simulate_keystrokes("W h y ?");
+
+    let id = cx.update(|_, cx| editor.read(cx).document());
+    let range = SourceRange::new(
+        start.checked_add_signed(at).unwrap(),
+        start.checked_add_signed(to).unwrap(),
+    );
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::EDIT_REPLACE_RANGE,
+                CommandArgs::Text {
+                    id,
+                    range,
+                    text: typed.to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        })
+    });
+    cx.run_until_parked();
+    click("comment-submit", &mut cx);
+    cx.run_until_parked();
+    (app, id, cx, directory)
+}
+
+/// Comments (#785): the Add Comment box's range follows the text while it is open, so text
+/// typed before the selected word moves the comment with it rather than onto other text.
+#[gpui::test]
+fn a_comment_box_follows_its_text_as_the_page_changes(cx: &mut TestAppContext) {
+    let before = -("Some ".len() as isize);
+    let (app, id, mut cx, _directory) = comment_while_the_page_changes(before, before, "Now ", cx);
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    assert_eq!(comments.len(), 1, "{comments:?}");
+    assert_eq!(comments[0].text, "Why?");
+    assert_eq!(comments[0].quote, "words");
+    assert!(cx.debug_bounds("comment-box").is_none(), "the box closed");
+}
+
+/// Comments (#785): the selected word deleted while the Add Comment box is open leaves it no
+/// text, and the comment is refused rather than put on the text beside it.
+#[gpui::test]
+fn a_comment_box_whose_text_is_deleted_adds_nothing(cx: &mut TestAppContext) {
+    let (app, id, mut cx, _directory) =
+        comment_while_the_page_changes(0, "words".len() as isize, "", cx);
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    assert!(comments.is_empty(), "{comments:?}");
+}
+
 /// Suggested changes (#763): the box's range follows the text while it is open, so text typed
 /// before the selected words moves the suggestion with them rather than refusing it.
 #[gpui::test]

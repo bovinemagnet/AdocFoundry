@@ -33,6 +33,7 @@ A case is marked passed only when a named test holds it, or a person has run it 
 | | Guests told names only, and every comment however many | `guests_are_never_told_an_email_address`, `more_comments_than_one_pump_tells_all_reach_a_guest`, `comments_are_told_again_after_a_reconnection` |
 | | The wire held to its limits | `comments_are_held_to_their_limits`; fuzz target `collab_frame` |
 | In the app | Add Comment on the selection, the panel, the source editor's marks, the status bar, Next Comment, Resolve | `a_comment_is_added_from_the_selection_and_shown` |
+| | The Add Comment box follows its text: typing before the words moves the comment with them; the words deleted, it is refused (#785) | `a_comment_box_follows_its_text_as_the_page_changes`, `a_comment_box_whose_text_is_deleted_adds_nothing` |
 | | Suggest Change, the card, Accept and undo | `a_suggestion_is_made_accepted_and_shown` |
 | | A suggestion whose words changed while its box was open is refused; text typed before them moves it with them | `a_suggestion_box_refuses_text_changed_while_open`, `a_suggestion_box_follows_its_text_as_the_page_changes` |
 | | A suggestion framed, struck and in the gutter; the status bar names it | `a_suggestion_is_marked_in_the_source_editor` |
