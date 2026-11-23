@@ -197,7 +197,7 @@ tokio-rustls = { version = "=0.26.6", default-features = false, features = ["rin
 # The host's certificate, made in memory per session.
 rcgen = { version = "=0.14.10", default-features = false, features = ["ring"] }
 unicode-segmentation = "=1.13.3"
-url = "=2.5.8"
+url = "=2.5.9"
 
 [patch.crates-io]
 # acdc-parser depends on evalexpr 13, which is AGPL-3.0-only; see vendor/README.md.
