@@ -880,6 +880,7 @@ impl WorkspaceView {
         cx: &mut Context<Self>,
     ) {
         let _timed = crate::typing_bench::timed("events.workspace");
+        self.follow_edits(event);
         // The Changes panel's rows follow Git and the open pages' hunks.
         if matches!(
             event,

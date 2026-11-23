@@ -12692,11 +12692,20 @@ fn a_suggestion_is_made_accepted_and_shown(cx: &mut TestAppContext) {
     assert_eq!(widget_text(&editor, &mut cx), text);
 }
 
-/// Suggested changes (#763, SUGGEST 3/4): the box holds the range it was begun on while the
-/// page may change; text typed before it meanwhile makes the engine refuse the suggestion, and
-/// the box stays open with the replacement typed.
-#[gpui::test]
-fn a_suggestion_box_refuses_text_changed_while_open(cx: &mut TestAppContext) {
+/// Opens Suggest Change on "words" of a new page, types "terms" as the replacement, and inserts
+/// `typed` at `at` bytes into "words" (negative: before it) while the box is open, as someone
+/// else's edit would.
+fn suggest_while_the_page_changes(
+    at: isize,
+    typed: &str,
+    cx: &mut TestAppContext,
+) -> (
+    Entity<AppState>,
+    Entity<WorkspaceView>,
+    adoc_engine::DocumentId,
+    VisualTestContext,
+    tempfile::TempDir,
+) {
     init(cx);
     let directory = tempfile::tempdir().unwrap();
     let root = adoc_index::normalize_path(directory.path());
@@ -12724,16 +12733,16 @@ fn a_suggestion_box_refuses_text_changed_while_open(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.simulate_keystrokes("t e r m s");
 
-    // Typed before the range while the box is open.
     let id = cx.update(|_, cx| editor.read(cx).document());
+    let at = start.checked_add_signed(at).unwrap();
     cx.update(|_, cx| {
         app.update(cx, |app, cx| {
             app.invoke(
                 ids::EDIT_INSERT_TEXT,
                 CommandArgs::Text {
                     id,
-                    range: adoc_core::SourceRange::new(start, start),
-                    text: "more ".to_owned(),
+                    range: adoc_core::SourceRange::new(at, at),
+                    text: typed.to_owned(),
                 },
                 cx,
             )
@@ -12743,7 +12752,38 @@ fn a_suggestion_box_refuses_text_changed_while_open(cx: &mut TestAppContext) {
     cx.run_until_parked();
     click("comment-submit", &mut cx);
     cx.run_until_parked();
+    (app, workspace, id, cx, directory)
+}
 
+/// Suggested changes (#763): the box's range follows the text while it is open, so text typed
+/// before the selected words moves the suggestion with them rather than refusing it.
+#[gpui::test]
+fn a_suggestion_box_follows_its_text_as_the_page_changes(cx: &mut TestAppContext) {
+    let (app, _workspace, id, mut cx, _directory) =
+        suggest_while_the_page_changes(-("Some ".len() as isize), "Now ", cx);
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    assert_eq!(comments.len(), 1, "{comments:?}");
+    let text = cx.update(|_, cx| app.read(cx).engine.document(id).unwrap().text.to_string());
+    let start = text.find("words").unwrap();
+    assert_eq!(
+        comments[0].range,
+        SourceRange::new(start, start + "words".len())
+    );
+    let suggestion = comments[0].suggestion.as_ref().unwrap();
+    assert_eq!(suggestion.original, "words");
+    assert_eq!(suggestion.replacement, "terms");
+    assert!(
+        cx.debug_bounds("suggestion-replacement").is_none(),
+        "the box closed"
+    );
+}
+
+/// Suggested changes (#763, SUGGEST 3/4): text typed inside the selected words while the box is
+/// open changes what the suggestion was begun on, so the engine refuses it, and the box stays
+/// open with the replacement typed.
+#[gpui::test]
+fn a_suggestion_box_refuses_text_changed_while_open(cx: &mut TestAppContext) {
+    let (app, workspace, id, mut cx, _directory) = suggest_while_the_page_changes(2, "r", cx);
     let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
     assert!(comments.is_empty(), "{comments:?}");
     assert!(

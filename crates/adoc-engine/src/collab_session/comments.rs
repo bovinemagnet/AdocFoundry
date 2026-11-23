@@ -447,7 +447,14 @@ impl Engine {
                     )
                 };
                 // The text this guest's front end showed when it began, else the text it sees
-                // now: the host checks it against its own.
+                // now: the host checks it against its own. Refused here when this guest's own
+                // text at the range is no longer what was shown, so nothing is sent.
+                if shown
+                    .as_deref()
+                    .is_some_and(|shown| page.get(range.start..range.end) != Some(shown))
+                {
+                    return refusal("The text changed while you were suggesting; try again.");
+                }
                 let seen = page
                     .get(range.start..range.end)
                     .filter(|original| !original.is_empty())

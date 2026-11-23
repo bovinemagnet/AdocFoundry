@@ -14,9 +14,10 @@ use std::{
 use adoc_core::SourceRange;
 use adoc_engine::{
     commands::ids,
+    map_range,
     protocol::{CommentChange, Message, PeerId},
     CoAuthor, CommandArgs, Comment, CommentId, CommentRequest, DocumentId, Engine, EngineError,
-    SeenSuggestion, SuggestionState,
+    EngineEvent, SeenSuggestion, SuggestionState,
 };
 use collab_common::*;
 
@@ -347,8 +348,9 @@ fn the_host_refuses_a_suggestion_made_on_other_text() {
     assert!(session.removed().is_empty());
 }
 
-/// A guest's box holds the range it was begun on while the guest's page changes: the text it
-/// showed is what the host compares with its own, never the guest's text at the range by then.
+/// A guest's box follows its text as the app maps it: typing before the selected words moves
+/// the range with them, and the suggestion lands on the moved words, the host comparing the
+/// text the guest began on with its own.
 #[test]
 fn the_host_compares_the_text_a_guest_began_on() {
     let mut session = session();
@@ -356,8 +358,16 @@ fn the_host_compares_the_text_a_guest_began_on() {
     let id = guest_doc(&mut session, ada);
     let start = PAGE.find(QUOTE).unwrap();
     let range = SourceRange::new(start, start + QUOTE.len());
-    // The guest types before the range while its box is open.
+    // The guest types before the range while its box is open; the box's range follows.
+    let events = session.engine(ada).subscribe();
     type_at(session.engine(ada), id, start - "macOS ".len(), "Apple ");
+    let range = events.try_iter().fold(range, |range, event| match event {
+        EngineEvent::DocumentChanged {
+            id: changed, edits, ..
+        } if changed == id => map_range(range, &edits),
+        _ => range,
+    });
+    assert_eq!(range.start, start + "Apple ".len());
     session.settle();
     invoke(
         session.engine(ada),
@@ -372,13 +382,49 @@ fn the_host_compares_the_text_a_guest_began_on() {
     )
     .unwrap();
     session.settle();
-    assert_eq!(
-        refusals(&session, ada),
-        ["The text changed while you were suggesting; try again."]
-    );
+    assert!(refusals(&session, ada).is_empty());
     let host = session.host_doc();
-    assert!(session.host.comments(host).is_empty(), "nothing stored");
-    assert!(session.engine(ada).comments(id).is_empty());
+    let held = the_comment(&session.host, host);
+    assert_eq!(held.quote, QUOTE);
+    assert_eq!(held.range.start, session.host_text().find(QUOTE).unwrap());
+    assert_eq!(host_state(&session), SuggestionState::Pending);
+}
+
+/// Text typed inside the selected words while a guest's box is open changes what it was begun
+/// on: the guest refuses the suggestion itself, sending nothing, so its box keeps what was
+/// typed.
+#[test]
+fn a_guest_refuses_a_suggestion_on_text_changed_inside_its_box() {
+    let mut session = session();
+    let ada = session.guest(1, true);
+    let id = guest_doc(&mut session, ada);
+    let start = PAGE.find(QUOTE).unwrap();
+    type_at(session.engine(ada), id, start + "the".len(), " new");
+    session.settle();
+    // The range as the box mapped it: grown over the typing.
+    let range = SourceRange::new(start, start + QUOTE.len() + " new".len());
+    let refused = invoke(
+        session.engine(ada),
+        ids::COMMENTS_SUGGEST,
+        CommentRequest::Suggest {
+            id,
+            range,
+            original: Some(QUOTE.to_owned()),
+            replacement: REPLACEMENT.to_owned(),
+            text: String::new(),
+        },
+    );
+    assert!(
+        matches!(&refused, Err(EngineError::Refused(reason)) if reason == "The text changed while you were suggesting; try again."),
+        "{refused:?}"
+    );
+    assert!(
+        session.net.lock().unwrap().to_host.is_empty(),
+        "nothing sent"
+    );
+    session.settle();
+    assert!(refusals(&session, ada).is_empty());
+    assert!(session.host.comments(session.host_doc()).is_empty());
 }
 
 #[test]

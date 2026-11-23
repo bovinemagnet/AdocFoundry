@@ -41,10 +41,12 @@ pub(super) enum Draft {
         input: Entity<gpui_component::input::TextareaState>,
     },
     /// A change to the text of `range`, which held `original` when the box opened:
-    /// `replacement` begins as that text, `input` is the note.
+    /// `replacement` begins as that text, `input` is the note. `range` follows the page's
+    /// edits while the box is open (`follow_edits`); `version` is the page's version it is in.
     Suggest {
         document: DocumentId,
         range: SourceRange,
+        version: u64,
         original: String,
         replacement: Entity<gpui_component::input::TextareaState>,
         input: Entity<gpui_component::input::TextareaState>,
@@ -229,10 +231,17 @@ impl WorkspaceView {
         };
         let range = SourceRange::new(selection.start, selection.end);
         let original = selected.clone();
+        let version = self
+            .app
+            .read(cx)
+            .engine
+            .document(document)
+            .map_or(0, |open| open.version);
         self.open_suggestion_box(
             |replacement, input| Draft::Suggest {
                 document,
                 range,
+                version,
                 original,
                 replacement,
                 input,
@@ -243,6 +252,33 @@ impl WorkspaceView {
             cx,
         );
         self.sidebar_tab = SidebarTab::Comments;
+    }
+
+    /// Keeps the Suggest box on its text: its range moves with every edit made to the page
+    /// while it is open, as comments' ranges do, so only a change to the text itself refuses
+    /// the suggestion.
+    pub(super) fn follow_edits(&mut self, event: &EngineEvent) {
+        let EngineEvent::DocumentChanged {
+            id,
+            version: after,
+            edits,
+            ..
+        } = event
+        else {
+            return;
+        };
+        if let Some(Draft::Suggest {
+            document,
+            range,
+            version,
+            ..
+        }) = &mut self.comments.draft
+        {
+            if document == id && after > version {
+                *range = adoc_engine::map_range(*range, edits);
+                *version = *after;
+            }
+        }
     }
 
     /// Next Comment and Previous Comment: select the open comment after or before the caret.

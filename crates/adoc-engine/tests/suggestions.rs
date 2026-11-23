@@ -266,6 +266,25 @@ fn a_suggestion_begun_on_other_text_is_refused() {
     let range = range_of(&engine, id, "the installer");
     invoke(&mut engine, ids::COMMENTS_SUGGEST, begun(range)).unwrap();
     assert_eq!(engine.comments(id).len(), before + 1);
+
+    // Its text deleted while the box is open, the range it maps to is empty: refused the same
+    // way, not as a request on no text.
+    engine
+        .invoke(
+            ids::EDIT_REPLACE_RANGE,
+            CommandArgs::Text {
+                id,
+                range,
+                text: String::new(),
+            },
+        )
+        .unwrap();
+    let empty = SourceRange::new(range.start, range.start);
+    let reason = refused(invoke(&mut engine, ids::COMMENTS_SUGGEST, begun(empty)));
+    assert_eq!(
+        reason,
+        "The text changed while you were suggesting; try again."
+    );
 }
 
 #[test]

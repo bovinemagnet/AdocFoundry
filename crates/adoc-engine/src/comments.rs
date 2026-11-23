@@ -1435,6 +1435,15 @@ impl Engine {
                 text: note,
             } => {
                 let note = checked_note(&note)?;
+                // First, so text deleted while the box was open is said to have changed.
+                if expected
+                    .as_deref()
+                    .is_some_and(|expected| text.get(range.start..range.end) != Some(expected))
+                {
+                    return Err(EngineError::Refused(
+                        "The text changed while you were suggesting; try again.".to_owned(),
+                    ));
+                }
                 if range.is_empty()
                     || range.end > text.len()
                     || !text.is_char_boundary(range.start)
@@ -1445,11 +1454,6 @@ impl Engine {
                     ));
                 }
                 let original = text[range.start..range.end].to_owned();
-                if expected.is_some_and(|expected| expected != original) {
-                    return Err(EngineError::Refused(
-                        "The text changed while you were suggesting; try again.".to_owned(),
-                    ));
-                }
                 check_suggestion(&original, &replacement)?;
                 if page.comments.len() >= page_meta::MAX_COMMENTS {
                     return Err(EngineError::Refused(MetaProblem::TooMany.to_string()));
