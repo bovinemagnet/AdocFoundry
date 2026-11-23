@@ -313,12 +313,25 @@ pub fn actions(view: Stateful<gpui::Div>, cx: &mut Context<VisualView>) -> State
 
 impl VisualView {
     /// The text the platform input handler sees: the caret's text block as shown, with any
-    /// composition, and the caret's display offset in it.
+    /// composition, and the caret's display offset in it. What suggestions would insert is
+    /// left out: the page does not hold it, so an input method must never read or convert it.
     fn input_text(&self) -> Option<(text::Shown, usize)> {
         let (_, block) = self.block_at(self.selection.head)?;
         let display = block.display_offset(self.selection.head)?;
         let composing = self.composing.as_deref().map(|text| (display, text));
-        Some((self.shown_text(&block, composing), display))
+        Some((
+            text::shown(&block, composing, &[], &self.formula_gaps),
+            display,
+        ))
+    }
+
+    /// The caret's text block as it was drawn, with what suggestions would insert, for
+    /// positions on screen, which are found through display offsets.
+    fn drawn_input_text(&self) -> Option<text::Shown> {
+        let (_, block) = self.block_at(self.selection.head)?;
+        let display = block.display_offset(self.selection.head)?;
+        let composing = self.composing.as_deref().map(|text| (display, text));
+        Some(self.shown_text(&block, composing))
     }
 
     /// The selection's display range in the caret's block, clipped to it.
@@ -459,7 +472,8 @@ impl EntityInputHandler for VisualView {
         let (shown, _) = self.input_text()?;
         let (path, _) = self.block_at(self.selection.head)?;
         let display = shown.display(from_utf16(&shown.text, range.start));
-        let (point, line_height) = text::caret_point(&self.layouts, &path, &shown, display)?;
+        let drawn = self.drawn_input_text()?;
+        let (point, line_height) = text::caret_point(&self.layouts, &path, &drawn, display)?;
         Some(Bounds::new(point, gpui::size(gpui::px(2.), line_height)))
     }
 
@@ -471,7 +485,7 @@ impl EntityInputHandler for VisualView {
     ) -> Option<usize> {
         let (shown, _) = self.input_text()?;
         let (path, _) = self.block_at(self.selection.head)?;
-        let display = text::hit(&self.layouts, &path, point, &shown)?;
+        let display = text::hit(&self.layouts, &path, point, &self.drawn_input_text()?)?;
         Some(to_utf16(&shown.text, shown.index(display)))
     }
 }

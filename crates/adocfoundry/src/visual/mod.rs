@@ -724,7 +724,8 @@ impl VisualView {
     }
 
     /// The ranges of the page's open comments (#762), when the model shown is of its current
-    /// version, as the source editor marks them: suggestions are marked apart (`suggested`).
+    /// version, as the source editor marks them. Pending suggestions are marked apart
+    /// (`suggested`); an outdated one, with nothing to show, is filled as a comment is.
     pub fn commented(&self, document: &VisualDocument, cx: &App) -> Vec<SourceRange> {
         let engine = &self.app.read(cx).engine;
         let current = engine
@@ -737,7 +738,11 @@ impl VisualView {
             .comments(self.document)
             .into_iter()
             .filter(|comment| {
-                !comment.detached && comment.resolved.is_none() && comment.suggestion.is_none()
+                !comment.detached
+                    && comment.resolved.is_none()
+                    && comment.suggestion.as_ref().is_none_or(|suggestion| {
+                        suggestion.state != adoc_engine::SuggestionState::Pending
+                    })
             })
             .map(|comment| comment.range)
             .collect()
@@ -745,12 +750,13 @@ impl VisualView {
 
     /// The page's pending suggestions (#763), when the model shown is of its current version:
     /// the part each would remove, the source offset where what it would insert goes (the
-    /// removed part's end), and that text.
+    /// removed part's end), that text, and whether text typed there goes before it, as it does
+    /// at the start of the suggestion's range (`words` to `the words`).
     pub fn suggested(
         &self,
         document: &VisualDocument,
         cx: &App,
-    ) -> Vec<(SourceRange, usize, String)> {
+    ) -> Vec<(SourceRange, usize, String, bool)> {
         let engine = &self.app.read(cx).engine;
         let current = engine
             .document(self.document)
@@ -762,13 +768,15 @@ impl VisualView {
             .comments(self.document)
             .into_iter()
             .filter(|comment| !comment.detached)
-            .filter_map(|comment| comment.suggestion)
-            .filter(|suggestion| suggestion.state == adoc_engine::SuggestionState::Pending)
-            .map(|suggestion| {
+            .filter_map(|comment| Some((comment.range, comment.suggestion?)))
+            .filter(|(_, suggestion)| suggestion.state == adoc_engine::SuggestionState::Pending)
+            .map(|(range, suggestion)| {
                 (
                     suggestion.removed,
                     suggestion.removed.end,
                     suggestion.inserted,
+                    // Typed at the range's start, text goes before the range.
+                    suggestion.removed.end == range.start,
                 )
             })
             .collect()
@@ -790,6 +798,17 @@ impl VisualView {
     pub fn shown_text_for_test(&self, offset: usize) -> Option<text::Shown> {
         let (_, block) = self.block_at(offset)?;
         Some(self.shown_text(&block, None))
+    }
+
+    /// The caret's text block as drawn, and the caret's index in it, as `text_inner` draws it.
+    #[cfg(test)]
+    pub fn caret_shown_for_test(&self) -> Option<(text::Shown, usize)> {
+        let (_, block) = self.block_at(self.selection.head)?;
+        let display = block.display_offset(self.selection.head)?;
+        let composing = self.composing.as_deref().map(|text| (display, text));
+        let shown = self.shown_text(&block, composing);
+        let index = shown.index(display);
+        Some((shown, index))
     }
 
     /// Opens the spelling menu for the misspelt word under `position` in the text block at

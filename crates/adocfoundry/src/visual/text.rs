@@ -68,6 +68,9 @@ pub struct ShownInsertion {
     pub at: usize,
     /// Its range in the shown text.
     pub shown: Range<usize>,
+    /// Whether text typed at `at` goes before it (a suggestion that only adds text before its
+    /// range), so the caret there is drawn before it; otherwise after it.
+    pub typed_before: bool,
 }
 
 /// A text block's display text as it is shaped, with an IME composition in progress shown at
@@ -83,14 +86,15 @@ pub struct Shown {
     /// The display length, without the composition or the insertions.
     pub display_len: usize,
     pub formulas: Vec<ShownFormula>,
-    /// In display order; at one offset, before the composition.
+    /// In the order shown; at one offset, those typed text follows, then the composition, then
+    /// those typed text goes before.
     pub insertions: Vec<ShownInsertion>,
 }
 
 impl Shown {
-    /// The index in the shown text of display offset `display`; the caret at a composition or
-    /// an insertion sits after it, where typed text goes, and an offset inside a formula's
-    /// macro is taken to its end.
+    /// The index in the shown text of display offset `display`; the caret at a composition sits
+    /// after it, and at an insertion on the side typed text goes, and an offset inside a
+    /// formula's macro is taken to its end.
     #[must_use]
     pub fn index(&self, display: usize) -> usize {
         let mut index = display;
@@ -102,7 +106,7 @@ impl Shown {
             }
         }
         for insertion in &self.insertions {
-            if display >= insertion.at {
+            if display > insertion.at || (display == insertion.at && !insertion.typed_before) {
                 index += insertion.shown.len();
             }
         }
@@ -113,16 +117,22 @@ impl Shown {
     }
 
     /// The range in the shown text of the display range `display`: an end where an insertion
-    /// is shown stops before it, so a strike, a fill or a selection ending there never covers
-    /// what the page does not hold.
+    /// is shown stops before it, and a start there starts after it, so a strike, a fill or a
+    /// selection never begins or ends covering what the page does not hold.
     #[must_use]
     pub fn span(&self, display: Range<usize>) -> Range<usize> {
-        let start = self.index(display.start);
+        let start = self.index(display.start)
+            + self
+                .insertions
+                .iter()
+                .filter(|insertion| insertion.typed_before && insertion.at == display.start)
+                .map(|insertion| insertion.shown.len())
+                .sum::<usize>();
         let mut end = self.index(display.end);
         let inserted: usize = self
             .insertions
             .iter()
-            .filter(|insertion| insertion.at == display.end)
+            .filter(|insertion| !insertion.typed_before && insertion.at == display.end)
             .map(|insertion| insertion.shown.len())
             .sum();
         if inserted > 0 {
@@ -227,13 +237,14 @@ fn runs_of(block: &TextBlock) -> Vec<Run<'_>> {
 /// The text to shape for `block`, with `composing` inserted at display offset `caret`. Line
 /// breaks in flowing text are shown as spaces (they are one byte either way); hard line
 /// breaks and code keep theirs. A STEM macro whose formula is in `formulas` is shown as the
-/// formula's gap. Each of `insertions` (a display offset and the text a pending suggestion
-/// would insert there) is shown at its offset, or after a formula whose macro holds it.
+/// formula's gap. Each of `insertions` (a display offset, the text a pending suggestion would
+/// insert there, and whether text typed there goes before it) is shown at its offset, or after
+/// a formula whose macro holds it.
 #[must_use]
 pub fn shown(
     block: &TextBlock,
     composing: Option<(usize, &str)>,
-    insertions: &[(usize, String)],
+    insertions: &[(usize, String, bool)],
     formulas: &FormulaGaps,
 ) -> Shown {
     let mut text = String::with_capacity(block.display.len());
@@ -283,25 +294,26 @@ pub fn shown(
         formulas: shown_formulas,
         insertions: Vec::new(),
     };
-    let mut placed: Vec<(usize, &str)> = insertions
+    let mut placed: Vec<(usize, &str, bool)> = insertions
         .iter()
-        .filter(|(at, inserted)| {
+        .filter(|(at, inserted, _)| {
             !inserted.is_empty()
                 && *at <= block.display.len()
                 && block.display.is_char_boundary(*at)
         })
-        .map(|(at, inserted)| {
+        .map(|(at, inserted, typed_before)| {
             // Never inside a formula's macro, whose gap is drawn whole.
             let at = shown
                 .formulas
                 .iter()
                 .find(|formula| formula.display.start < *at && *at < formula.display.end)
                 .map_or(*at, |formula| formula.display.end);
-            (at, inserted.as_str())
+            (at, inserted.as_str(), *typed_before)
         })
         .collect();
-    placed.sort_by_key(|(at, _)| *at);
-    for (at, inserted) in placed {
+    // At one offset, those typed text follows before those it goes before.
+    placed.sort_by_key(|(at, _, typed_before)| (*at, *typed_before));
+    for (at, inserted, typed_before) in placed {
         // Shown as source text, on the block's lines: in flowing text a line break is a space.
         let inserted: String = inserted
             .chars()
@@ -311,7 +323,15 @@ pub fn shown(
                 other => other,
             })
             .collect();
-        let index = shown.index(at);
+        // After those already shown here, which `index` leaves out when typed text goes
+        // before them.
+        let index = shown.index(at)
+            + shown
+                .insertions
+                .iter()
+                .filter(|insertion| insertion.typed_before && insertion.at == at)
+                .map(|insertion| insertion.shown.len())
+                .sum::<usize>();
         if !shown.text.is_char_boundary(index) {
             continue;
         }
@@ -325,6 +345,7 @@ pub fn shown(
         shown.insertions.push(ShownInsertion {
             at,
             shown: index..index + inserted.len(),
+            typed_before,
         });
     }
     if let Some((caret, composition)) = composing {
@@ -1253,13 +1274,19 @@ mod tests {
     fn an_insertion_is_shown_but_never_in_the_display_text() {
         // `a words b`, with `text` suggested after `words`.
         let block = plain("a words b");
-        let shown = shown(&block, None, &[(7, "text".to_owned())], &FormulaGaps::new());
+        let shown = shown(
+            &block,
+            None,
+            &[(7, "text".to_owned(), false)],
+            &FormulaGaps::new(),
+        );
         assert_eq!(shown.text, "a wordstext b");
         assert_eq!(
             shown.insertions,
             [ShownInsertion {
                 at: 7,
-                shown: 7..11
+                shown: 7..11,
+                typed_before: false,
             }]
         );
         assert_eq!(shown.display_len, 9, "the display text is the page's own");
@@ -1277,10 +1304,20 @@ mod tests {
         // Its runs are part of the text's; in flowing text a line break is shown as a space.
         let runs = text_runs(&block, &shown, &style(), false);
         assert_eq!(lengths(&runs), [7, 4, 2]);
-        let broken = super::shown(&block, None, &[(7, "a\nb".to_owned())], &FormulaGaps::new());
+        let broken = super::shown(
+            &block,
+            None,
+            &[(7, "a\nb".to_owned(), false)],
+            &FormulaGaps::new(),
+        );
         assert_eq!(broken.text, "a wordsa b b");
         // Nothing to insert, nothing shown.
-        let empty = super::shown(&block, None, &[(7, String::new())], &FormulaGaps::new());
+        let empty = super::shown(
+            &block,
+            None,
+            &[(7, String::new(), false)],
+            &FormulaGaps::new(),
+        );
         assert_eq!(empty.text, "a words b");
         assert!(empty.insertions.is_empty());
     }
@@ -1288,7 +1325,12 @@ mod tests {
     #[test]
     fn the_caret_steps_over_an_insertion() {
         let block = plain("a words b");
-        let shown = shown(&block, None, &[(7, "text".to_owned())], &FormulaGaps::new());
+        let shown = shown(
+            &block,
+            None,
+            &[(7, "text".to_owned(), false)],
+            &FormulaGaps::new(),
+        );
         // No display offset puts the caret inside it: from just before it to just after it.
         let carets: Vec<usize> = (0..=9).map(|display| shown.index(display)).collect();
         assert!(
@@ -1308,7 +1350,12 @@ mod tests {
     #[test]
     fn suggestions_strike_and_underline_their_runs() {
         let block = plain("a words b");
-        let shown = shown(&block, None, &[(7, "text".to_owned())], &FormulaGaps::new());
+        let shown = shown(
+            &block,
+            None,
+            &[(7, "text".to_owned(), false)],
+            &FormulaGaps::new(),
+        );
         let runs = text_runs(&block, &shown, &style(), false);
         let blue = gpui::blue();
         let struck = shown.span(2..7);
@@ -1338,10 +1385,22 @@ mod tests {
         let (block, formulas) = with_formula();
         // After the formula, with a composition at the same place: the gap, what would be
         // inserted, then the composition, where typed text will go.
-        let shown = shown(&block, Some((5, "é")), &[(5, "+1".to_owned())], &formulas);
+        let shown = shown(
+            &block,
+            Some((5, "é")),
+            &[(5, "+1".to_owned(), false)],
+            &formulas,
+        );
         assert_eq!(shown.text, "a \u{a0}\u{a0}+1é b");
         assert_eq!(shown.formulas[0].shown, 2..6);
-        assert_eq!(shown.insertions, [ShownInsertion { at: 5, shown: 6..8 }]);
+        assert_eq!(
+            shown.insertions,
+            [ShownInsertion {
+                at: 5,
+                shown: 6..8,
+                typed_before: false
+            }]
+        );
         assert_eq!(shown.composing, Some(8..10));
         assert_eq!(
             [0, 2, 3, 5, 6, 7].map(|display| shown.index(display)),
@@ -1359,7 +1418,7 @@ mod tests {
         assert!(runs[3].underline.is_some(), "the composition");
 
         // Before the formula: the insertion, then the gap, which moves along.
-        let before = super::shown(&block, None, &[(2, "+1".to_owned())], &formulas);
+        let before = super::shown(&block, None, &[(2, "+1".to_owned(), false)], &formulas);
         assert_eq!(before.text, "a +1\u{a0}\u{a0} b");
         assert_eq!(before.insertions[0].shown, 2..4);
         assert_eq!(before.formulas[0].shown, 4..8);
@@ -1373,12 +1432,17 @@ mod tests {
         );
 
         // Inside the macro's text: after the formula, never splitting its gap.
-        let inside = super::shown(&block, None, &[(3, "+1".to_owned())], &formulas);
+        let inside = super::shown(&block, None, &[(3, "+1".to_owned(), false)], &formulas);
         assert_eq!(inside.text, "a \u{a0}\u{a0}+1 b");
         assert_eq!(inside.insertions[0].at, 5);
 
         // A composition before an insertion moves it along.
-        let composing = super::shown(&block, Some((0, "é")), &[(7, "+1".to_owned())], &formulas);
+        let composing = super::shown(
+            &block,
+            Some((0, "é")),
+            &[(7, "+1".to_owned(), false)],
+            &formulas,
+        );
         assert_eq!(composing.text, "éa \u{a0}\u{a0} b+1");
         assert_eq!(composing.insertions[0].shown, 10..12);
         assert_eq!(composing.display(11), 7);
@@ -1388,5 +1452,58 @@ mod tests {
             runs.iter().map(|run| run.len).sum::<usize>(),
             composing.text.len()
         );
+    }
+
+    #[test]
+    fn a_leading_insertion_keeps_the_caret_before_it() {
+        // `a words b`, with `the ` suggested before `words`: text typed there goes before the
+        // suggestion's range, so before what it would insert, and the caret is drawn there.
+        let block = plain("a words b");
+        let shown = shown(
+            &block,
+            None,
+            &[(2, "the ".to_owned(), true)],
+            &FormulaGaps::new(),
+        );
+        assert_eq!(shown.text, "a the words b");
+        assert_eq!(shown.insertions[0].shown, 2..6);
+        assert_eq!(shown.index(2), 2, "before `the `");
+        assert_eq!(shown.index(3), 7);
+        for display in 0..=9 {
+            assert_eq!(shown.display(shown.index(display)), display, "{display}");
+        }
+        assert_eq!([3, 4, 5, 6].map(|index| shown.display(index)), [2, 2, 2, 2]);
+        // A range ending there stops before it; one starting there starts after it.
+        assert_eq!(shown.span(0..2), 0..2);
+        assert_eq!(shown.span(2..7), 6..11);
+        assert_eq!(
+            lengths(&text_runs(&block, &shown, &style(), false)),
+            [2, 4, 7]
+        );
+
+        // A composition there is drawn where it will be written: before the insertion.
+        let composing = super::shown(
+            &block,
+            Some((2, "é")),
+            &[(2, "the ".to_owned(), true)],
+            &FormulaGaps::new(),
+        );
+        assert_eq!(composing.text, "a éthe words b");
+        assert_eq!(composing.composing, Some(2..4));
+        assert_eq!(composing.insertions[0].shown, 4..8);
+        assert_eq!(composing.index(2), 4, "the caret after the composition");
+        assert_eq!(composing.span(0..2), 0..4);
+
+        // Beside one that typed text follows, at the same offset: that one, the caret, this one.
+        let both = super::shown(
+            &block,
+            None,
+            &[(2, "the ".to_owned(), true), (2, "X".to_owned(), false)],
+            &FormulaGaps::new(),
+        );
+        assert_eq!(both.text, "a Xthe words b");
+        assert_eq!(both.index(2), 3);
+        assert_eq!(both.span(0..2), 0..2);
+        assert_eq!(both.span(2..7), 7..12);
     }
 }

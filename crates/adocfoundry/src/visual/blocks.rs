@@ -56,13 +56,15 @@ pub struct Frame {
     /// The open comments' ranges, filled in `comment`, in order (#762).
     commented: Vec<adoc_core::SourceRange>,
     /// The pending suggestions (#763): the part each would remove, struck through in
-    /// `suggestion`, and the source offset and text of what it would insert, shown there.
-    suggested: Vec<(adoc_core::SourceRange, usize, String)>,
+    /// `suggestion`, the source offset and text of what it would insert, shown there, and
+    /// whether text typed there goes before it.
+    suggested: Vec<(adoc_core::SourceRange, usize, String, bool)>,
 }
 
 impl Frame {
-    /// What the pending suggestions would insert in `block`: display offsets and texts.
-    pub(super) fn insertions(&self, block: &TextBlock) -> Vec<(usize, String)> {
+    /// What the pending suggestions would insert in `block`: display offsets, texts, and
+    /// whether text typed there goes before them.
+    pub(super) fn insertions(&self, block: &TextBlock) -> Vec<(usize, String, bool)> {
         insertions_in(block, &self.suggested)
     }
 }
@@ -71,15 +73,19 @@ impl Frame {
 /// inside an atom (an xref's target), after the atom, which it changes.
 fn insertions_in(
     block: &TextBlock,
-    suggested: &[(adoc_core::SourceRange, usize, String)],
-) -> Vec<(usize, String)> {
+    suggested: &[(adoc_core::SourceRange, usize, String, bool)],
+) -> Vec<(usize, String, bool)> {
     suggested
         .iter()
-        .filter(|(_, at, inserted)| {
+        .filter(|(_, at, inserted, _)| {
             !inserted.is_empty() && block.range.start <= *at && *at <= block.range.end
         })
-        .filter_map(|(_, at, inserted)| {
-            Some((block.display_offset_towards(*at, true)?, inserted.clone()))
+        .filter_map(|(_, at, inserted, typed_before)| {
+            Some((
+                block.display_offset_towards(*at, true)?,
+                inserted.clone(),
+                *typed_before,
+            ))
         })
         .collect()
 }
@@ -88,7 +94,7 @@ fn insertions_in(
 /// an atom it ends inside is taken whole, as a selection takes it.
 fn struck_in(
     block: &TextBlock,
-    suggested: &[(adoc_core::SourceRange, usize, String)],
+    suggested: &[(adoc_core::SourceRange, usize, String, bool)],
 ) -> Vec<std::ops::Range<usize>> {
     suggested
         .iter()
@@ -1099,14 +1105,17 @@ mod tests {
             display: "See old.".to_owned(),
             context: TextContext::Flow,
         };
-        let suggested = [(SourceRange::new(6, 9), 9, "new".to_owned())];
-        assert_eq!(insertions_in(&block, &suggested), [(7, "new".to_owned())]);
+        let suggested = [(SourceRange::new(6, 9), 9, "new".to_owned(), false)];
+        assert_eq!(
+            insertions_in(&block, &suggested),
+            [(7, "new".to_owned(), false)]
+        );
         assert_eq!(
             struck_in(&block, &suggested),
             vec![std::ops::Range { start: 4, end: 7 }]
         );
         // In another block, nothing.
-        let elsewhere = [(SourceRange::new(20, 23), 23, "new".to_owned())];
+        let elsewhere = [(SourceRange::new(20, 23), 23, "new".to_owned(), false)];
         assert!(insertions_in(&block, &elsewhere).is_empty());
         assert!(struck_in(&block, &elsewhere).is_empty());
     }

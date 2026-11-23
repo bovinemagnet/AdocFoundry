@@ -13031,7 +13031,7 @@ fn the_visual_editor_shows_a_suggestion_inline(cx: &mut TestAppContext) {
     });
     assert_eq!(
         suggested.0,
-        vec![(SourceRange::new(start, end), end, "text".to_owned())]
+        vec![(SourceRange::new(start, end), end, "text".to_owned(), false)]
     );
     assert!(
         suggested.1.is_empty(),
@@ -13094,4 +13094,183 @@ fn the_visual_editor_shows_a_suggestion_inline(cx: &mut TestAppContext) {
     let shown = shown_at(start, &mut cx);
     assert_eq!(shown.text, "Some textx to comment on.");
     assert!(shown.insertions.is_empty());
+}
+
+/// A page in a workspace, so it takes comments, shown in the visual editor.
+fn suggestion_workspace(
+    text: &str,
+    cx: &mut TestAppContext,
+) -> (
+    Entity<AppState>,
+    Entity<crate::visual::VisualView>,
+    adoc_engine::DocumentId,
+    VisualTestContext,
+) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap().keep();
+    let root = adoc_index::normalize_path(&directory);
+    let page = root.join("page.adoc");
+    std::fs::write(&page, text).unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.simulate_keystrokes("secondary-k w");
+    settle_engine(&app, &mut cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let visual = cx
+        .update(|_, cx| workspace.read(cx).visual_for_test(id).cloned())
+        .expect("a visual editor");
+    (app, visual, id, cx)
+}
+
+/// Suggests `replacement` for `original` at `start` of the page.
+fn suggest_at(
+    app: &Entity<AppState>,
+    id: adoc_engine::DocumentId,
+    start: usize,
+    original: &str,
+    replacement: &str,
+    cx: &mut VisualTestContext,
+) {
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::COMMENTS_SUGGEST,
+                CommandArgs::Comment(adoc_engine::CommentRequest::Suggest {
+                    id,
+                    range: SourceRange::new(start, start + original.len()),
+                    original: Some(original.to_owned()),
+                    replacement: replacement.to_owned(),
+                    text: String::new(),
+                }),
+                cx,
+            )
+            .unwrap();
+        })
+    });
+    settle_engine(app, cx);
+}
+
+/// Suggested changes (#763, SUGGEST 4/4): a suggestion that only adds text before its range
+/// (`words` to `the words`) shows it where typed text does not go, so the caret is drawn before
+/// it, and what is typed there appears beside the caret, before the suggested text.
+#[gpui::test]
+fn the_caret_is_drawn_where_typed_text_goes_beside_a_suggestion(cx: &mut TestAppContext) {
+    let text = "= Page\n\nSome words to comment on.\n";
+    let (app, visual, id, mut cx) = suggestion_workspace(text, cx);
+    let start = text.find("words").unwrap();
+    suggest_at(&app, id, start, "words", "the words", &mut cx);
+    draw_visual(&visual, &mut cx);
+    let caret = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| visual.read(cx).caret_shown_for_test().unwrap())
+    };
+
+    place_caret(&visual, start, &mut cx);
+    draw_visual(&visual, &mut cx);
+    let (shown, index) = caret(&mut cx);
+    assert_eq!(shown.text, "Some the words to comment on.");
+    assert_eq!(shown.insertions[0].shown, 5..9);
+    assert_eq!(index, 5, "the caret is drawn before `the `");
+
+    cx.simulate_keystrokes("x");
+    settle_engine(&app, &mut cx);
+    draw_visual(&visual, &mut cx);
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome xwords to comment on.\n"
+    );
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    assert_eq!(
+        comments[0].suggestion.as_ref().unwrap().state,
+        adoc_engine::SuggestionState::Pending
+    );
+    let (shown, index) = caret(&mut cx);
+    assert_eq!(shown.text, "Some xthe words to comment on.");
+    assert_eq!(
+        index, 6,
+        "the caret follows the `x` typed, still before `the `"
+    );
+}
+
+/// Suggested changes (#763, SUGGEST 4/4): the input method is given the page's text, never
+/// what a suggestion would insert, so it can neither read nor convert it.
+#[gpui::test]
+fn the_input_method_never_sees_suggested_text(cx: &mut TestAppContext) {
+    use gpui::EntityInputHandler as _;
+
+    let text = "= Page\n\nSome words to comment on.\n";
+    let (app, visual, id, mut cx) = suggestion_workspace(text, cx);
+    let start = text.find("words").unwrap();
+    let end = start + "words".len();
+    suggest_at(&app, id, start, "words", "text", &mut cx);
+    draw_visual(&visual, &mut cx);
+    place_caret(&visual, start, &mut cx);
+    cx.update(|_, cx| visual.update(cx, |visual, cx| visual.select(start, end, cx)));
+    draw_visual(&visual, &mut cx);
+    let (whole, selected) = cx.update(|window, cx| {
+        visual.update(cx, |visual, cx| {
+            let mut adjusted = None;
+            (
+                visual.text_for_range(0..1000, &mut adjusted, window, cx),
+                visual.selected_text_range(false, window, cx),
+            )
+        })
+    });
+    assert_eq!(whole.as_deref(), Some("Some words to comment on."));
+    assert_eq!(selected.unwrap().range, 5..10, "`words`, without `text`");
+
+    // Replacing the selection as reported replaces only the page's `words`.
+    cx.update(|window, cx| {
+        visual.update(cx, |visual, cx| {
+            visual.replace_text_in_range(Some(5..10), "terms", window, cx);
+        })
+    });
+    settle_engine(&app, &mut cx);
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome terms to comment on.\n"
+    );
+}
+
+/// Suggested changes (#763, SUGGEST 4/4): a pending suggestion is marked as a suggestion, not
+/// filled as a comment is; one outdated, which shows nothing to insert, keeps the comment fill.
+#[gpui::test]
+fn an_outdated_suggestion_keeps_the_comment_fill(cx: &mut TestAppContext) {
+    let text = "= Page\n\nSome words to comment on.\n";
+    let (app, visual, id, mut cx) = suggestion_workspace(text, cx);
+    let start = text.find("words").unwrap();
+    suggest_at(&app, id, start, "words", "terms", &mut cx);
+    let marks = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let view = visual.read(cx);
+            let shown = view.shown().cloned().unwrap();
+            (view.commented(&shown, cx), view.suggested(&shown, cx).len())
+        })
+    };
+    assert_eq!(marks(&mut cx), (Vec::new(), 1));
+
+    // Typed inside it, it is outdated.
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(start + 2, start + 2),
+                    text: "x".to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        })
+    });
+    settle_engine(&app, &mut cx);
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    assert_eq!(
+        comments[0].suggestion.as_ref().unwrap().state,
+        adoc_engine::SuggestionState::Outdated
+    );
+    assert_eq!(marks(&mut cx), (vec![comments[0].range], 0));
 }
