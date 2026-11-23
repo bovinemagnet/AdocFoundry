@@ -196,6 +196,7 @@ impl Raw {
         self.send(&Message::Authenticate {
             credential,
             name: "Raw".to_owned(),
+            email: None,
         });
     }
 
@@ -234,7 +235,7 @@ fn collab_loopback_session_syncs() {
 
     let connecting = adoc_share::connect(&invitation, timings()).unwrap();
     assert_eq!(connecting.safety_code(), hosting.host.safety_code());
-    let (link, control) = connecting.authenticate("Ada", "0.0.0", None).unwrap();
+    let (link, control) = connecting.authenticate("Ada", None, "0.0.0", None).unwrap();
     let mut guest = engine();
     guest.join_session(Box::new(link)).unwrap();
 
@@ -637,7 +638,7 @@ fn stopping_closes_every_connection() {
     let invitation = hosting.host.invite().unwrap();
     let (link, control) = adoc_share::connect(&invitation, timings())
         .unwrap()
-        .authenticate("Ada", "0.0.0", None)
+        .authenticate("Ada", None, "0.0.0", None)
         .unwrap();
     let mut guest = engine();
     guest.join_session(Box::new(link)).unwrap();
@@ -664,4 +665,72 @@ fn the_host_listens_only_where_told() {
             Err(ShareError::Address(_))
         ));
     }
+}
+
+/// The knocks a host's link reports before an engine reads them, for at most ten seconds.
+fn knock_on(link: &mut dyn adoc_engine::Link) -> (String, Option<String>) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if let Some(adoc_engine::LinkEvent::Knock { name, email, .. }) = link.try_recv() {
+            return (name, email);
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    panic!("no knock");
+}
+
+#[test]
+fn the_host_is_told_the_guests_address() {
+    for email in [Some("ada@example.org"), None] {
+        let (mut host, mut link) = Host::start(LOOPBACK, "0.0.0", timings(), None).unwrap();
+        let invitation = host.invite().unwrap();
+        let (_guest, _control) = adoc_share::connect(&invitation, timings())
+            .unwrap()
+            .authenticate("Ada", email, "0.0.0", None)
+            .unwrap();
+        assert_eq!(
+            knock_on(&mut link),
+            ("Ada".to_owned(), email.map(str::to_owned))
+        );
+        host.stop();
+    }
+}
+
+#[test]
+fn the_host_says_it_speaks_version_two() {
+    let hosting = hosting("= Page\n", timings());
+    let invitation = hosting.host.invite().unwrap();
+    let mut raw = Raw::connect(&invitation);
+    raw.send(&Message::Hello {
+        min: 1,
+        max: 2,
+        app: "raw".to_owned(),
+    });
+    assert!(matches!(
+        raw.next(),
+        Ok(Message::Hello { min: 2, max: 2, .. })
+    ));
+}
+
+#[test]
+fn an_invalid_address_is_refused_before_connecting() {
+    let hosting = hosting("= Page\n", timings());
+    let invitation = hosting.host.invite().unwrap();
+    let refused = adoc_share::connect(&invitation, timings())
+        .unwrap()
+        .authenticate("Ada", Some("not an address"), "0.0.0", None);
+    assert!(matches!(refused, Err(ShareError::Email)));
+}
+
+#[test]
+fn a_guest_speaking_only_version_one_is_refused() {
+    let hosting = hosting("= Page\n", timings());
+    let invitation = hosting.host.invite().unwrap();
+    let mut raw = Raw::connect(&invitation);
+    raw.send(&Message::Hello {
+        min: 1,
+        max: 1,
+        app: "old".to_owned(),
+    });
+    assert!(raw.refused_with(ErrorCode::Incompatible));
 }

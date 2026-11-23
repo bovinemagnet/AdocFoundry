@@ -39,19 +39,24 @@ impl Session {
     }
 
     /// A host offering `pages`, as [`Session::new`], with an engine made by the caller.
-    pub fn with_host(pages: &[(&str, &str)], mut host: Engine) -> Self {
+    pub fn with_host(pages: &[(&str, &str)], host: Engine) -> Self {
         let directory = tempfile::tempdir().unwrap();
-        let mut files = Vec::new();
-        for (name, text) in pages {
-            let path = directory.path().join(name);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(&path, text).unwrap();
-            files.push(PathBuf::from(name));
-        }
+        write_pages(directory.path(), pages);
+        Self::hosting(directory, directory_root, pages, host)
+    }
+
+    /// A host offering `pages` from `root` in `directory`, which already holds them.
+    fn hosting(
+        directory: tempfile::TempDir,
+        root: impl Fn(&std::path::Path) -> PathBuf,
+        pages: &[(&str, &str)],
+        mut host: Engine,
+    ) -> Self {
+        let files: Vec<PathBuf> = pages.iter().map(|(name, _)| PathBuf::from(name)).collect();
         let net = Arc::new(Mutex::new(Net::default()));
         host.host_session(
             Box::new(HostLink(net.clone())),
-            directory.path(),
+            &root(directory.path()),
             &files,
             "Host",
         )
@@ -64,13 +69,67 @@ impl Session {
         }
     }
 
+    /// A host offering `pages` from a Git working tree (committed, its identity `Host
+    /// <host@example.org>`), with Git on and the folder open as its workspace; reached through a
+    /// link to it when `linked`.
+    #[cfg(feature = "git")]
+    pub fn in_repo(pages: &[(&str, &str)], linked: bool) -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        let tree = directory.path().join("tree");
+        fs::create_dir(&tree).unwrap();
+        let repo = adoc_git::testing::TestRepo::init(&tree);
+        repo.set_identity("Host", "host@example.org");
+        write_pages(&tree, pages);
+        repo.commit_all("first");
+        let root = move |directory: &std::path::Path| {
+            if linked {
+                directory.join("link")
+            } else {
+                directory.join("tree")
+            }
+        };
+        #[cfg(unix)]
+        if linked {
+            std::os::unix::fs::symlink(&tree, directory.path().join("link")).unwrap();
+        }
+        let mut host = Engine::new(Settings::load(None, None).unwrap());
+        host.open_workspace(vec![root(directory.path())]).unwrap();
+        assert!(host.wait_for_workers(std::time::Duration::from_secs(10)));
+        Self::hosting(directory, root, pages, host)
+    }
+
+    /// The folder the host shares.
+    pub fn root(&self) -> PathBuf {
+        let tree = self.directory.path().join("tree");
+        let link = self.directory.path().join("link");
+        if link.exists() {
+            link
+        } else if tree.exists() {
+            tree
+        } else {
+            self.directory.path().to_path_buf()
+        }
+    }
+
     /// A guest knocking as `peer`; not yet admitted.
     pub fn knock(&mut self, peer: u32) -> PeerId {
         self.knock_with(peer, engine())
     }
 
-    /// A guest knocking as `peer` with an engine made by the caller.
-    pub fn knock_with(&mut self, peer: u32, mut guest: Engine) -> PeerId {
+    /// A guest knocking as `peer` with an engine made by the caller, giving the address
+    /// `guest<peer>@example.org` to be credited by.
+    pub fn knock_with(&mut self, peer: u32, guest: Engine) -> PeerId {
+        let email = format!("guest{peer}@example.org");
+        self.knock_with_email(peer, guest, Some(&email))
+    }
+
+    /// A guest knocking as `peer`, named `guest <peer>`, with the address given.
+    pub fn knock_with_email(
+        &mut self,
+        peer: u32,
+        mut guest: Engine,
+        email: Option<&str>,
+    ) -> PeerId {
         let peer = PeerId(peer);
         guest
             .join_session(Box::new(GuestLink {
@@ -86,6 +145,7 @@ impl Session {
             .push_back(LinkEvent::Knock {
                 peer,
                 name: format!("guest {}", peer.0),
+                email: email.map(str::to_owned),
             });
         self.settle();
         peer
@@ -93,7 +153,13 @@ impl Session {
 
     /// A guest admitted, made an Editor if `edit`, with file 1 open.
     pub fn guest(&mut self, peer: u32, edit: bool) -> PeerId {
-        let peer = self.knock(peer);
+        let email = format!("guest{peer}@example.org");
+        self.guest_with_email(peer, edit, Some(&email))
+    }
+
+    /// A guest admitted as [`Session::guest`], with the address given.
+    pub fn guest_with_email(&mut self, peer: u32, edit: bool, email: Option<&str>) -> PeerId {
+        let peer = self.knock_with_email(peer, engine(), email);
         self.host.admit_peer(peer).unwrap();
         self.settle();
         if edit {
@@ -264,6 +330,18 @@ impl Session {
         queue.push_back(LinkEvent::Resumed { peer: PeerId::HOST });
         queue.push_back(join(peer));
     }
+}
+
+fn write_pages(folder: &std::path::Path, pages: &[(&str, &str)]) {
+    for (name, text) in pages {
+        let path = folder.join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, text).unwrap();
+    }
+}
+
+fn directory_root(directory: &std::path::Path) -> PathBuf {
+    directory.to_path_buf()
 }
 
 pub fn text(engine: &Engine, id: DocumentId) -> String {

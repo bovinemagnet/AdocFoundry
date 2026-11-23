@@ -122,8 +122,9 @@ struct Host {
     /// The offered files, by their session number.
     offered: BTreeMap<u64, Offered>,
     peers: BTreeMap<PeerId, Peer>,
-    /// Connections that showed an invitation and wait for Admit.
-    knocks: BTreeMap<PeerId, String>,
+    /// Connections that showed an invitation and wait for Admit: the name each gave, and the
+    /// address it gave to be credited by, which is never told anyone.
+    knocks: BTreeMap<PeerId, (String, Option<String>)>,
     /// Every `yrs` client id given out in the session, the host's own included.
     clients: BTreeSet<u64>,
 }
@@ -143,6 +144,8 @@ type FileStatus = (Option<String>, bool);
 
 struct Peer {
     name: String,
+    /// The address the guest gave to be credited by in commits: the host's alone.
+    email: Option<String>,
     role: Role,
     connected: bool,
     files: BTreeMap<u64, PeerFile>,
@@ -504,7 +507,7 @@ impl Engine {
             Some(Side::Host(host)) => host
                 .knocks
                 .iter()
-                .map(|(peer, name)| (*peer, name.clone()))
+                .map(|(peer, (name, _))| (*peer, name.clone()))
                 .collect(),
             _ => Vec::new(),
         }
@@ -644,7 +647,7 @@ impl Engine {
         if host.peers.len() + 1 >= MAX_PARTICIPANTS {
             return Err(refused("the session is full"));
         }
-        let name = host
+        let (name, email) = host
             .knocks
             .remove(&peer)
             .ok_or_else(|| refused("nobody is waiting with that number"))?;
@@ -656,6 +659,7 @@ impl Engine {
             peer,
             Peer {
                 name,
+                email,
                 role: Role::Viewer,
                 connected: true,
                 files: BTreeMap::new(),
@@ -1117,11 +1121,11 @@ impl Engine {
             return false;
         };
         match event {
-            LinkEvent::Knock { peer, name } => {
+            LinkEvent::Knock { peer, name, email } => {
                 if host.peers.contains_key(&peer) {
                     return false;
                 }
-                host.knocks.insert(peer, name);
+                host.knocks.insert(peer, (name, email));
                 true
             }
             LinkEvent::Resumed { peer } => {
@@ -1588,8 +1592,12 @@ impl Engine {
             self.host_snapshot(session, peer, file);
             return Ok(());
         }
+        let version = self.documents.get(&id).map(|document| document.version);
         match self.apply_shared_update(id, epoch, update, Sender::Guest(client)) {
             Ok(SharedReceipt::Applied) => {
+                if self.documents.get(&id).map(|document| document.version) != version {
+                    self.host_record_coauthor(session, peer, file);
+                }
                 let Side::Host(host) = &mut session.side else {
                     return Ok(());
                 };
@@ -1617,6 +1625,27 @@ impl Engine {
                 Ok(())
             }
             Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// Notes that `peer` changed offered `file`'s text, if it gave an address to be credited by.
+    fn host_record_coauthor(&mut self, session: &Session, peer: PeerId, file: u64) {
+        let Side::Host(host) = &session.side else {
+            return;
+        };
+        let (Some(entry), Some(offered)) = (host.peers.get(&peer), host.offered.get(&file)) else {
+            return;
+        };
+        let Some(email) = entry.email.clone() else {
+            return;
+        };
+        let (name, path) = (
+            entry.name.clone(),
+            crate::coauthors::real_path(&offered.path),
+        );
+        let at = crate::coauthors::millis(self.clock.wall());
+        if self.coauthors_mut().record(&path, &name, &email, at) {
+            self.save_coauthors();
         }
     }
 

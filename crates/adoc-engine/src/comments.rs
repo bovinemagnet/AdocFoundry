@@ -202,7 +202,7 @@ impl Actor {
     /// Whether a comment or reply by `name` (and `email`) is the actor's own: the same e-mail
     /// when both have one, else the same name. A courtesy, not a security boundary: the host
     /// admits each participant by name, and the file is anyone's with the repository.
-    fn owns(&self, name: &str, email: Option<&str>) -> bool {
+    pub(crate) fn owns(&self, name: &str, email: Option<&str>) -> bool {
         match (self.author.email.as_deref(), email) {
             (Some(mine), Some(theirs)) => mine.eq_ignore_ascii_case(theirs),
             _ => self.author.name == name,
@@ -211,7 +211,11 @@ impl Actor {
 
     /// What the actor may do to a comment or reply by `name` (and `email`).
     pub(crate) fn allowed(&self, name: &str, email: Option<&str>) -> Allowed {
-        let own = self.owns(name, email);
+        self.allowed_own(self.owns(name, email))
+    }
+
+    /// What the actor may do to a comment or reply that is, or is not, its `own`.
+    pub(crate) fn allowed_own(&self, own: bool) -> Allowed {
         match self.kind {
             ActorKind::Alone => Allowed::ALL,
             ActorKind::Host => Allowed {

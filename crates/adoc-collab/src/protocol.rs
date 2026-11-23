@@ -15,7 +15,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use crate::{EncodedUpdate, RelativeSelection, StateVectorBytes, MAX_ANCHOR, MAX_UPDATE};
 
 /// The one protocol version this build speaks.
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 /// The largest control part: its length is two bytes.
 pub const MAX_CONTROL: usize = u16::MAX as usize;
 /// The largest frame after its length prefix: room for [`MAX_UPDATE`] and a control part.
@@ -246,10 +246,12 @@ pub enum Message {
         max: u16,
         app: String,
     },
-    /// A guest's credential and display name.
+    /// A guest's credential, display name and, if it gave one, the address its edits are
+    /// credited by in the host's commits. The address reaches the host only.
     Authenticate {
         credential: Credential,
         name: String,
+        email: Option<String>,
     },
     /// The host's welcome after Admit: who the guest is, its role, the session, and the token
     /// that resumes the connection if it drops.
@@ -446,6 +448,8 @@ struct HelloControl {
 struct AuthenticateControl {
     credential: Credential,
     name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    email: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -558,7 +562,9 @@ pub enum CommentChange {
 pub struct SharedThread {
     pub id: u64,
     pub author: String,
-    pub email: Option<String>,
+    /// Whether the comment is the receiving guest's own, which the host decides by address;
+    /// no address is ever sent.
+    pub own: bool,
     pub created: u64,
     pub edited: Option<u64>,
     pub quote: String,
@@ -582,7 +588,8 @@ pub struct SharedResolution {
 pub struct SharedReply {
     pub id: u64,
     pub author: String,
-    pub email: Option<String>,
+    /// Whether the reply is the receiving guest's own.
+    pub own: bool,
     pub created: u64,
     pub edited: Option<u64>,
     pub text: String,
@@ -723,11 +730,16 @@ impl Message {
                 })?,
                 Vec::new(),
             ),
-            Self::Authenticate { credential, name } => (
+            Self::Authenticate {
+                credential,
+                name,
+                email,
+            } => (
                 kind::AUTHENTICATE,
                 json(&AuthenticateControl {
                     credential: credential.clone(),
                     name: name.clone(),
+                    email: email.clone(),
                 })?,
                 Vec::new(),
             ),
@@ -1011,7 +1023,10 @@ impl Message {
                 }
                 text(app, MAX_TEXT, "app")
             }
-            Self::Authenticate { name, .. } => display_name(name),
+            Self::Authenticate { name, email, .. } => {
+                display_name(name)?;
+                email.as_deref().map_or(Ok(()), commit_email)
+            }
             Self::Join { peer, role, .. } => {
                 if *peer == PeerId::HOST || *role == Role::Owner {
                     return Err(FrameError::Invalid("peer"));
@@ -1155,8 +1170,16 @@ pub fn decode(frame: &[u8]) -> Result<Message, FrameError> {
             no_payload(Message::Hello { min, max, app })?
         }
         kind::AUTHENTICATE => {
-            let AuthenticateControl { credential, name } = read(control)?;
-            no_payload(Message::Authenticate { credential, name })?
+            let AuthenticateControl {
+                credential,
+                name,
+                email,
+            } = read(control)?;
+            no_payload(Message::Authenticate {
+                credential,
+                name,
+                email,
+            })?
         }
         kind::JOIN => {
             let JoinControl {
@@ -1473,18 +1496,28 @@ fn comment_text(value: &str) -> Result<(), FrameError> {
     Ok(())
 }
 
-fn email(value: Option<&str>) -> Result<(), FrameError> {
-    match value {
-        Some(value) if value.len() > MAX_EMAIL || value.chars().any(char::is_control) => {
-            Err(FrameError::Invalid("email"))
+/// An address a commit's `Co-authored-by:` trailer can carry: at most [`MAX_EMAIL`] bytes,
+/// exactly one `@` with something on each side, and no white space, control character, `<`,
+/// `>`, `,`, `"` or `\`.
+pub fn commit_email(email: &str) -> Result<(), FrameError> {
+    let refused =
+        |c: char| c.is_whitespace() || c.is_control() || matches!(c, '<' | '>' | ',' | '"' | '\\');
+    match email.split_once('@') {
+        Some((local, domain))
+            if email.len() <= MAX_EMAIL
+                && !local.is_empty()
+                && !domain.is_empty()
+                && !domain.contains('@')
+                && !email.chars().any(refused) =>
+        {
+            Ok(())
         }
-        _ => Ok(()),
+        _ => Err(FrameError::Invalid("email")),
     }
 }
 
 fn check_thread(thread: &SharedThread) -> Result<(), FrameError> {
     display_name(&thread.author)?;
-    email(thread.email.as_deref())?;
     comment_text(&thread.text)?;
     if thread.quote.len() > MAX_COMMENT_QUOTE {
         return Err(FrameError::TooLarge(thread.quote.len()));
@@ -1497,7 +1530,6 @@ fn check_thread(thread: &SharedThread) -> Result<(), FrameError> {
     }
     thread.replies.iter().try_for_each(|reply| {
         display_name(&reply.author)?;
-        email(reply.email.as_deref())?;
         comment_text(&reply.text)
     })
 }

@@ -406,7 +406,7 @@ impl WorkspaceView {
     ) {
         let waker = self.app.read(cx).guest_waker();
         let joined = connecting
-            .authenticate(name, env!("CARGO_PKG_VERSION"), waker)
+            .authenticate(name, None, env!("CARGO_PKG_VERSION"), waker)
             .map_err(|error| error.to_string())
             .and_then(|(link, control)| {
                 self.app.update(cx, |app, cx| app.joined(link, control, cx))

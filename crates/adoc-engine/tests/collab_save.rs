@@ -458,6 +458,8 @@ fn a_guests_text_is_never_kept_for_recovery_but_the_hosts_is() {
             .filter(|path| {
                 path.extension()
                     .is_some_and(|extension| extension == "json")
+                    // Who changed what, which the host keeps until it commits.
+                    && path.file_name() != Some(std::ffi::OsStr::new("coauthors.json"))
             })
             .count()
     };

@@ -297,8 +297,8 @@ async fn serve(
         return;
     };
     let (peer, queue, generation) = match entry {
-        Entry::Invited { name } => {
-            match knock(&mut stream, &inner, name, &events, waker.as_ref()).await {
+        Entry::Invited { name, email } => {
+            match knock(&mut stream, &inner, name, email, &events, waker.as_ref()).await {
                 Some(admitted) => admitted,
                 None => return,
             }
@@ -353,6 +353,7 @@ async fn serve(
 enum Entry {
     Invited {
         name: String,
+        email: Option<String>,
     },
     Resumed {
         peer: PeerId,
@@ -384,7 +385,11 @@ async fn introduce(stream: &mut TlsStream<TcpStream>, inner: &Inner) -> Option<E
         app: inner.app.clone(),
     };
     write_message(stream, &hello).await.ok()?;
-    let Ok(Message::Authenticate { credential, name }) = read_frame(stream, HANDSHAKE_FRAME).await
+    let Ok(Message::Authenticate {
+        credential,
+        name,
+        email,
+    }) = read_frame(stream, HANDSHAKE_FRAME).await
     else {
         return None;
     };
@@ -397,7 +402,7 @@ async fn introduce(stream: &mut TlsStream<TcpStream>, inner: &Inner) -> Option<E
                 Credential::Invitation(secret) => state
                     .invitations
                     .redeem(&secret, Instant::now())
-                    .then_some(Entry::Invited { name }),
+                    .then_some(Entry::Invited { name, email }),
                 Credential::Resume(token) => resume(&mut state, &token),
             }
         }
@@ -453,6 +458,7 @@ async fn knock(
     stream: &mut TlsStream<TcpStream>,
     inner: &Inner,
     name: String,
+    email: Option<String>,
     events: &mpsc::Sender<LinkEvent>,
     waker: Option<&Waker>,
 ) -> Option<(PeerId, Queue, u64)> {
@@ -470,7 +476,10 @@ async fn knock(
         );
         peer
     };
-    events.send(LinkEvent::Knock { peer, name }).await.ok()?;
+    events
+        .send(LinkEvent::Knock { peer, name, email })
+        .await
+        .ok()?;
     if let Some(waker) = waker {
         waker();
     }

@@ -4,7 +4,7 @@ The release record for collaborative editing (COLLAB 8/8, #695; `docs/prd/PRD-Ad
 
 A case is marked passed only when a named test holds it, or a person has run it and recorded the result here. Nothing unverified is marked as passing.
 
-**State:** every automated row below passes on macOS. The manual checks have not been run yet. No release decision is open.
+**State:** every automated row below passes on macOS. The manual checks have not been run yet. One release decision is open: a guest claiming another's address.
 
 ## Coverage matrix
 
@@ -79,6 +79,10 @@ Each threat, its defence, and the test that holds it. Defects found in `yrs` dur
 | Where each participant is | Only the shared file's id, or none; a host on a page it does not share is elsewhere, and nothing sent names that page; a guest naming a file not shared closes its connection | `a_host_on_a_page_it_does_not_share_is_elsewhere`, `a_focus_on_a_file_not_shared_closes_the_connection` |
 | A guest changing others' comments (#762) | The host decides every change by the guest's role and the comment's author, refusing with a reason and keeping the connection; a request from an earlier epoch is refused; a guest never reads or writes a comments file | `what_a_participant_may_do_is_the_hosts_to_decide`, `a_request_from_an_earlier_epoch_is_refused`, `a_comment_on_a_file_not_opened_closes_the_connection` |
 | Learning who commented | Guests are told commenters' names, never the e-mail addresses the page's comments file holds | `guests_are_never_told_an_email_address` |
+| A guest's e-mail address leaking (#761) | Sent only to the host in `Authenticate`, checked by `commit_email`; never in a `Member`, a comment thread sent to a guest (which says only whether it is the guest's own), an error or a log line | `a_guests_email_reaches_only_the_host`, `addresses_are_held_to_the_rule`, `an_invalid_address_is_refused_before_connecting` |
+| A hostile co-authors file (#761) | `coauthors.json` read as untrusted: 1 MiB, 10,000 files, 100 co-authors a file, every name and address checked; an unusable or newer file is left alone and never written over | `an_unusable_state_file_is_left_alone` |
+| Crediting someone who only read | A guest is recorded only when an update it sent changed the text | `a_participant_who_only_read_is_never_credited` |
+| A guest claiming another's address (#761) | Not defended: the host decides whose a comment is by the address a guest gives, which nobody checks and the host does not see when admitting it, so a guest giving someone else's address can edit or delete that person's comments, and can be credited as them in the host's commits until the host unticks them. Names were already as self-chosen; Editors can rewrite the page anyway | open (see Release decisions) |
 | Comments flooding a guest | Every comment and reply held to its limits on the wire; at most 500 a file and 32 told a pump | `comments_are_held_to_their_limits` |
 | Guest pages parsed on every update (cost, not a breach) | Parsed once typing pauses | `a_guests_page_is_parsed_once_typing_pauses` |
 | Malformed or hostile CRDT data | A grammar check before `yrs` decodes anything; panics caught; the whole text compared after each remote update; a replica that may be wrong is poisoned and rebuilt in a new epoch | `collab_malformed_update_changes_nothing`, `an_update_splitting_a_character_poisons_the_replica`, `a_hostile_update_makes_the_host_rebuild_and_the_guest_start_again`; fuzz target `collab_update` |
@@ -115,4 +119,5 @@ Run with two copies of the app on two machines on one local network, unless the 
 
 ## Release decisions
 
+- **A guest claiming another's address (#761, open):** whose a comment is, and who is credited, rest on the address a guest gives, which nobody verifies. Options: accept it, as names were accepted; show the address beside the name when the host admits a knock, so the host can turn away a claim it does not expect; or decide comment ownership by name only and use the address for credit alone.
 - **Flatpak:** the package may use the network (`--share=network` in its manifest, held by `packaging/test_bundle.py`), so it can share and join; nothing listens or connects until the person chooses to.

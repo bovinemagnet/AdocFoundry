@@ -515,6 +515,7 @@ fn a_shared_change_to_send_is_due_at_once() {
     let events = Arc::new(Mutex::new(VecDeque::from([LinkEvent::Knock {
         peer,
         name: "guest".to_owned(),
+        email: None,
     }])));
     engine
         .host_session(
@@ -594,6 +595,7 @@ fn a_move_to_another_shared_page_is_due_at_once() {
     let events = Arc::new(Mutex::new(VecDeque::from([LinkEvent::Knock {
         peer,
         name: "guest".to_owned(),
+        email: None,
     }])));
     engine
         .host_session(
@@ -651,6 +653,7 @@ fn a_comment_for_a_guest_to_be_told_is_due_at_once() {
     let events = Arc::new(Mutex::new(VecDeque::from([LinkEvent::Knock {
         peer,
         name: "guest".to_owned(),
+        email: None,
     }])));
     let sent = Arc::new(Mutex::new(Vec::new()));
     engine

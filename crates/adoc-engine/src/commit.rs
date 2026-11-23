@@ -17,10 +17,11 @@ use adoc_git::{Change, FileStatus, Head, Repository};
 use adoc_index::{is_asciidoc_path, normalize_path};
 
 use crate::{
+    coauthors::{is_commit_email, millis, real_path, with_trailers},
     commands::{ids, register, spec},
     workspace::WorkerMessage,
-    CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry, Engine,
-    EngineError, EngineEvent,
+    CoAuthor, CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry,
+    Engine, EngineError, EngineEvent,
 };
 
 /// The Antora family directories whose files a writer changes, whatever their type.
@@ -75,6 +76,84 @@ impl Engine {
         Ok((workdir, repo))
     }
 
+    /// The guests to offer as co-authors of a commit of `paths` and of every file already
+    /// staged: those recorded as having changed any of them in a collaboration session, less
+    /// the commit's author and committer.
+    #[must_use]
+    pub fn coauthors_for_commit(&self, paths: &[PathBuf]) -> Vec<CoAuthor> {
+        let mut taken = paths.to_vec();
+        taken.extend(
+            self.changed_writer_files()
+                .into_iter()
+                .filter(|(_, status)| is_staged(&status.index))
+                .map(|(path, _)| path),
+        );
+        let own = self
+            .repository_for_paths(&taken)
+            .map(|(_, repo)| identities(&repo))
+            .unwrap_or_default();
+        self.coauthors_of(&taken)
+            .into_iter()
+            .filter(|author| {
+                !own.iter()
+                    .any(|email| email.eq_ignore_ascii_case(&author.email))
+            })
+            .collect()
+    }
+
+    /// Drops the record of every file in this workspace's repositories that has nothing left to
+    /// credit: its text is `HEAD`'s, nothing of it is staged, and it is not open with unsaved
+    /// changes. A file in no repository of this workspace (another window's) is left alone.
+    pub fn prune_coauthors(&mut self) {
+        let recorded: Vec<PathBuf> = self.coauthors().paths().map(Path::to_path_buf).collect();
+        let unsaved: Vec<PathBuf> = self
+            .documents()
+            .filter(|document| document.dirty)
+            .map(|document| real_path(&document.path))
+            .collect();
+        let mut gone = Vec::new();
+        for repository in self.git.repositories() {
+            let workdir = &repository.workdir;
+            let real = real_path(workdir);
+            let Ok(repo) = open(workdir) else {
+                continue;
+            };
+            for path in &recorded {
+                let Ok(relative) = path.strip_prefix(&real) else {
+                    continue;
+                };
+                let inside = workdir.join(relative);
+                let staged = self
+                    .git
+                    .status_for(&inside)
+                    .is_some_and(|status| is_staged(&status.index));
+                if staged || unsaved.contains(path) {
+                    continue;
+                }
+                if repo
+                    .head_content(&inside)
+                    .is_ok_and(|head| head == std::fs::read_to_string(&inside).ok())
+                {
+                    gone.push(path.clone());
+                }
+            }
+        }
+        if self.coauthors_mut().drop_paths(&gone) {
+            self.save_coauthors();
+        }
+    }
+
+    /// After a commit: forgets what it took, each file as it was when its content was fixed,
+    /// and only those in `only` when it is given.
+    fn coauthors_committed(&mut self, fixed: &[(PathBuf, u64)], only: Option<&[String]>) {
+        for (path, _) in fixed {
+            self.git.staged_at.remove(path);
+        }
+        if self.coauthors_mut().forget(fixed, only) {
+            self.save_coauthors();
+        }
+    }
+
     fn stage_paths(&mut self, paths: &[PathBuf], stage: bool) -> Result<(), EngineError> {
         if paths.is_empty() {
             return Ok(());
@@ -87,9 +166,91 @@ impl Engine {
             repo.unstage(&borrowed)
         };
         result.map_err(git_error)?;
+        // When each file's staged content was fixed, so an edit after it is credited in the
+        // commit after the one that takes it: now, or for a page with unsaved changes, when the
+        // text staged from disk was saved.
+        let now = millis(self.clock.wall());
+        for path in paths {
+            let real = real_path(path);
+            if stage {
+                let unsaved = self
+                    .document_for_path(&normalize_path(path))
+                    .and_then(|id| self.document(id))
+                    .is_some_and(|document| document.dirty);
+                let at = if unsaved {
+                    self.save_stamps.saved(&real)
+                } else {
+                    now
+                };
+                self.git.staged_at.insert(real, at);
+            } else {
+                self.git.staged_at.remove(&real);
+            }
+        }
         self.refresh_git(workdir);
         Ok(())
     }
+}
+
+fn is_staged(change: &Change) -> bool {
+    !matches!(
+        change,
+        Change::Unmodified | Change::Untracked | Change::Ignored
+    )
+}
+
+/// The addresses a commit in `repo` is made with: its committer's and its author's.
+fn identities(repo: &Repository) -> Vec<String> {
+    [repo.identity().ok(), repo.author_identity().ok()]
+        .into_iter()
+        .flatten()
+        .map(|(_, email)| email)
+        .collect()
+}
+
+/// The addresses of `git.commit`'s `offered`, the co-authors its front end showed (ticked or
+/// not), each `{ "email" }`; `None` without it.
+fn offered_of(args: &CommandArgs) -> Option<Vec<String>> {
+    let CommandArgs::Custom(value) = args else {
+        return None;
+    };
+    let listed = value.get("offered")?.as_array()?;
+    Some(
+        listed
+            .iter()
+            .filter_map(|author| author.get("email").and_then(serde_json::Value::as_str))
+            .map(str::to_owned)
+            .collect(),
+    )
+}
+
+/// The `coauthors` of `git.commit`'s arguments: each `{ "name", "email" }`, the address one a
+/// trailer can carry.
+fn coauthors_of(args: &CommandArgs) -> Result<Vec<CoAuthor>, EngineError> {
+    let invalid = || EngineError::InvalidArguments {
+        command: ids::GIT_COMMIT,
+        expected: "co-authors as a list of { \"name\", \"email\" } with valid addresses",
+    };
+    let CommandArgs::Custom(value) = args else {
+        return Ok(Vec::new());
+    };
+    let Some(listed) = value.get("coauthors") else {
+        return Ok(Vec::new());
+    };
+    let listed = listed.as_array().ok_or_else(invalid)?;
+    listed
+        .iter()
+        .map(|author| {
+            let field = |key: &str| author.get(key).and_then(serde_json::Value::as_str);
+            match (field("name"), field("email")) {
+                (Some(name), Some(email)) if is_commit_email(email) => Ok(CoAuthor {
+                    name: name.to_owned(),
+                    email: email.to_owned(),
+                }),
+                _ => Err(invalid()),
+            }
+        })
+        .collect()
 }
 
 fn open(workdir: &Path) -> Result<Repository, EngineError> {
@@ -197,8 +358,10 @@ pub(crate) fn register_commit(registry: &mut CommandRegistry) {
     }
 }
 
-/// Commits the index with `Custom { "message", "paths"? }`. With paths, any of them open with
-/// unsaved edits is saved first, and they are staged; the outcome lists what was saved.
+/// Commits the index with `Custom { "message", "paths"?, "coauthors"? }`. With paths, any of
+/// them open with unsaved edits is saved first, and they are staged; the outcome lists what was
+/// saved. Each co-author gets a `Co-authored-by:` trailer; after the commit, the files it took
+/// are forgotten by the co-authors' record, but for changes made after their content was fixed.
 fn git_commit(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
     let message = match &args {
         CommandArgs::Custom(value) => value
@@ -219,6 +382,8 @@ fn git_commit(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, 
         ));
     }
     let paths = paths_of(ids::GIT_COMMIT, &args)?;
+    let coauthors = coauthors_of(&args)?;
+    let offered = offered_of(&args);
     let mut saved = Vec::new();
     for path in &paths {
         let Some(id) = engine.document_for_path(path) else {
@@ -234,6 +399,32 @@ fn git_commit(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, 
         let borrowed: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
         repo.stage(&borrowed).map_err(git_error)?;
     }
+    // When the content of each file the commit takes was fixed: as it was staged here, else
+    // when the engine staged it, else now for a file staged elsewhere.
+    let start = millis(engine.clock.wall());
+    for path in &paths {
+        engine.git.staged_at.insert(real_path(path), start);
+    }
+    let fixed: Vec<(PathBuf, u64)> = repo
+        .staged_paths()
+        .unwrap_or_default()
+        .iter()
+        .map(|path| {
+            let real = real_path(path);
+            let at = engine.git.staged_at.get(&real).copied().unwrap_or(start);
+            (real, at)
+        })
+        .collect();
+    let own = identities(&repo);
+    // A guest the front end could not offer (whose first edit came after it listed them) keeps
+    // their record; the author and committer, never offered, have nothing to keep.
+    let only = offered.map(|mut offered| {
+        offered.extend(own.iter().cloned());
+        offered.extend(coauthors.iter().map(|author| author.email.clone()));
+        offered
+    });
+    let own: Vec<&str> = own.iter().map(String::as_str).collect();
+    let message = with_trailers(&message, &coauthors, &own);
     if repo.signs_commits() {
         // `gix` cannot sign: let the user's Git do it, with their key, on a worker, as it may
         // wait for a passphrase or a touch.
@@ -251,6 +442,8 @@ fn git_commit(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, 
         let crashed = move |error| WorkerMessage::Committed {
             workdir: failed,
             saved: unsaved,
+            fixed: Vec::new(),
+            only: None,
             result: Err(format!("git commit crashed: {error}")),
         };
         let started = saved.clone();
@@ -259,12 +452,15 @@ fn git_commit(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, 
             let _ = sender.send(WorkerMessage::Committed {
                 workdir,
                 saved,
+                fixed,
+                only,
                 result,
             });
         });
         return Ok(CommandOutcome::CommitStarted { saved: started });
     }
     let commit = repo.commit(&message).map_err(git_error)?;
+    engine.coauthors_committed(&fixed, only.as_deref());
     engine.refresh_git(workdir);
     Ok(CommandOutcome::Committed { commit, saved })
 }
@@ -417,11 +613,16 @@ impl Engine {
         &mut self,
         workdir: PathBuf,
         saved: Vec<PathBuf>,
+        fixed: &[(PathBuf, u64)],
+        only: Option<&[String]>,
         result: Result<String, String>,
     ) {
         self.git.committing = false;
         match result {
-            Ok(commit) => self.emit(EngineEvent::GitCommitted { commit, saved }),
+            Ok(commit) => {
+                self.coauthors_committed(fixed, only);
+                self.emit(EngineEvent::GitCommitted { commit, saved });
+            }
             Err(error) => self.emit(EngineEvent::CommandFailed {
                 command: ids::GIT_COMMIT,
                 error,

@@ -9,7 +9,7 @@ use std::{
 };
 
 use adoc_collab::{
-    protocol::{Credential, ErrorCode, Message, PeerId, Secret, PROTOCOL_VERSION},
+    protocol::{Credential, ErrorCode, FrameError, Message, PeerId, Secret, PROTOCOL_VERSION},
     Link, LinkError, LinkEvent,
 };
 use tokio::{net::TcpStream, runtime::Runtime, sync::mpsc, time::timeout};
@@ -133,14 +133,19 @@ impl Connecting {
     pub fn authenticate(
         self,
         name: &str,
+        email: Option<&str>,
         app: &str,
         waker: Option<Waker>,
     ) -> Result<(GuestLink, GuestControl), ShareError> {
         let introduction = Message::Authenticate {
             credential: Credential::Invitation(self.invitation.secret.clone()),
             name: name.to_owned(),
+            email: email.map(str::to_owned),
         };
-        introduction.encode().map_err(|_| ShareError::Name)?;
+        introduction.encode().map_err(|error| match error {
+            FrameError::Invalid("email") => ShareError::Email,
+            _ => ShareError::Name,
+        })?;
         let shared = Arc::new(Shared::default());
         let (events_in, events) = mpsc::channel(EVENT_QUEUE);
         let (commands, orders) = mpsc::unbounded_channel();
@@ -152,12 +157,14 @@ impl Connecting {
             timings,
         } = self;
         let name = name.to_owned();
+        let email = email.map(str::to_owned);
         let app = app.to_owned();
         let thread = std::thread::Builder::new()
             .name("adoc-share guest".to_owned())
             .spawn(move || {
                 runtime.block_on(guest(
-                    stream, invitation, name, app, timings, running, events_in, waker, orders,
+                    stream, invitation, name, email, app, timings, running, events_in, waker,
+                    orders,
                 ));
             })
             .map_err(|error| ShareError::Io(error.to_string()))?;
@@ -180,6 +187,7 @@ async fn guest(
     stream: TlsStream<TcpStream>,
     invitation: Invitation,
     name: String,
+    email: Option<String>,
     app: String,
     timings: Timings,
     shared: Arc<Shared>,
@@ -197,7 +205,16 @@ async fn guest(
     let mut resumed = false;
     loop {
         if let Some(mut connected) = stream.take() {
-            let reason = match introduce(&mut connected, &credential, &name, &app, timings).await {
+            let reason = match introduce(
+                &mut connected,
+                &credential,
+                &name,
+                email.as_deref(),
+                &app,
+                timings,
+            )
+            .await
+            {
                 Err(reason) => reason,
                 Ok(()) => {
                     let (outbound, queue) = conn::queue();
@@ -282,6 +299,7 @@ async fn introduce(
     stream: &mut TlsStream<TcpStream>,
     credential: &Credential,
     name: &str,
+    email: Option<&str>,
     app: &str,
     timings: Timings,
 ) -> Result<(), String> {
@@ -302,6 +320,7 @@ async fn introduce(
         let authenticate = Message::Authenticate {
             credential: credential.clone(),
             name: name.to_owned(),
+            email: email.map(str::to_owned),
         };
         write_message(stream, &authenticate)
             .await

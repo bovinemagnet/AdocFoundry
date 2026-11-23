@@ -12054,6 +12054,7 @@ fn guest_setup_with(cx: &mut TestAppContext, page: &str) -> GuestSetup {
     net.lock().unwrap().to_host.push_back(LinkEvent::Knock {
         peer,
         name: "Ada".to_owned(),
+        email: None,
     });
     host.pump();
     host.admit_peer(peer).unwrap();

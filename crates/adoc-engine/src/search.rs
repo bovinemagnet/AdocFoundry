@@ -605,6 +605,15 @@ impl Engine {
                 return Err(error);
             }
         }
+        // Who changed it in a collaboration session goes with it, to be credited when the move
+        // is committed.
+        let (real_from, real_to) = (
+            crate::coauthors::real_path(from),
+            crate::coauthors::real_path(to),
+        );
+        if self.coauthors_mut().moved(&real_from, &real_to) {
+            self.save_coauthors();
+        }
         let from = normalize_path(from);
         let to = normalize_path(to);
         self.comments_moved(&from, &to);

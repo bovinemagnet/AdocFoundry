@@ -253,6 +253,8 @@ impl Engine {
             self.states.get(&id).map(|state| state.saved_hash)
         };
         let history = self.history_job(&path);
+        let at = crate::coauthors::millis(self.clock.wall());
+        self.save_stamps.started(id, version, at);
         self.writer.next_ticket += 1;
         let ticket = self.writer.next_ticket;
         *self.writer.saving.entry(id).or_default() += 1;
@@ -351,6 +353,16 @@ impl Engine {
             result.is_ok(),
             matches!(result, Err(SaveFailure::Conflict)),
         );
+        let written_to = result
+            .is_ok()
+            .then(|| {
+                self.documents
+                    .get(&id)
+                    .map(|document| document.path.clone())
+            })
+            .flatten();
+        self.save_stamps
+            .finished(id, version, written_to.as_deref());
         let Some(document) = self.documents.get_mut(&id) else {
             return Ok(()); // Closed while it was written.
         };

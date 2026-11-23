@@ -8,6 +8,7 @@ mod appearance;
 mod attribute_inspection;
 mod auto_save;
 mod clock;
+mod coauthors;
 #[cfg(feature = "collab")]
 mod collab;
 #[cfg(feature = "collab")]
@@ -121,6 +122,7 @@ pub use attribute_inspection::{
 };
 pub use auto_save::AUTO_SAVE_DELAY;
 pub use clock::{Clock, ManualClock, SystemClock};
+pub use coauthors::CoAuthor;
 #[cfg(feature = "collab")]
 pub use collab::{
     revision_of, DiskResolution, SharedFileId, SharedReceipt, SharedRole, SharedSaveState,

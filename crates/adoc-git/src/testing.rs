@@ -37,6 +37,18 @@ pub struct TestRepo {
 }
 
 impl TestRepo {
+    /// The repository already in `dir`.
+    ///
+    /// # Panics
+    /// When there is none.
+    #[must_use]
+    pub fn open(dir: &Path) -> Self {
+        Self {
+            repo: gix::open(dir).expect("open a test repository"),
+            dir: dir.to_path_buf(),
+        }
+    }
+
     /// Initialises an empty repository in `dir`.
     ///
     /// # Panics
@@ -82,6 +94,17 @@ impl TestRepo {
     /// When the file cannot be removed.
     pub fn remove(&self, path: &str) {
         fs::remove_file(self.dir.join(path)).expect("remove a file");
+    }
+
+    /// The full message of the commit `HEAD` is at, read afresh.
+    ///
+    /// # Panics
+    /// When there is no such commit.
+    #[must_use]
+    pub fn head_message(&self) -> String {
+        let repo = gix::open(&self.dir).expect("open the repository");
+        let commit = repo.head_commit().expect("a commit at HEAD");
+        commit.message_raw().expect("a message").to_string()
     }
 
     /// Commits every file of the working tree, as `git add -A && git commit` would, and makes

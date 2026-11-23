@@ -104,6 +104,8 @@ pub struct GitState {
     pub(crate) page_ages: crate::page_age::PageAges,
     /// A signed commit is being made on a worker; another is refused until it ends.
     pub(crate) committing: bool,
+    /// When the engine last staged each file, by its real path, in milliseconds since 1970.
+    pub(crate) staged_at: std::collections::HashMap<PathBuf, u64>,
 }
 
 impl GitState {
