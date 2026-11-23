@@ -12602,6 +12602,96 @@ fn a_comment_is_added_from_the_selection_and_shown(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("comments-resolved").is_some());
 }
 
+/// Suggested changes (#763, SUGGEST 3/4): Suggest Change on the selection opens a box with the
+/// selected text to change, the card offers Accept and Reject and says the change in words, and
+/// accepting edits the page, folds the card as accepted and is undone with the page's Undo.
+#[gpui::test]
+fn a_suggestion_is_made_accepted_and_shown(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let page = root.join("page.adoc");
+    let text = "= Page\n\nSome words to comment on.\n";
+    std::fs::write(&page, text).unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+    let start = text.find("words").unwrap();
+    let end = start + "words".len();
+    cx.update(|_, cx| {
+        editor
+            .read(cx)
+            .state_for_test()
+            .clone()
+            .update(cx, |state, cx| {
+                state.set_selected_range(start..end, cx);
+            });
+    });
+
+    cx.dispatch_action(crate::editor::bindings::SuggestChange);
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("comments-panel").is_some());
+    assert!(cx.debug_bounds("suggestion-replacement").is_some());
+    assert!(cx.debug_bounds("comment-box").is_some(), "the note");
+    // The selected text is the replacement's start, all selected: typing replaces it.
+    cx.simulate_keystrokes("t e r m s");
+    click("comment-submit", &mut cx);
+    cx.run_until_parked();
+
+    let id = cx.update(|_, cx| editor.read(cx).document());
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    assert_eq!(comments.len(), 1);
+    let suggestion = comments[0].suggestion.clone().expect("a suggestion");
+    assert_eq!(suggestion.original, "words");
+    assert_eq!(suggestion.replacement, "terms");
+    assert_eq!(comments[0].text, "");
+    assert!(cx.debug_bounds("suggestion-replacement").is_none());
+    let key = comments[0].id;
+    assert!(cx
+        .debug_bounds(Box::leak(format!("comment-accept-{key}").into_boxed_str()))
+        .is_some());
+    assert!(cx
+        .debug_bounds(Box::leak(format!("comment-reject-{key}").into_boxed_str()))
+        .is_some());
+    // Read aloud as the change it makes, the common ending left out.
+    let label = format!(
+        "Suggestion by {}: replace \u{2018}word\u{2019} with \u{2018}term\u{2019}",
+        comments[0].author.name
+    );
+    assert!(
+        cx.debug_bounds(Box::leak(label.clone().into_boxed_str()))
+            .is_some(),
+        "{label}"
+    );
+
+    click_dynamic(&format!("comment-accept-{key}"), &mut cx);
+    cx.run_until_parked();
+    let accepted = "= Page\n\nSome terms to comment on.\n";
+    assert_eq!(document_text(&app, &mut cx), accepted);
+    assert_eq!(widget_text(&editor, &mut cx), accepted);
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    assert_eq!(
+        comments[0].suggestion.as_ref().unwrap().state,
+        adoc_engine::SuggestionState::Accepted
+    );
+    assert!(cx.debug_bounds("comments-resolved").is_some(), "folded");
+    assert!(cx
+        .debug_bounds(Box::leak(format!("comment-accept-{key}").into_boxed_str()))
+        .is_none());
+
+    // Undo puts the text back; the suggestion stays accepted until reopened.
+    let focus = cx.update(|_, cx| gpui::Focusable::focus_handle(editor.read(cx), cx));
+    cx.update(|window, cx| window.focus(&focus, cx));
+    cx.dispatch_action(crate::editor::bindings::Undo);
+    cx.run_until_parked();
+    assert_eq!(document_text(&app, &mut cx), text);
+    assert_eq!(widget_text(&editor, &mut cx), text);
+}
+
 fn click_dynamic(selector: &str, cx: &mut VisualTestContext) {
     let bounds = cx
         .debug_bounds(Box::leak(selector.to_owned().into_boxed_str()))

@@ -6530,6 +6530,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_leave_session))
             .on_action(cx.listener(Self::on_stop_following))
             .on_action(cx.listener(Self::on_add_comment))
+            .on_action(cx.listener(Self::on_suggest_change))
             .on_action(cx.listener(Self::on_next_comment))
             .on_action(cx.listener(Self::on_previous_comment))
             .on_action(cx.listener(Self::on_recover_unsaved))
