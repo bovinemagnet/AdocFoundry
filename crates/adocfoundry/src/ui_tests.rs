@@ -12981,3 +12981,117 @@ fn the_visual_editor_marks_a_pages_comments(cx: &mut TestAppContext) {
     settle_engine(&app, &mut cx);
     assert!(commented(&mut cx).is_empty());
 }
+
+/// Suggested changes (#763, SUGGEST 4/4): the visual editor shows what a pending suggestion
+/// would insert after the part it would remove, as text the page does not hold: typing at the
+/// caret beside it edits only the page, and once accepted it is shown no more.
+#[gpui::test]
+fn the_visual_editor_shows_a_suggestion_inline(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let page = root.join("page.adoc");
+    let text = "= Page\n\nSome words to comment on.\n";
+    std::fs::write(&page, text).unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.simulate_keystrokes("secondary-k w");
+    settle_engine(&app, &mut cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let visual = cx
+        .update(|_, cx| workspace.read(cx).visual_for_test(id).cloned())
+        .expect("a visual editor");
+    let start = text.find("words").unwrap();
+    let end = start + "words".len();
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::COMMENTS_SUGGEST,
+                CommandArgs::Comment(adoc_engine::CommentRequest::Suggest {
+                    id,
+                    range: SourceRange::new(start, end),
+                    original: Some("words".to_owned()),
+                    replacement: "text".to_owned(),
+                    text: String::new(),
+                }),
+                cx,
+            )
+            .unwrap();
+        })
+    });
+    settle_engine(&app, &mut cx);
+    draw_visual(&visual, &mut cx);
+    let suggested = cx.update(|_, cx| {
+        let view = visual.read(cx);
+        let shown = view.shown().cloned().unwrap();
+        (view.suggested(&shown, cx), view.commented(&shown, cx))
+    });
+    assert_eq!(
+        suggested.0,
+        vec![(SourceRange::new(start, end), end, "text".to_owned())]
+    );
+    assert!(
+        suggested.1.is_empty(),
+        "a suggestion is not filled as a comment is"
+    );
+    let shown_at = |offset: usize, cx: &mut VisualTestContext| {
+        cx.update(|_, cx| visual.read(cx).shown_text_for_test(offset).unwrap())
+    };
+    // `Some words` is struck, then `text` shown after it; the display text is the page's.
+    let shown = shown_at(start, &mut cx);
+    assert_eq!(shown.text, "Some wordstext to comment on.");
+    assert_eq!(shown.insertions.len(), 1);
+    assert_eq!(
+        (shown.insertions[0].at, shown.insertions[0].shown.clone()),
+        (10, 10..14)
+    );
+    assert_eq!(shown.span(5..10), 5..10, "the strike stops before it");
+    assert_eq!(shown.display_len, "Some words to comment on.".len());
+
+    // Typed at the caret after `words`, the text goes into the page only, after what is shown.
+    place_caret(&visual, end, &mut cx);
+    cx.simulate_keystrokes("x");
+    settle_engine(&app, &mut cx);
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome wordsx to comment on.\n"
+    );
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    let suggestion = comments[0].suggestion.clone().unwrap();
+    assert_eq!(suggestion.state, adoc_engine::SuggestionState::Pending);
+    draw_visual(&visual, &mut cx);
+    assert_eq!(
+        shown_at(start, &mut cx).text,
+        "Some wordstextx to comment on."
+    );
+    assert_eq!(
+        cx.update(|_, cx| visual.read(cx).selection().head),
+        end + 1,
+        "the caret is in the page's text"
+    );
+
+    // Accepted, it is in the page and shown no more.
+    let comment = comments[0].id;
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::COMMENTS_ACCEPT,
+                CommandArgs::Comment(adoc_engine::CommentRequest::Accept { id, comment }),
+                cx,
+            )
+            .unwrap();
+        })
+    });
+    settle_engine(&app, &mut cx);
+    draw_visual(&visual, &mut cx);
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome textx to comment on.\n"
+    );
+    let shown = shown_at(start, &mut cx);
+    assert_eq!(shown.text, "Some textx to comment on.");
+    assert!(shown.insertions.is_empty());
+}
