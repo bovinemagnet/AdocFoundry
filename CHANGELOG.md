@@ -17,6 +17,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 ### Changed
 
+- url 2.5.9, for RUSTSEC-2026-0592 (a stack overflow in `Url::origin()` on nested `blob:` URLs); `cargo deny` refused 2.5.8.
 - The Antora catalog leaves out every file whose name begins with a dot, as Antora 3.2 does: such a file is no longer a resource, offered in completion or listed in the Modules panel.
 
 ### For developers
