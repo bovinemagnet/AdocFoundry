@@ -524,8 +524,10 @@ impl Engine {
     /// The host applies `edit` to shared document `id` for a participant (a guest's accepted
     /// suggestion, spec §8): checked against the rope, applied to the replica outside the
     /// host's undo history, sent to everyone like the host's own change, and taken by the rope
-    /// as a participant's edit, so nobody's Undo reaches it. A refusal before the rope changes
-    /// nothing.
+    /// as a participant's edit, so nobody's Undo reaches it. It ends what the host could redo, as
+    /// any new edit of its own does: a Redo of the host's own accept of the same suggestion,
+    /// undone and the suggestion reopened, would otherwise apply it a second time. A refusal
+    /// before the rope changes nothing.
     pub(crate) fn apply_untracked_shared_edit(
         &mut self,
         id: DocumentId,
@@ -547,6 +549,7 @@ impl Engine {
             .replica
             .apply_untracked(&byte_edits(&forward))
             .map_err(|error| collab_error(&error))?;
+        shared.replica.clear_redo();
         // As a participant's change does, it moves text under the host's typing run: the
         // host's next keystroke starts a new undo group.
         shared.typing = None;

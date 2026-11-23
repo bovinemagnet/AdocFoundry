@@ -650,3 +650,71 @@ fn the_host_refuses_an_edit_of_a_suggestion_made_on_other_text() {
         "its certainty is unchanged"
     );
 }
+
+/// The host's accept, undone, stays in its redo history: once the suggestion is reopened and a
+/// guest accepts it, the host's Redo must not apply the same suggestion a second time.
+#[test]
+fn a_redo_after_a_guest_accepts_again_applies_the_suggestion_once() {
+    let mut session = session();
+    let ada = session.guest(1, true);
+    let host = session.host_doc();
+    suggest(&mut session.host, host).unwrap();
+    let comment = the_comment(&session.host, host).id;
+    accept(&mut session.host, host, comment).unwrap();
+    session.settle();
+    undo(&mut session.host, host);
+    reopen(&mut session.host, host, comment).unwrap();
+    session.settle();
+    assert_eq!(texts(&mut session, &[ada]), PAGE);
+    assert_eq!(guest_state(&mut session, ada), SuggestionState::Pending);
+
+    let id = guest_doc(&mut session, ada);
+    accept(session.engine(ada), id, comment).unwrap();
+    session.settle();
+    assert_eq!(texts(&mut session, &[ada]), accepted_page());
+
+    // Nothing of the host's is left to redo: its accept was made again by the guest.
+    let _ = session
+        .host
+        .invoke(ids::EDIT_REDO, CommandArgs::Document(host));
+    session.settle();
+    let text = texts(&mut session, &[ada]);
+    assert_eq!(text.matches(REPLACEMENT).count(), 1, "{text}");
+    assert_eq!(text, accepted_page());
+    assert_eq!(host_state(&session), SuggestionState::Accepted);
+}
+
+/// Where `engine` shows the one comment on page `id`: detached, and the text it is on.
+fn placed(engine: &Engine, id: DocumentId) -> (bool, String) {
+    let comment = the_comment(engine, id);
+    (comment.detached, comment.quote)
+}
+
+/// The host's Undo and Redo of its own accept move the suggestion's range over text made again
+/// each time. A guest's copy of the deleted text is gone, so it is told the range again rather
+/// than left to place it by text only the host still keeps.
+#[test]
+fn a_guest_follows_the_range_through_the_hosts_undo_and_redo_of_an_accept() {
+    let mut session = session();
+    let ada = session.guest(1, true);
+    let host = session.host_doc();
+    suggest(&mut session.host, host).unwrap();
+    let comment = the_comment(&session.host, host).id;
+    accept(&mut session.host, host, comment).unwrap();
+    session.settle();
+    let id = guest_doc(&mut session, ada);
+    undo(&mut session.host, host);
+    session.settle();
+    assert_eq!(placed(session.engine(ada), id), (false, QUOTE.to_owned()));
+
+    // Redone and undone again before the guest hears of the redo.
+    session
+        .host
+        .invoke(ids::EDIT_REDO, CommandArgs::Document(host))
+        .unwrap();
+    undo(&mut session.host, host);
+    session.settle();
+    assert_eq!(texts(&mut session, &[ada]), PAGE);
+    assert_eq!(placed(&session.host, host), (false, QUOTE.to_owned()));
+    assert_eq!(placed(session.engine(ada), id), (false, QUOTE.to_owned()));
+}

@@ -562,6 +562,12 @@ impl Replica {
         self.undo_or_redo(ChangeOrigin::Redo)
     }
 
+    /// Forgets what the local author could redo, as a new local edit does, leaving what it can
+    /// undo: for an untracked change that a redo could otherwise make a second time.
+    pub fn clear_redo(&mut self) {
+        self.undo.clear_redo();
+    }
+
     #[must_use]
     pub fn can_undo(&self) -> bool {
         self.undo.can_undo()

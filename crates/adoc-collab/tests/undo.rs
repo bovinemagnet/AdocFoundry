@@ -123,3 +123,18 @@ fn an_untracked_edit_is_sent_but_never_undone() {
     assert_eq!(alice.rope, "Line.\n", "only the typing is undone");
     assert!(alice.replica.undo_local().unwrap().is_none());
 }
+
+#[test]
+fn clearing_the_redo_keeps_the_undo() {
+    let mut peer = Peer::host("", 1);
+    peer.edit(&[ByteEdit::new(0, 0, "one")]);
+    peer.replica.end_group();
+    peer.edit(&[ByteEdit::new(3, 3, " two")]);
+    peer.undo();
+    assert!(peer.replica.can_redo());
+    peer.replica.clear_redo();
+    assert!(!peer.replica.can_redo());
+    assert!(peer.replica.redo_local().unwrap().is_none());
+    peer.undo();
+    assert_eq!(peer.rope, "", "what was done can still be undone");
+}

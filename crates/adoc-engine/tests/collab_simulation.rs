@@ -24,6 +24,7 @@ use adoc_engine::{
     commands::ids,
     protocol::{Message, PeerId, Role},
     revision_of, CommandArgs, DiskResolution, DocumentId, Engine, LinkEvent, SharedSaveState,
+    SuggestionState,
 };
 use collab_common::*;
 
@@ -144,6 +145,28 @@ enum Op {
         file: u64,
         resolve: bool,
     },
+    /// An actor suggests the next token, a text no edit types, for up to `len` characters from
+    /// `at` (#763).
+    Suggest {
+        actor: u8,
+        file: u64,
+        at: u16,
+        len: u8,
+    },
+    /// An actor accepts one of the file's suggestions it shows, a pending one when it shows
+    /// any; with `also`, another participant accepts the same one in the same step.
+    Accept {
+        actor: u8,
+        file: u64,
+        pick: u8,
+        also: Option<u8>,
+    },
+    /// An actor rejects one of the file's suggestions it shows.
+    Reject {
+        actor: u8,
+        file: u64,
+        pick: u8,
+    },
 }
 
 fn schedule(seed: u64, steps: usize) -> Vec<Op> {
@@ -153,7 +176,7 @@ fn schedule(seed: u64, steps: usize) -> Vec<Op> {
             let actor = rng.below(3) as u8;
             let guest = 1 + rng.below(2) as u8;
             let file = 1 + rng.below(2);
-            match rng.below(120) {
+            match rng.below(140) {
                 0..=44 => Op::Edit {
                     actor,
                     file,
@@ -190,10 +213,27 @@ fn schedule(seed: u64, steps: usize) -> Vec<Op> {
                     at: rng.below(65_536) as u16,
                     len: 1 + rng.below(6) as u8,
                 },
-                _ => Op::Reply {
+                116..=119 => Op::Reply {
                     actor,
                     file,
                     resolve: rng.below(100) < 40,
+                },
+                120..=125 => Op::Suggest {
+                    actor,
+                    file,
+                    at: rng.below(65_536) as u16,
+                    len: 1 + rng.below(6) as u8,
+                },
+                126..=135 => Op::Accept {
+                    actor,
+                    file,
+                    pick: rng.below(256) as u8,
+                    also: (rng.below(100) < 50).then(|| (actor + 1 + rng.below(2) as u8) % 3),
+                },
+                _ => Op::Reject {
+                    actor,
+                    file,
+                    pick: rng.below(256) as u8,
                 },
             }
         })
@@ -231,6 +271,32 @@ fn boundaries(text: &str) -> Vec<usize> {
         .collect()
 }
 
+/// `range` widened over every bracket span it cuts: from a `⟦` to the next `⟧`, or to the end
+/// of the text when none follows. A deletion or a suggestion then never cuts a suggestion's
+/// replacement in two, so no later deletion can join the pieces of two into a third.
+fn whole_tokens(text: &str, range: SourceRange) -> SourceRange {
+    let spans: Vec<(usize, usize)> = text
+        .match_indices('⟦')
+        .map(|(start, _)| {
+            let end = text[start..]
+                .find('⟧')
+                .map_or(text.len(), |close| start + close + '⟧'.len_utf8());
+            (start, end)
+        })
+        .collect();
+    let SourceRange { mut start, mut end } = range;
+    loop {
+        let cut = spans
+            .iter()
+            .find(|(from, to)| start < *to && *from < end && !(start <= *from && *to <= end));
+        let Some((from, to)) = cut else {
+            return SourceRange::new(start, end);
+        };
+        start = start.min(*from);
+        end = end.max(*to);
+    }
+}
+
 struct Simulation {
     session: Session,
     /// Guests whose link is down, the last dropped last.
@@ -242,6 +308,17 @@ struct Simulation {
     viewers: Vec<PeerId>,
     /// Reloads so far, which name the text each reload writes.
     reloads: usize,
+    /// Each suggestion's replacement, in the order suggested: a token no edit types, every one
+    /// the same width, so that no deletion of a character turns one into another.
+    tokens: Vec<String>,
+    /// The tokens whose suggestions the host has shown accepted, at the end of some step.
+    accepted: Vec<String>,
+    /// The tokens whose suggestions the host showed accepted at the end of the last step.
+    accepted_now: Vec<String>,
+    /// The tokens a deletion has taken out whole. Two participants who each delete the same text
+    /// before hearing of the other's deletion, and each undo, bring it back twice: undo is each
+    /// author's own (plain text too), so such a token is no longer counted.
+    deleted: Vec<String>,
 }
 
 type Checked = Result<(), String>;
@@ -260,6 +337,10 @@ impl Simulation {
             duplicated: None,
             viewers: Vec::new(),
             reloads: 0,
+            tokens: Vec::new(),
+            accepted: Vec::new(),
+            accepted_now: Vec::new(),
+            deleted: Vec::new(),
         }
     }
 
@@ -449,6 +530,114 @@ impl Simulation {
         Ok(())
     }
 
+    /// The suggestions of `file` that `actor` shows.
+    fn suggestions(&mut self, actor: Actor, file: u64) -> Vec<adoc_engine::Comment> {
+        let Some(id) = self.document(actor, file) else {
+            return Vec::new();
+        };
+        self.engine(actor)
+            .comments(id)
+            .into_iter()
+            .filter(|comment| comment.suggestion.is_some())
+            .collect()
+    }
+
+    /// Notes each suggestion the host now shows accepted; whenever it is seen newly accepted
+    /// (again, once reopened), the host's text holds its replacement at most once, unless a
+    /// deletion has taken it out whole before. Not at least once: an edit a guest made before it
+    /// heard of a guest's accept may reach the host after it, in the same step, and delete what
+    /// the accept left of the text it was suggested on.
+    fn observe_accepts(&mut self) -> Checked {
+        let mut now = Vec::new();
+        for file in [1, 2] {
+            for comment in self.suggestions(Actor::Host, file) {
+                let suggestion = comment.suggestion.expect("a suggestion");
+                if suggestion.state != SuggestionState::Accepted {
+                    continue;
+                }
+                now.push(suggestion.replacement.clone());
+                if self.accepted_now.contains(&suggestion.replacement) {
+                    continue;
+                }
+                let id = self.document(Actor::Host, file).expect("the host's page");
+                let text = self.text(Actor::Host, id);
+                let times = text.matches(&suggestion.replacement).count();
+                if times > 1 && !self.deleted.contains(&suggestion.replacement) {
+                    return Err(format!(
+                        "the host accepted {} on file {file}, which its text holds {times} times: \
+                         {text:?}",
+                        suggestion.replacement
+                    ));
+                }
+                if !self.accepted.contains(&suggestion.replacement) {
+                    self.accepted.push(suggestion.replacement);
+                }
+            }
+        }
+        self.accepted_now = now;
+        Ok(())
+    }
+
+    /// Every participant connected and not removed holds each suggestion's replacement at most
+    /// once (unless a deletion has taken it out whole), and only when the host has accepted it
+    /// (no edit types a token); and shows each suggestion in the state the host does.
+    fn check_suggestions(&mut self) -> Checked {
+        let mut actors = vec![Actor::Host];
+        actors.extend(
+            GUESTS
+                .iter()
+                .copied()
+                .filter(|peer| !self.removed(*peer) && !self.offline.contains(peer))
+                .map(Actor::Guest),
+        );
+        for actor in actors {
+            let mut texts = Vec::new();
+            for file in [1, 2] {
+                if let Some(id) = self.document(actor, file) {
+                    texts.push(self.text(actor, id));
+                }
+            }
+            for token in &self.tokens {
+                let times: usize = texts.iter().map(|text| text.matches(token).count()).sum();
+                if times > 1 && !self.deleted.contains(token) {
+                    return Err(format!("{actor:?}'s text holds {token} {times} times"));
+                }
+                if times == 1 && !self.accepted.contains(token) {
+                    return Err(format!(
+                        "{actor:?}'s text holds {token}, which the host never accepted"
+                    ));
+                }
+            }
+        }
+        let states = |comments: Vec<adoc_engine::Comment>| -> Vec<_> {
+            let mut states: Vec<_> = comments
+                .into_iter()
+                .map(|comment| {
+                    let suggestion = comment.suggestion.expect("a suggestion");
+                    (comment.id, suggestion.replacement, suggestion.state)
+                })
+                .collect();
+            states.sort_by_key(|(id, _, _)| *id);
+            states
+        };
+        for file in [1, 2] {
+            let theirs = states(self.suggestions(Actor::Host, file));
+            for peer in GUESTS {
+                if self.removed(peer) || self.offline.contains(&peer) {
+                    continue;
+                }
+                let mine = states(self.suggestions(Actor::Guest(peer), file));
+                if mine != theirs {
+                    return Err(format!(
+                        "{peer:?} shows file {file}'s suggestions as {mine:?}, the host as \
+                         {theirs:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Every guest connected and not removed holds each page's text as the host does.
     fn check_converged(&mut self) -> Checked {
         for file in [1, 2] {
@@ -501,7 +690,8 @@ impl Simulation {
                 let (range, typed) = if delete && places.len() > 1 {
                     let start = start.min(places.len() - 2);
                     let end = (start + usize::from(len)).min(places.len() - 1);
-                    (SourceRange::new(places[start], places[end]), String::new())
+                    let range = SourceRange::new(places[start], places[end]);
+                    (whole_tokens(&before, range), String::new())
                 } else {
                     let at = places[start];
                     let typed = pieces(actor)[usize::from(piece)];
@@ -517,6 +707,14 @@ impl Simulation {
                 );
                 if result.is_err() && self.text(actor, id) != before {
                     return Err("a refused edit changed the text".to_owned());
+                }
+                if result.is_ok() && !range.is_empty() {
+                    let taken = &before[range.start..range.end];
+                    for token in &self.tokens {
+                        if taken.contains(token.as_str()) && !self.deleted.contains(token) {
+                            self.deleted.push(token.clone());
+                        }
+                    }
                 }
             }
             Op::Undo {
@@ -565,6 +763,8 @@ impl Simulation {
                     self.check_converged()?;
                     self.check_following()?;
                     self.check_comments()?;
+                    self.observe_accepts()?;
+                    self.check_suggestions()?;
                 }
             }
             Op::Drop { guest, lost } => {
@@ -724,6 +924,144 @@ impl Simulation {
                     .engine(actor)
                     .invoke(command, CommandArgs::Comment(request));
             }
+            Op::Suggest {
+                actor: n,
+                file,
+                at,
+                len,
+            } => {
+                let actor = actor(n);
+                if !self.present(actor) {
+                    return Ok(());
+                }
+                let Some(id) = self.document(actor, file) else {
+                    return Ok(());
+                };
+                let text = self.text(actor, id);
+                let places = boundaries(&text);
+                if places.len() < 2 {
+                    return Ok(());
+                }
+                let start = (usize::from(at) * places.len() / 65_536).min(places.len() - 2);
+                let end = (start + usize::from(len)).min(places.len() - 1);
+                let token = format!("⟦s{}⟧", 1000 + self.tokens.len());
+                self.tokens.push(token.clone());
+                let range = whole_tokens(&text, SourceRange::new(places[start], places[end]));
+                // Refused while a guest cannot reach the host: nothing changes then.
+                let _ = self.engine(actor).invoke(
+                    ids::COMMENTS_SUGGEST,
+                    CommandArgs::Comment(adoc_engine::CommentRequest::Suggest {
+                        id,
+                        range,
+                        replacement: token,
+                        text: String::new(),
+                    }),
+                );
+                if self.text(actor, id) != text {
+                    return Err("a suggestion changed the text".to_owned());
+                }
+            }
+            Op::Accept {
+                actor: n,
+                file,
+                pick,
+                also,
+            } => {
+                let actor = actor(n);
+                if !self.present(actor) {
+                    return Ok(());
+                }
+                let shown = self.suggestions(actor, file);
+                let pending: Vec<_> = shown
+                    .iter()
+                    .filter(|comment| {
+                        comment
+                            .suggestion
+                            .as_ref()
+                            .map(|suggestion| suggestion.state)
+                            == Some(SuggestionState::Pending)
+                    })
+                    .collect();
+                let from: Vec<_> = if pending.is_empty() {
+                    shown.iter().collect()
+                } else {
+                    pending
+                };
+                let Some(comment) = from.get(usize::from(pick) % from.len().max(1)) else {
+                    return Ok(());
+                };
+                let token = comment
+                    .suggestion
+                    .as_ref()
+                    .map(|suggestion| suggestion.replacement.clone())
+                    .unwrap_or_default();
+                let comment = comment.id;
+                let mut accepting = vec![actor];
+                if let Some(other) = also.map(self::actor) {
+                    if other != actor && self.present(other) {
+                        accepting.push(other);
+                    }
+                }
+                // Both ask before anyone pumps: the host applies one accept and refuses the
+                // other as decided already.
+                for actor in accepting {
+                    let Some(id) = self.document(actor, file) else {
+                        continue;
+                    };
+                    let before = self.text(actor, id);
+                    let result = self.engine(actor).invoke(
+                        ids::COMMENTS_ACCEPT,
+                        CommandArgs::Comment(adoc_engine::CommentRequest::Accept { id, comment }),
+                    );
+                    let changed = self.text(actor, id) != before;
+                    if changed && matches!(actor, Actor::Guest(_)) {
+                        return Err(format!(
+                            "{actor:?}'s accept changed its text before the host applied it"
+                        ));
+                    }
+                    if changed && result.is_err() {
+                        return Err(format!("{actor:?}'s refused accept changed the text"));
+                    }
+                    // The host's own accept is applied there and then: its edit is in the text
+                    // once (more only when a deletion took it out whole and was undone twice).
+                    if actor == Actor::Host && result.is_ok() {
+                        let after = self.text(actor, id);
+                        let times = after.matches(token.as_str()).count();
+                        if times != 1 && !(times > 1 && self.deleted.contains(&token)) {
+                            return Err(format!(
+                                "the host's accept left {token} in its text {times} times: \
+                                 {after:?}"
+                            ));
+                        }
+                    }
+                }
+            }
+            Op::Reject {
+                actor: n,
+                file,
+                pick,
+            } => {
+                let actor = actor(n);
+                if !self.present(actor) {
+                    return Ok(());
+                }
+                let shown = self.suggestions(actor, file);
+                let Some(comment) = shown.get(usize::from(pick) % shown.len().max(1)) else {
+                    return Ok(());
+                };
+                let comment = comment.id;
+                let Some(id) = self.document(actor, file) else {
+                    return Ok(());
+                };
+                let before = self.text(actor, id);
+                let _ = self.engine(actor).invoke(
+                    ids::COMMENTS_REJECT,
+                    CommandArgs::Comment(adoc_engine::CommentRequest::Reject { id, comment }),
+                );
+                if self.text(actor, id) != before {
+                    return Err("a rejection changed the text".to_owned());
+                }
+            }
             Op::Duplicate { guest } => {
                 let peer = GUESTS[usize::from(guest - 1)];
                 if self.duplicated.is_some() {
@@ -744,7 +1082,8 @@ impl Simulation {
                 }
             }
         }
-        self.check_replicas()
+        self.check_replicas()?;
+        self.observe_accepts()
     }
 
     /// Lifts every fault: deliveries flow, links resume, Viewers edit again.
@@ -767,6 +1106,8 @@ impl Simulation {
         self.check_converged()?;
         self.check_following()?;
         self.check_comments()?;
+        self.observe_accepts()?;
+        self.check_suggestions()?;
         for (peer, _) in self.session.removed() {
             if self.duplicated != Some(peer) {
                 return Err(format!("the host removed {peer:?}, who did nothing wrong"));
@@ -1026,5 +1367,52 @@ fn an_update_sent_again_after_a_reconnection_is_discarded() {
         },
         Op::Pump { actor: 2 },
         Op::Drop { guest: 2, lost: 1 },
+    ]);
+}
+
+/// The host's accept, undone, is still in its redo history when the suggestion is reopened and
+/// a guest accepts it: the host's Redo then has nothing left to apply, so the replacement is in
+/// the text once (found probing the suggestion operations by hand).
+#[test]
+fn a_redo_after_a_guest_accepted_again_changes_nothing() {
+    converges(&[
+        Op::Suggest {
+            actor: 0,
+            file: 1,
+            at: 14789,
+            len: 5,
+        },
+        Op::Accept {
+            actor: 0,
+            file: 1,
+            pick: 0,
+            also: None,
+        },
+        Op::Settle,
+        Op::Undo {
+            actor: 0,
+            file: 1,
+            redo: false,
+        },
+        Op::Settle,
+        Op::Reply {
+            actor: 0,
+            file: 1,
+            resolve: true,
+        },
+        Op::Settle,
+        Op::Accept {
+            actor: 1,
+            file: 1,
+            pick: 0,
+            also: None,
+        },
+        Op::Settle,
+        Op::Undo {
+            actor: 0,
+            file: 1,
+            redo: true,
+        },
+        Op::Settle,
     ]);
 }

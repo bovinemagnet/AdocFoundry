@@ -762,16 +762,14 @@ impl Engine {
                 };
                 for (thread, range) in &threads {
                     let digest = digest(thread);
-                    let told = open.threads.get(&thread.id);
-                    let placed =
-                        told.and_then(|(_, selection)| selection.as_ref())
-                            .and_then(|selection| {
-                                self.shared_resolve(id, selection)
-                                    .map(|(start, end)| SourceRange::new(start, end))
-                            });
-                    let stale = match told {
+                    // Stale once the range would be told by other text than it was. Resolving
+                    // what was told here is no proof the guest places it alike: a selection
+                    // anchored on text since deleted can resolve on the host's replica to
+                    // somewhere other than on a guest's.
+                    let selection = range.and_then(|range| self.shared_range(id, range));
+                    let stale = match open.threads.get(&thread.id) {
                         None => true,
-                        Some((told, _)) => *told != digest || placed != *range,
+                        Some((told, sent)) => *told != digest || *sent != selection,
                     };
                     if !stale {
                         continue;
@@ -780,7 +778,6 @@ impl Engine {
                         complete = false;
                         break;
                     }
-                    let selection = range.and_then(|range| self.shared_range(id, range));
                     let mut thread = thread.clone();
                     if selection.is_none() {
                         thread.detached = true;
