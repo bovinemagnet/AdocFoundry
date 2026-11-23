@@ -12756,6 +12756,159 @@ fn a_suggestion_box_refuses_text_changed_while_open(cx: &mut TestAppContext) {
     );
 }
 
+/// Suggested changes (#763, SUGGEST 3/4): the source editor frames an undecided suggestion's
+/// range, strikes through the part accepting would remove while it can be accepted, and marks
+/// its line in the gutter, with no comment fill; the status bar names it with the caret inside;
+/// once accepted it is not marked at all.
+#[gpui::test]
+fn a_suggestion_is_marked_in_the_source_editor(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let page = root.join("page.adoc");
+    let text = "= Page\n\nSome words to comment on.\n";
+    std::fs::write(&page, text).unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+    let id = cx.update(|_, cx| editor.read(cx).document());
+    let suggest = |start: usize, original: &str, replacement: &str, cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            app.update(cx, |app, cx| {
+                app.invoke(
+                    ids::COMMENTS_SUGGEST,
+                    CommandArgs::Comment(adoc_engine::CommentRequest::Suggest {
+                        id,
+                        range: SourceRange::new(start, start + original.len()),
+                        original: Some(original.to_owned()),
+                        replacement: replacement.to_owned(),
+                        text: String::new(),
+                    }),
+                    cx,
+                )
+                .unwrap();
+            })
+        });
+        cx.run_until_parked();
+    };
+    let start = text.find("words").unwrap();
+    let end = start + "words".len();
+    suggest(start, "words", "terms", &mut cx);
+
+    let shown = cx.update(|_, cx| editor.read(cx).shown_suggestions().clone());
+    assert_eq!(shown.frames.len(), 1, "{shown:?}");
+    assert_eq!(shown.frames[0].range(), &(start..end));
+    assert_eq!(
+        shown.frames[0].style(),
+        gpui_component::input::RangeDecorationStyle::Frame
+    );
+    // Accepting would replace "word" with "term": the common "s" is not struck.
+    assert_eq!(shown.struck.len(), 1, "{shown:?}");
+    assert_eq!(shown.struck[0].range, start..start + "word".len());
+    assert!(shown.struck[0].style.strikethrough.is_some());
+    assert_eq!(shown.gutter, vec![start..end]);
+    assert!(
+        cx.update(|_, cx| editor.read(cx).shown_comments().is_empty()),
+        "a suggestion is not filled as a comment is"
+    );
+
+    // The caret inside it: the status bar names it, as a suggestion and not a comment.
+    cx.update(|_, cx| {
+        editor
+            .read(cx)
+            .state_for_test()
+            .clone()
+            .update(cx, |state, cx| {
+                state.set_selected_range(start + 2..start + 2, cx);
+            });
+    });
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("status-suggestion").is_some());
+    assert!(cx.debug_bounds("status-comment").is_none());
+    let author = cx.update(|_, cx| app.read(cx).engine.comments(id)[0].author.name.clone());
+    assert_eq!(
+        cx.update(|_, cx| workspace.read(cx).status_comment_for_test(cx)),
+        Some(format!(
+            "Suggestion by {author}: replace \u{2018}word\u{2019} with \u{2018}term\u{2019}"
+        ))
+    );
+
+    // Accepted, it is marked no more, and the caret inside its text names nothing.
+    let comment = cx.update(|_, cx| app.read(cx).engine.comments(id)[0].id);
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::COMMENTS_ACCEPT,
+                CommandArgs::Comment(adoc_engine::CommentRequest::Accept { id, comment }),
+                cx,
+            )
+            .unwrap();
+        })
+    });
+    cx.run_until_parked();
+    cx.update(|_, cx| {
+        editor
+            .read(cx)
+            .state_for_test()
+            .clone()
+            .update(cx, |state, cx| {
+                state.set_selected_range(start + 2..start + 2, cx);
+            });
+    });
+    cx.run_until_parked();
+    let shown = cx.update(|_, cx| editor.read(cx).shown_suggestions().clone());
+    assert!(shown.frames.is_empty(), "{shown:?}");
+    assert!(shown.struck.is_empty(), "{shown:?}");
+    assert!(shown.gutter.is_empty(), "{shown:?}");
+    assert!(cx.debug_bounds("status-suggestion").is_none());
+    assert!(cx.debug_bounds("status-comment").is_none());
+
+    // An outdated suggestion is framed but not struck: accepting it would do nothing.
+    let at = text.find("comment").unwrap();
+    suggest(at, "comment", "remark", &mut cx);
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(at + 3, at + 3),
+                    text: "x".to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        })
+    });
+    cx.run_until_parked();
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    let outdated = comments
+        .iter()
+        .find(|comment| {
+            comment
+                .suggestion
+                .as_ref()
+                .is_some_and(|suggestion| suggestion.original == "comment")
+        })
+        .expect("the second suggestion");
+    assert_eq!(
+        outdated.suggestion.as_ref().unwrap().state,
+        adoc_engine::SuggestionState::Outdated
+    );
+    let shown = cx.update(|_, cx| editor.read(cx).shown_suggestions().clone());
+    assert_eq!(shown.frames.len(), 1, "{shown:?}");
+    assert_eq!(
+        shown.frames[0].range(),
+        &(outdated.range.start..outdated.range.end)
+    );
+    assert!(shown.struck.is_empty(), "{shown:?}");
+    assert_eq!(shown.gutter.len(), 1);
+}
+
 fn click_dynamic(selector: &str, cx: &mut VisualTestContext) {
     let bounds = cx
         .debug_bounds(Box::leak(selector.to_owned().into_boxed_str()))

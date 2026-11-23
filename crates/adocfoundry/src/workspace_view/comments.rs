@@ -1034,8 +1034,16 @@ impl WorkspaceView {
         Some(replacement.read(cx).value().to_string())
     }
 
-    /// The status bar's word on a comment at the caret, if there is one.
-    pub(super) fn comment_at_caret(&self, cx: &App) -> Option<String> {
+    /// The status bar's word on the comment or suggestion at the caret.
+    #[cfg(test)]
+    pub fn status_comment_for_test(&self, cx: &App) -> Option<String> {
+        self.comment_at_caret(cx).map(|(_, word)| word)
+    }
+
+    /// The status bar's word on a comment or suggestion at the caret, if there is one, with
+    /// its selector: `status-suggestion` saying the change as its card reads it aloud, since
+    /// the source editor does not draw the text it would insert; else `status-comment`.
+    pub(super) fn comment_at_caret(&self, cx: &App) -> Option<(&'static str, String)> {
         let editor = self.active_editor()?.read(cx);
         let document = editor.document();
         let engine = &self.app.read(cx).engine;
@@ -1044,6 +1052,23 @@ impl WorkspaceView {
             .comments(document)
             .into_iter()
             .find(|comment| comment.id == id)?;
-        Some(format!("Comment by {}", comment.author.name))
+        let Some(suggestion) = &comment.suggestion else {
+            return Some((
+                "status-comment",
+                format!("Comment by {}", comment.author.name),
+            ));
+        };
+        // The part of the original accepting would remove, as the card works it out.
+        let prefix = suggestion.removed.start.saturating_sub(comment.range.start);
+        let suffix = comment.range.end.saturating_sub(suggestion.removed.end);
+        let removed = middle(&suggestion.original, prefix, suffix);
+        Some((
+            "status-suggestion",
+            suggestion_label(
+                &comment.author.name,
+                &suggestion.original[removed],
+                &suggestion.inserted,
+            ),
+        ))
     }
 }

@@ -6254,7 +6254,7 @@ impl WorkspaceView {
                 .unwrap_or_default();
             Some(format!("{who} · {state}"))
         });
-        // The comment at the caret, if any (#762).
+        // The comment or suggestion at the caret, if any (#762, #763).
         let comment = self.comment_at_caret(cx);
         // Whom this participant follows (#767).
         let following = engine.following().and_then(|leader| {
@@ -6302,10 +6302,10 @@ impl WorkspaceView {
                         .child(shared),
                 )
             })
-            .when_some(comment, |bar, comment| {
+            .when_some(comment, |bar, (selector, comment)| {
                 bar.left(
                     div()
-                        .debug_selector(|| "status-comment".to_owned())
+                        .debug_selector(move || selector.to_owned())
                         .text_xs()
                         .child(comment),
                 )

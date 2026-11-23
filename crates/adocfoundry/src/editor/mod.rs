@@ -28,7 +28,7 @@ use gpui_component::{
     input::{
         Editor, EditorState, GutterDecoration, GutterDecorationCollection, InputEdit,
         InputEditsEvent, RangeDecoration, RangeDecorationCollection, RangeDecorationStyle,
-        RopeExt as _, TabSize,
+        RopeExt as _, TabSize, TextDecoration, TextDecorationCollection,
     },
     native_menu::NativeMenu,
     ActiveTheme as _, WindowExt as _,
@@ -176,6 +176,9 @@ pub struct SourceEditorView {
     /// gutter (#762), and the ranges last drawn.
     comment_marks: Option<Presence>,
     shown_comments: Vec<std::ops::Range<usize>>,
+    /// The page's suggestions as drawn (#763), and what was last drawn.
+    suggestion_marks: Option<SuggestionMarks>,
+    shown_suggestions: ShownSuggestions,
     shared_selection: Option<(usize, usize)>,
     caret: Option<usize>,
     /// The widget's scroll offset as last drawn, which the change markers follow.
@@ -221,6 +224,23 @@ fn apply_change(
 struct Presence {
     ranges: RangeDecorationCollection,
     gutter: GutterDecorationCollection,
+}
+
+/// Where the page's suggestions are marked (#763): decoration collections the widget keeps.
+#[derive(Clone)]
+struct SuggestionMarks {
+    frames: RangeDecorationCollection,
+    struck: TextDecorationCollection,
+    gutter: GutterDecorationCollection,
+}
+
+/// The page's suggestions as last marked (#763), for tests: the frames round their ranges, the
+/// parts struck through, and the ranges marked in the gutter.
+#[derive(Clone, Debug, Default)]
+pub struct ShownSuggestions {
+    pub frames: Vec<RangeDecoration>,
+    pub struck: Vec<TextDecoration>,
+    pub gutter: Vec<std::ops::Range<usize>>,
 }
 
 /// The end of the character at `offset`, so a gutter mark covers the caret's line however it
@@ -343,9 +363,11 @@ impl SourceEditorView {
                     // The others' carets, and the comments, moved with the text.
                     this.show_presence(cx);
                     this.show_comments(cx);
+                    this.show_suggestions(cx);
                 }
                 EngineEvent::CommentsChanged(id) if *id == this.document => {
                     this.show_comments(cx);
+                    this.show_suggestions(cx);
                 }
                 EngineEvent::SessionChanged => {
                     this.sync_readonly(cx);
@@ -406,6 +428,8 @@ impl SourceEditorView {
             shown_carets: Vec::new(),
             comment_marks: None,
             shown_comments: Vec::new(),
+            suggestion_marks: None,
+            shown_suggestions: ShownSuggestions::default(),
             shared_selection: None,
             caret: None,
             scroll: None,
@@ -424,12 +448,14 @@ impl SourceEditorView {
         view.show_diagnostics(cx);
         view.sync_readonly(cx);
         view.show_comments(cx);
+        view.show_suggestions(cx);
         view
     }
 
     /// Marks the page's open comments: their text filled in the theme's warning colour and a
     /// mark in the gutter. Resolved and detached comments are not marked; the Comments panel
     /// lists them, and names each comment, so the colour is never all that says one is there.
+    /// Suggestions are marked apart (`show_suggestions`).
     fn show_comments(&mut self, cx: &mut Context<Self>) {
         let ranges: Vec<std::ops::Range<usize>> = self
             .app
@@ -437,7 +463,9 @@ impl SourceEditorView {
             .engine
             .comments(self.document)
             .into_iter()
-            .filter(|comment| !comment.detached && comment.resolved.is_none())
+            .filter(|comment| {
+                !comment.detached && comment.resolved.is_none() && comment.suggestion.is_none()
+            })
             .map(|comment| comment.range.start..comment.range.end)
             .collect();
         if ranges.is_empty() && self.comment_marks.is_none() {
@@ -482,10 +510,95 @@ impl SourceEditorView {
         self.shown_comments = drawn;
     }
 
+    /// Marks the page's undecided suggestions (#763) in the theme's info colour, apart from the
+    /// comments' warning fill and the other participants' chart colours: a frame round each
+    /// one's range and a mark in the gutter, and, while it can be accepted, the part accepting
+    /// would remove struck through. The strike sets nothing that changes the layout. What it
+    /// would insert is not drawn in the text; the card and the status bar say it. Accepted,
+    /// rejected and detached suggestions are not marked.
+    fn show_suggestions(&mut self, cx: &mut Context<Self>) {
+        use adoc_engine::SuggestionState;
+        let suggestions: Vec<(std::ops::Range<usize>, Option<std::ops::Range<usize>>)> = self
+            .app
+            .read(cx)
+            .engine
+            .comments(self.document)
+            .into_iter()
+            .filter(|comment| !comment.detached)
+            .filter_map(|comment| {
+                let suggestion = comment.suggestion?;
+                let struck = match suggestion.state {
+                    SuggestionState::Pending => {
+                        Some(suggestion.removed.start..suggestion.removed.end)
+                    }
+                    SuggestionState::Outdated => None,
+                    SuggestionState::Accepted | SuggestionState::Rejected => return None,
+                };
+                Some((comment.range.start..comment.range.end, struck))
+            })
+            .collect();
+        if suggestions.is_empty() && self.suggestion_marks.is_none() {
+            return;
+        }
+        let marks = match &self.suggestion_marks {
+            Some(marks) => marks.clone(),
+            None => {
+                let marks = self.state.update(cx, |state, cx| SuggestionMarks {
+                    frames: state.create_range_decorations_collection(Vec::new(), cx),
+                    struck: state.create_decorations_collection(Vec::new(), cx),
+                    gutter: state.create_gutter_decorations_collection(Vec::new(), cx),
+                });
+                self.suggestion_marks = Some(marks.clone());
+                marks
+            }
+        };
+        let len = self.state.read(cx).text().len();
+        let colour = cx.theme().info;
+        let drawn = |range: &std::ops::Range<usize>| range.start < range.end && range.end <= len;
+        let mut shown = ShownSuggestions::default();
+        for (range, struck) in suggestions.iter().filter(|(range, _)| drawn(range)) {
+            shown.frames.push(
+                RangeDecoration::new(range.clone())
+                    .with_style(RangeDecorationStyle::Frame)
+                    .with_color(colour),
+            );
+            shown.gutter.push(range.clone());
+            if let Some(struck) = struck.as_ref().filter(|struck| drawn(struck)) {
+                shown.struck.push(TextDecoration::new(
+                    struck.clone(),
+                    gpui::HighlightStyle {
+                        strikethrough: Some(gpui::StrikethroughStyle {
+                            thickness: gpui::px(1.),
+                            color: Some(colour),
+                        }),
+                        ..gpui::HighlightStyle::default()
+                    },
+                ));
+            }
+        }
+        marks.frames.set(shown.frames.clone(), cx);
+        marks.struck.set(shown.struck.clone(), cx);
+        marks.gutter.set(
+            shown
+                .gutter
+                .iter()
+                .map(|range| GutterDecoration::new(range.clone()).with_color(colour))
+                .collect(),
+            cx,
+        );
+        self.shown_suggestions = shown;
+    }
+
     /// The comments' ranges as last marked, for tests.
     #[cfg(test)]
     pub fn shown_comments(&self) -> &[std::ops::Range<usize>] {
         &self.shown_comments
+    }
+
+    /// The suggestions' marks as last drawn, for tests.
+    #[cfg(test)]
+    pub fn shown_suggestions(&self) -> &ShownSuggestions {
+        &self.shown_suggestions
     }
 
     /// Selects `range` and scrolls it into view: where Next Comment and the Comments panel go.
