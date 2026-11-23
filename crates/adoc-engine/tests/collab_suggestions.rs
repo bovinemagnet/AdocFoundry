@@ -399,6 +399,29 @@ fn accepting_a_guests_suggestion_credits_the_guest() {
     );
 }
 
+/// An Editor guest accepting its own suggestion is credited: its words reach the file as the
+/// host's edit, outside every undo history, so no update of its own records it.
+#[test]
+fn a_guest_accepting_its_own_suggestion_is_credited() {
+    let mut session = session();
+    let ada = session.guest(1, true);
+    let id = guest_doc(&mut session, ada);
+    suggest(session.engine(ada), id).unwrap();
+    session.settle();
+    let comment = the_comment(session.engine(ada), id).id;
+    accept(session.engine(ada), id, comment).unwrap();
+    session.settle();
+    assert_eq!(texts(&mut session, &[ada]), accepted_page());
+    let page = session.directory.path().join("install.adoc");
+    assert_eq!(
+        session.host.coauthors_of(&[page]),
+        [CoAuthor {
+            name: "guest 1".to_owned(),
+            email: "guest1@example.org".to_owned(),
+        }]
+    );
+}
+
 /// The host's own accept on a shared page is its own edit: Undo takes it back for everyone, the
 /// suggestion stays accepted, and Reopen makes it pending again, so it can be accepted again.
 /// The suggestion deletes at its range's start, so only the accept's reversal, matched against

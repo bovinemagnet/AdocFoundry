@@ -1699,7 +1699,8 @@ impl Engine {
     /// Accepts suggestion `comment` on document `id` for `actor` (spec §6): one edit of the page
     /// replacing only what differs, in its own undo step, after which the suggestion covers
     /// exactly its replacement and is accepted; then its author is credited as a co-author when
-    /// they have an address and are not `actor`. Nothing changes when the edit is refused.
+    /// they have an address and are not `actor`, or `actor` is a guest. Nothing changes when the
+    /// edit is refused.
     /// `change_comments` has checked that the page's comments can be changed.
     fn accept_suggestion(
         &mut self,
@@ -1752,11 +1753,16 @@ impl Engine {
             prefix,
             suffix,
         };
+        // A guest's accept reaches the file as the host's edit, so a guest is credited for its
+        // own suggestion too; alone or hosting, an accept of one's own is one's own edit.
+        let guest = matches!(actor.kind, ActorKind::Editor | ActorKind::Viewer);
         let credit = live
             .stored
             .email
             .clone()
-            .filter(|email| is_commit_email(email) && !actor.owns(&live.stored.author, Some(email)))
+            .filter(|email| {
+                is_commit_email(email) && (guest || !actor.owns(&live.stored.author, Some(email)))
+            })
             .map(|email| (live.stored.author.clone(), email));
         match actor.kind {
             ActorKind::Alone | ActorKind::Host => {
