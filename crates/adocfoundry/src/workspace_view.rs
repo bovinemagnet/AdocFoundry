@@ -5,7 +5,7 @@
 //! same way.
 
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     rc::Rc,
@@ -880,6 +880,7 @@ impl WorkspaceView {
         cx: &mut Context<Self>,
     ) {
         let _timed = crate::typing_bench::timed("events.workspace");
+        self.follow_edits(event);
         // The Changes panel's rows follow Git and the open pages' hunks.
         if matches!(
             event,
@@ -1674,6 +1675,13 @@ impl WorkspaceView {
             .collect()
     }
 
+    /// Shows the Session panel.
+    #[cfg(test)]
+    pub fn show_session_for_test(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_tab = SidebarTab::Session;
+        cx.notify();
+    }
+
     /// Shows the Problems panel.
     #[cfg(test)]
     pub fn show_problems_for_test(&mut self, cx: &mut Context<Self>) {
@@ -1838,8 +1846,9 @@ impl WorkspaceView {
             .into_any_element()
     }
 
-    /// Asks for a commit message, listing what will be committed, and commits (and pushes).
-    /// `paths` are committed as they are saved; otherwise what is staged.
+    /// Asks for a commit message, listing what will be committed and the guests who changed it
+    /// in a collaboration session, each ticked to be credited, and commits (and pushes). `paths`
+    /// are committed as they are saved; otherwise what is staged.
     pub fn open_commit_dialog(
         &mut self,
         message: String,
@@ -1859,6 +1868,11 @@ impl WorkspaceView {
                 .map(|(path, _)| sidebar::display_path(&path, roots))
                 .collect()
         };
+        let coauthors = self.app.update(cx, |app, _| {
+            app.engine.prune_coauthors();
+            app.engine.coauthors_for_commit(&paths)
+        });
+        let ticked = Rc::new(RefCell::new(vec![true; coauthors.len()]));
         let state = cx.new(|cx| {
             let mut state = gpui_component::input::TextareaState::new(window, cx);
             state.set_value(message, window, cx);
@@ -1876,16 +1890,45 @@ impl WorkspaceView {
                 .count();
             let commit = |push: bool| {
                 let (state, workspace, paths) = (state.clone(), workspace.clone(), paths.clone());
+                let (coauthors, ticked) = (coauthors.clone(), ticked.clone());
                 move |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
                     let message = state.read(cx).value().to_string();
+                    let credited: Vec<adoc_engine::CoAuthor> = coauthors
+                        .iter()
+                        .zip(ticked.borrow().iter())
+                        .filter(|(_, ticked)| **ticked)
+                        .map(|(author, _)| author.clone())
+                        .collect();
                     window.close_dialog(cx);
                     if let Some(workspace) = workspace.upgrade() {
                         workspace.update(cx, |workspace, cx| {
-                            workspace.commit(message, &paths, push, window, cx);
+                            workspace
+                                .commit(message, &paths, &credited, &coauthors, push, window, cx);
                         });
                     }
                 }
             };
+            let credit = (!coauthors.is_empty()).then(|| {
+                v_flex()
+                    .gap_1()
+                    .text_sm()
+                    .child(div().text_xs().child("Co-authors"))
+                    .children(coauthors.iter().enumerate().map(|(index, author)| {
+                        let ticked = ticked.clone();
+                        let checked = ticked.borrow()[index];
+                        div()
+                            .debug_selector(move || format!("commit-coauthor-{index}"))
+                            .child(
+                                Checkbox::new(("commit-coauthor", index))
+                                    .label(format!("{} <{}>", author.name, author.email))
+                                    .checked(checked)
+                                    .on_click(move |checked, window, _| {
+                                        ticked.borrow_mut()[index] = *checked;
+                                        window.refresh();
+                                    }),
+                            )
+                    }))
+            });
             dialog.title("Commit").width(px(560.)).child(
                 v_flex()
                     .gap_2()
@@ -1905,6 +1948,7 @@ impl WorkspaceView {
                             .text_sm()
                             .children(files.iter().map(|file| div().child(file.clone()))),
                     )
+                    .children(credit)
                     .child(
                         h_flex()
                             .gap_2()
@@ -1918,6 +1962,7 @@ impl WorkspaceView {
                                 Button::new("commit-only")
                                     .primary()
                                     .label("Commit")
+                                    .debug_selector(|| "commit-only".to_owned())
                                     .on_click(commit(false)),
                             ),
                     ),
@@ -1925,11 +1970,16 @@ impl WorkspaceView {
         });
     }
 
-    /// Commits with `message`, saving and staging `paths` first, then pushes when asked.
+    /// Commits with `message`, saving and staging `paths` first and crediting `coauthors` of
+    /// those `offered`, then pushes when asked. Anyone not offered, whose first edit came after
+    /// the dialog listed them, is offered next time.
+    #[allow(clippy::too_many_arguments)]
     pub fn commit(
         &mut self,
         message: String,
         paths: &[std::path::PathBuf],
+        coauthors: &[adoc_engine::CoAuthor],
+        offered: &[adoc_engine::CoAuthor],
         push: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1938,7 +1988,18 @@ impl WorkspaceView {
             .iter()
             .map(|path| path.display().to_string())
             .collect();
-        let args = CommandArgs::Custom(serde_json::json!({ "message": message, "paths": paths }));
+        let listed = |authors: &[adoc_engine::CoAuthor]| -> Vec<serde_json::Value> {
+            authors
+                .iter()
+                .map(|author| serde_json::json!({ "name": author.name, "email": author.email }))
+                .collect()
+        };
+        let args = CommandArgs::Custom(serde_json::json!({
+            "message": message,
+            "paths": paths,
+            "coauthors": listed(coauthors),
+            "offered": listed(offered),
+        }));
         match self.invoke(ids::GIT_COMMIT, args, window, cx) {
             Some(CommandOutcome::Committed { commit, saved }) => {
                 self.committed(&commit, &saved, push, window, cx);
@@ -6201,7 +6262,7 @@ impl WorkspaceView {
                 .unwrap_or_default();
             Some(format!("{who} · {state}"))
         });
-        // The comment at the caret, if any (#762).
+        // The comment or suggestion at the caret, if any (#762, #763).
         let comment = self.comment_at_caret(cx);
         // Whom this participant follows (#767).
         let following = engine.following().and_then(|leader| {
@@ -6249,10 +6310,10 @@ impl WorkspaceView {
                         .child(shared),
                 )
             })
-            .when_some(comment, |bar, comment| {
+            .when_some(comment, |bar, (selector, comment)| {
                 bar.left(
                     div()
-                        .debug_selector(|| "status-comment".to_owned())
+                        .debug_selector(move || selector.to_owned())
                         .text_xs()
                         .child(comment),
                 )
@@ -6477,6 +6538,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_leave_session))
             .on_action(cx.listener(Self::on_stop_following))
             .on_action(cx.listener(Self::on_add_comment))
+            .on_action(cx.listener(Self::on_suggest_change))
             .on_action(cx.listener(Self::on_next_comment))
             .on_action(cx.listener(Self::on_previous_comment))
             .on_action(cx.listener(Self::on_recover_unsaved))

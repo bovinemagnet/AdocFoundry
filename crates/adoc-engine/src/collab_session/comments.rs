@@ -16,16 +16,20 @@ use std::{
 };
 
 use adoc_collab::protocol::{
-    CommentChange, Message, PeerId, Role, SharedReply, SharedResolution, SharedThread,
-    MAX_COMMENTS, MAX_NAME, MAX_TEXT,
+    CommentChange, Message, PeerId, Role, SharedOutcome, SharedReply, SharedResolution,
+    SharedSuggestion, SharedThread, SuggestionChange, MAX_COMMENTS, MAX_NAME, MAX_TEXT,
 };
 use adoc_core::SourceRange;
 
 use super::{Session, Side};
 use crate::{
-    comments::{Actor, ActorKind, Change},
+    comments::{
+        check_suggestion, checked_note, shown_suggestion, Actor, ActorKind, Change, SeenSuggestion,
+        SUGGESTION_CHANGED,
+    },
     page_meta::cut,
     Allowed, Author, Comment, CommentId, DocumentId, Engine, EngineError, EngineEvent, Reply,
+    SuggestionState,
 };
 
 /// The most comments told to one guest for one file in a pump, so a page with many long
@@ -57,6 +61,17 @@ fn shown_name(name: &str) -> String {
 /// A comment's text as the protocol takes it: control characters but line breaks and tabs
 /// shown as U+FFFD, and some text.
 fn shown_text(text: &str) -> String {
+    let clean = shown_note(text);
+    if clean.is_empty() {
+        "\u{fffd}".to_owned()
+    } else {
+        clean
+    }
+}
+
+/// A suggestion's note as the protocol takes it: as [`shown_text`], but empty when there is
+/// nothing to show, as a suggestion's note may be.
+fn shown_note(text: &str) -> String {
     let clean: String = text
         .chars()
         .map(|c| {
@@ -68,7 +83,7 @@ fn shown_text(text: &str) -> String {
         })
         .collect();
     if clean.trim().is_empty() {
-        "\u{fffd}".to_owned()
+        String::new()
     } else {
         clean
     }
@@ -76,8 +91,22 @@ fn shown_text(text: &str) -> String {
 
 /// A host's comment as `guest` is told it. E-mail addresses in the page's metadata file stay on
 /// the host's side: a guest is told names only, and whether each comment and reply is its own,
-/// which the host decides by address (else by name).
-fn thread_of(comment: &Comment, guest: &Actor) -> SharedThread {
+/// which the host decides by address (else by name). A suggestion carries its outcome and
+/// whether its place is `uncertain`; whether it is pending the guest works out on its own text.
+fn thread_of(comment: &Comment, guest: &Actor, uncertain: bool) -> SharedThread {
+    let suggestion = comment
+        .suggestion
+        .as_ref()
+        .map(|suggestion| SharedSuggestion {
+            original: suggestion.original.clone(),
+            replacement: suggestion.replacement.clone(),
+            outcome: match suggestion.state {
+                SuggestionState::Accepted => Some(SharedOutcome::Accepted),
+                SuggestionState::Rejected => Some(SharedOutcome::Rejected),
+                SuggestionState::Pending | SuggestionState::Outdated => None,
+            },
+            uncertain,
+        });
     SharedThread {
         id: comment.id.0,
         author: shown_name(&comment.author.name),
@@ -85,7 +114,11 @@ fn thread_of(comment: &Comment, guest: &Actor) -> SharedThread {
         created: seconds(comment.created),
         edited: comment.edited.map(seconds),
         quote: cut(&comment.quote, adoc_collab::protocol::MAX_COMMENT_QUOTE).to_owned(),
-        text: shown_text(&comment.text),
+        text: if suggestion.is_some() {
+            shown_note(&comment.text)
+        } else {
+            shown_text(&comment.text)
+        },
         resolved: comment
             .resolved
             .as_ref()
@@ -94,6 +127,7 @@ fn thread_of(comment: &Comment, guest: &Actor) -> SharedThread {
                 at: seconds(resolution.at),
             }),
         detached: comment.detached,
+        suggestion,
         replies: comment
             .replies
             .iter()
@@ -196,6 +230,29 @@ impl Engine {
                     .filter(|range| !range.is_empty());
                 let detached = thread.detached || placed.is_none();
                 let range = placed.unwrap_or_default();
+                let quote = if detached {
+                    thread.quote.clone()
+                } else {
+                    text.slice(range.start..range.end).to_string()
+                };
+                // Where it stands on this guest's text, as the host would decide on its own.
+                let state = thread
+                    .suggestion
+                    .as_ref()
+                    .map(|suggestion| match suggestion.outcome {
+                        Some(SharedOutcome::Accepted) => SuggestionState::Accepted,
+                        Some(SharedOutcome::Rejected) => SuggestionState::Rejected,
+                        None if !detached
+                            && !suggestion.uncertain
+                            && quote == suggestion.original =>
+                        {
+                            SuggestionState::Pending
+                        }
+                        None => SuggestionState::Outdated,
+                    });
+                let suggestion = thread.suggestion.as_ref().zip(state).map(|(shown, state)| {
+                    shown_suggestion(&shown.original, &shown.replacement, state, range)
+                });
                 Comment {
                     id: CommentId(thread.id),
                     author: Author {
@@ -205,11 +262,7 @@ impl Engine {
                     created: time(thread.created),
                     edited: thread.edited.map(time),
                     range,
-                    quote: if detached {
-                        thread.quote.clone()
-                    } else {
-                        text.slice(range.start..range.end).to_string()
-                    },
+                    quote,
                     text: thread.text.clone(),
                     resolved: thread.resolved.as_ref().map(|resolution| {
                         crate::page_meta::Resolution {
@@ -218,6 +271,7 @@ impl Engine {
                         }
                     }),
                     detached,
+                    suggestion,
                     replies: thread
                         .replies
                         .iter()
@@ -233,7 +287,7 @@ impl Engine {
                             can: actor.allowed_own(reply.own),
                         })
                         .collect(),
-                    can: actor.allowed_own(thread.own),
+                    can: actor.allowed_on(thread.own, state),
                 }
             })
             .collect();
@@ -248,11 +302,27 @@ impl Engine {
         change: Change,
     ) -> Result<(), EngineError> {
         let comments = self.guest_comments(id).unwrap_or_default();
-        let allowed = |comment: u64, reply: Option<u64>| -> Result<Allowed, EngineError> {
-            let thread = comments
+        let find = |comment: u64| -> Result<&Comment, EngineError> {
+            comments
                 .iter()
                 .find(|thread| thread.id.0 == comment)
-                .ok_or_else(|| EngineError::NotFound(format!("comment {}", CommentId(comment))))?;
+                .ok_or_else(|| EngineError::NotFound(format!("comment {}", CommentId(comment))))
+        };
+        // A suggestion, with where it stands on this guest's text.
+        let suggestion = |comment: u64| -> Result<(&Comment, SuggestionState), EngineError> {
+            let thread = find(comment)?;
+            let state = thread
+                .suggestion
+                .as_ref()
+                .map(|suggestion| suggestion.state)
+                .ok_or_else(|| {
+                    EngineError::InvalidRequest("this comment suggests no change".to_owned())
+                })?;
+            Ok((thread, state))
+        };
+        let refusal = |reason: &str| Err(EngineError::Refused(reason.to_owned()));
+        let allowed = |comment: u64, reply: Option<u64>| -> Result<Allowed, EngineError> {
+            let thread = find(comment)?;
             match reply {
                 None => Ok(thread.can),
                 Some(reply) => thread
@@ -296,6 +366,7 @@ impl Engine {
                 (
                     CommentChange::Add {
                         text: checked(text)?,
+                        suggestion: None,
                     },
                     Some(selection),
                 )
@@ -311,8 +382,26 @@ impl Engine {
                 )
             }
             Change::Resolve { comment, resolved } => {
-                if !allowed(comment, None)?.resolve {
-                    return refused("resolve or reopen this comment");
+                let thread = find(comment)?;
+                match thread
+                    .suggestion
+                    .as_ref()
+                    .map(|suggestion| suggestion.state)
+                {
+                    None if !thread.can.resolve => {
+                        return refused("resolve or reopen this comment");
+                    }
+                    None => {}
+                    Some(_) if resolved => {
+                        return refusal("Accept or reject a suggestion instead of resolving it.");
+                    }
+                    Some(state) if !state.decided() => {
+                        return refusal("This suggestion is not decided yet.");
+                    }
+                    Some(_) if !thread.can.resolve => {
+                        return refused("reopen someone else's suggestion");
+                    }
+                    Some(_) => {}
                 }
                 (CommentChange::Resolve { comment, resolved }, None)
             }
@@ -338,6 +427,128 @@ impl Engine {
                     return refused("delete someone else's comment");
                 }
                 (CommentChange::Delete { comment, reply }, None)
+            }
+            Change::Suggest {
+                range,
+                original: shown,
+                replacement,
+                text,
+            } => {
+                let note = checked_note(&text)?;
+                let page = self
+                    .documents
+                    .get(&id)
+                    .ok_or(EngineError::UnknownDocument(id))?
+                    .text
+                    .to_string();
+                let not_a_range = || {
+                    EngineError::InvalidRequest(
+                        "a suggestion is on a range of the page's text".to_owned(),
+                    )
+                };
+                // The text this guest's front end showed when it began, else the text it sees
+                // now: the host checks it against its own. Refused here when this guest's own
+                // text at the range is no longer what was shown, so nothing is sent.
+                if shown
+                    .as_deref()
+                    .is_some_and(|shown| page.get(range.start..range.end) != Some(shown))
+                {
+                    return refusal("The text changed while you were suggesting; try again.");
+                }
+                let seen = page
+                    .get(range.start..range.end)
+                    .filter(|original| !original.is_empty())
+                    .ok_or_else(not_a_range)?;
+                let original = shown.unwrap_or_else(|| seen.to_owned());
+                check_suggestion(&original, &replacement)?;
+                if comments.len() >= MAX_COMMENTS {
+                    return Err(EngineError::Refused(
+                        crate::page_meta::MetaProblem::TooMany.to_string(),
+                    ));
+                }
+                let selection = self.shared_range(id, range).ok_or_else(not_a_range)?;
+                (
+                    CommentChange::Add {
+                        text: note,
+                        suggestion: Some(SuggestionChange {
+                            original,
+                            replacement,
+                        }),
+                    },
+                    Some(selection),
+                )
+            }
+            Change::Accept { comment, seen } => {
+                let (thread, state) = suggestion(comment)?;
+                if !thread.can.accept {
+                    return refusal(match state {
+                        SuggestionState::Outdated => {
+                            "The text has changed since this was suggested."
+                        }
+                        SuggestionState::Accepted | SuggestionState::Rejected => {
+                            "This suggestion is decided already."
+                        }
+                        SuggestionState::Pending => "You cannot accept a suggestion.",
+                    });
+                }
+                // The change this guest was told of, which the host checks against its own.
+                let Some(told) = thread.suggestion.as_ref() else {
+                    return Err(EngineError::InvalidRequest(
+                        "this comment suggests no change".to_owned(),
+                    ));
+                };
+                if seen.is_some_and(|seen| {
+                    seen.original != told.original || seen.replacement != told.replacement
+                }) {
+                    return refusal(SUGGESTION_CHANGED);
+                }
+                (
+                    CommentChange::Accept {
+                        comment,
+                        original: told.original.clone(),
+                        replacement: told.replacement.clone(),
+                    },
+                    None,
+                )
+            }
+            Change::Reject { comment } => {
+                let (thread, state) = suggestion(comment)?;
+                if state.decided() {
+                    return refusal("This suggestion is decided already.");
+                }
+                if !thread.can.reject {
+                    return refused("reject someone else's suggestion");
+                }
+                (CommentChange::Reject { comment }, None)
+            }
+            Change::EditSuggestion {
+                comment,
+                replacement,
+                text,
+                ..
+            } => {
+                let note = checked_note(&text)?;
+                let (thread, state) = suggestion(comment)?;
+                if !thread.can.edit {
+                    return refused("edit someone else's suggestion");
+                }
+                if state.decided() {
+                    return refusal("Reopen this suggestion first.");
+                }
+                if thread.detached {
+                    return refusal("The text this suggestion was on is gone.");
+                }
+                check_suggestion(&thread.quote, &replacement)?;
+                (
+                    // The text this guest sees, which the host checks against its own.
+                    CommentChange::EditSuggestion {
+                        comment,
+                        original: thread.quote.clone(),
+                        replacement,
+                        text: note,
+                    },
+                    None,
+                )
             }
         };
         let Some(session) = self.collab_session.as_mut() else {
@@ -423,7 +634,7 @@ impl Engine {
             return Ok(());
         }
         let change = match change {
-            CommentChange::Add { text } => {
+            CommentChange::Add { text, suggestion } => {
                 let range = selection
                     .and_then(|selection| {
                         adoc_collab::RelativeSelection::from_wire(selection.anchor, selection.head)
@@ -433,13 +644,27 @@ impl Engine {
                     .map(|(start, end)| SourceRange::new(start.min(end), start.max(end)))
                     .filter(|range| !range.is_empty());
                 let Some(range) = range else {
-                    refuse(
-                        session,
-                        "The text commented on is not in the host's page; try again.".to_owned(),
-                    );
+                    let reason = if suggestion.is_some() {
+                        "The text changed while you were suggesting; try again."
+                    } else {
+                        "The text commented on is not in the host's page; try again."
+                    };
+                    refuse(session, reason.to_owned());
                     return Ok(());
                 };
-                Change::Add { range, text }
+                match suggestion {
+                    None => Change::Add { range, text },
+                    // Checked against the host's text at the range (spec §8).
+                    Some(SuggestionChange {
+                        original,
+                        replacement,
+                    }) => Change::Suggest {
+                        range,
+                        original: Some(original),
+                        replacement,
+                        text,
+                    },
+                }
             }
             CommentChange::Reply { comment, text } => Change::Reply { comment, text },
             CommentChange::Resolve { comment, resolved } => Change::Resolve { comment, resolved },
@@ -453,6 +678,32 @@ impl Engine {
                 text,
             },
             CommentChange::Delete { comment, reply } => Change::Delete { comment, reply },
+            // The host applies the accept, in nobody's undo history (`accept_suggestion`).
+            // Of the change the guest saw (spec §8).
+            CommentChange::Accept {
+                comment,
+                original,
+                replacement,
+            } => Change::Accept {
+                comment,
+                seen: Some(SeenSuggestion {
+                    original,
+                    replacement,
+                }),
+            },
+            CommentChange::Reject { comment } => Change::Reject { comment },
+            // Checked against the host's text at the range, as a new suggestion is.
+            CommentChange::EditSuggestion {
+                comment,
+                original,
+                replacement,
+                text,
+            } => Change::EditSuggestion {
+                comment,
+                original: Some(original),
+                replacement,
+                text,
+            },
         };
         if let Err(error) = self.change_comments(id, change, &actor) {
             refuse(session, reason(&error));
@@ -500,6 +751,7 @@ impl Engine {
     ) {
         let seen = self.comments_seen(id);
         let comments = self.comments(id);
+        let uncertain = self.uncertain_suggestions(id);
         let peers: Vec<PeerId> = {
             let Side::Host(host) = &session.side else {
                 return;
@@ -531,7 +783,7 @@ impl Engine {
                     .iter()
                     .map(|comment| {
                         (
-                            thread_of(comment, &actor),
+                            thread_of(comment, &actor, uncertain.contains(&comment.id.0)),
                             (!comment.detached).then_some(comment.range),
                         )
                     })
@@ -550,16 +802,14 @@ impl Engine {
                 };
                 for (thread, range) in &threads {
                     let digest = digest(thread);
-                    let told = open.threads.get(&thread.id);
-                    let placed =
-                        told.and_then(|(_, selection)| selection.as_ref())
-                            .and_then(|selection| {
-                                self.shared_resolve(id, selection)
-                                    .map(|(start, end)| SourceRange::new(start, end))
-                            });
-                    let stale = match told {
+                    // Stale once the range would be told by other text than it was. Resolving
+                    // what was told here is no proof the guest places it alike: a selection
+                    // anchored on text since deleted can resolve on the host's replica to
+                    // somewhere other than on a guest's.
+                    let selection = range.and_then(|range| self.shared_range(id, range));
+                    let stale = match open.threads.get(&thread.id) {
                         None => true,
-                        Some((told, _)) => *told != digest || placed != *range,
+                        Some((told, sent)) => *told != digest || *sent != selection,
                     };
                     if !stale {
                         continue;
@@ -568,7 +818,6 @@ impl Engine {
                         complete = false;
                         break;
                     }
-                    let selection = range.and_then(|range| self.shared_range(id, range));
                     let mut thread = thread.clone();
                     if selection.is_none() {
                         thread.detached = true;

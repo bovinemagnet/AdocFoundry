@@ -39,6 +39,8 @@ struct Draw<'a> {
     spelling: Hsla,
     /// The fill behind commented text (#762), as the source editor draws it.
     comment: Hsla,
+    /// A suggestion's strike and inserted text (#763), as the source editor marks them.
+    suggestion: Hsla,
 }
 
 /// What the rows of a frame share, worked out once for the frame.
@@ -53,6 +55,56 @@ pub struct Frame {
     misspelt: Vec<adoc_core::SourceRange>,
     /// The open comments' ranges, filled in `comment`, in order (#762).
     commented: Vec<adoc_core::SourceRange>,
+    /// The pending suggestions (#763): the part each would remove, struck through in
+    /// `suggestion`, the source offset and text of what it would insert, shown there, and
+    /// whether text typed there goes before it.
+    suggested: Vec<(adoc_core::SourceRange, usize, String, bool)>,
+}
+
+impl Frame {
+    /// What the pending suggestions would insert in `block`: display offsets, texts, and
+    /// whether text typed there goes before them.
+    pub(super) fn insertions(&self, block: &TextBlock) -> Vec<(usize, String, bool)> {
+        insertions_in(block, &self.suggested)
+    }
+}
+
+/// What `suggested` would insert in `block`, at display offsets. Where the removed part ends
+/// inside an atom (an xref's target), after the atom, which it changes.
+fn insertions_in(
+    block: &TextBlock,
+    suggested: &[(adoc_core::SourceRange, usize, String, bool)],
+) -> Vec<(usize, String, bool)> {
+    suggested
+        .iter()
+        .filter(|(_, at, inserted, _)| {
+            !inserted.is_empty() && block.range.start <= *at && *at <= block.range.end
+        })
+        .filter_map(|(_, at, inserted, typed_before)| {
+            Some((
+                block.display_offset_towards(*at, true)?,
+                inserted.clone(),
+                *typed_before,
+            ))
+        })
+        .collect()
+}
+
+/// The display ranges of `block` that `suggested` would remove, each its part in the block;
+/// an atom it ends inside is taken whole, as a selection takes it.
+fn struck_in(
+    block: &TextBlock,
+    suggested: &[(adoc_core::SourceRange, usize, String, bool)],
+) -> Vec<std::ops::Range<usize>> {
+    suggested
+        .iter()
+        .filter(|(removed, ..)| removed.start < block.range.end && removed.end > block.range.start)
+        .filter_map(|(removed, ..)| {
+            let start = block.display_offset(removed.start.max(block.range.start))?;
+            let end = block.display_offset_towards(removed.end.min(block.range.end), true)?;
+            (start < end).then_some(start..end)
+        })
+        .collect()
 }
 
 /// A row of the list the visual editor draws: a top-level node, or a section's heading, whose
@@ -116,6 +168,8 @@ pub fn frame(view: &VisualView, document: Arc<VisualDocument>, window: &Window, 
     misspelt.sort_by_key(|range| range.start);
     let mut commented = view.commented(&document, cx);
     commented.sort_by_key(|range| range.start);
+    let mut suggested = view.suggested(&document, cx);
+    suggested.sort_by_key(|(removed, ..)| removed.start);
     let head = view.selection.head;
     let caret_at = document
         .model
@@ -128,6 +182,7 @@ pub fn frame(view: &VisualView, document: Arc<VisualDocument>, window: &Window, 
         changes,
         misspelt,
         commented,
+        suggested,
     }
 }
 
@@ -184,6 +239,7 @@ pub fn row(
         },
         spelling: cx.theme().danger,
         comment: cx.theme().warning.opacity(0.22),
+        suggestion: cx.theme().info,
     };
     let mut path = row.path.clone();
     let element = match document.model.node(&row.path) {
@@ -797,7 +853,12 @@ impl VisualView {
         let caret_here = caret_display.is_some();
         let caret_display = caret_display.and_then(|(_, display)| *display);
         let composing = caret_display.zip(self.composing.as_deref());
-        let shown = text::shown(block, composing, &self.formula_gaps);
+        let shown = text::shown(
+            block,
+            composing,
+            &draw.frame.insertions(block),
+            &self.formula_gaps,
+        );
         // Titles, headings and terms are bold throughout: runs set their own weight.
         let bold = matches!(
             node.kind,
@@ -820,9 +881,10 @@ impl VisualView {
             .take_while(|range| range.start <= block.range.end)
             .filter(|range| range.end <= block.range.end)
             .filter_map(|range| {
-                let start = shown.index(block.display_offset(range.start)?);
-                let end = shown.index(block.display_offset(range.end)?);
-                Some(start..end)
+                Some(
+                    shown
+                        .span(block.display_offset(range.start)?..block.display_offset(range.end)?),
+                )
             })
             .collect();
         runs = text::with_underlines(runs, &underlined, draw.spelling);
@@ -835,16 +897,28 @@ impl VisualView {
             .filter_map(|range| {
                 let start = block.display_offset(range.start.max(block.range.start))?;
                 let end = block.display_offset(range.end.min(block.range.end))?;
-                (start < end).then(|| shown.index(start)..shown.index(end))
+                (start < end).then(|| shown.span(start..end))
             })
             .collect();
         runs = text::with_backgrounds(runs, &filled, draw.comment);
+        // Pending suggestions: the part to be removed struck, its part in this block, and
+        // what would be inserted shown after it.
+        let struck: Vec<std::ops::Range<usize>> = struck_in(block, &draw.frame.suggested)
+            .into_iter()
+            .map(|range| shown.span(range))
+            .collect();
+        let inserted: Vec<std::ops::Range<usize>> = shown
+            .insertions
+            .iter()
+            .map(|insertion| insertion.shown.clone())
+            .collect();
+        runs = text::with_suggestions(runs, &struck, &inserted, draw.suggestion);
         let pending = self.pending.filter(|_| caret_here);
         let caret = caret_display
             .filter(|_| draw.frame.focused && self.selection.is_empty() && pending.is_none())
             .map(|display| shown.index(display));
         let selection = selected_range(block, self.selection.start(), self.selection.end())
-            .map(|range| shown.index(range.start)..shown.index(range.end));
+            .map(|range| shown.span(range));
         let overlay = text::Overlay {
             caret,
             selection,
@@ -995,4 +1069,54 @@ fn with_change_bar(
         .child(div().w(px(3.)).flex_none().bg(colour))
         .child(div().flex_1().min_w_0().child(element))
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use adoc_core::SourceRange;
+    use adoc_engine::{Atom, Piece, TextBlock, TextContext};
+
+    use super::{insertions_in, struck_in};
+
+    /// A suggestion changing an xref's target (`<<old>>` to `<<new>>`) ends inside the atom:
+    /// the atom is struck whole and what it would insert is shown after it.
+    #[test]
+    fn a_suggestion_ending_inside_an_atom_takes_it_whole() {
+        // `See <<old>>.`, the xref shown as `old`.
+        let block = TextBlock {
+            range: SourceRange::new(0, 12),
+            pieces: vec![
+                Piece::Text {
+                    range: SourceRange::new(0, 4),
+                },
+                Piece::Atom {
+                    atom: Atom::Xref {
+                        target: "old".to_owned(),
+                        text: None,
+                    },
+                    range: SourceRange::new(4, 11),
+                    shown: "old".to_owned(),
+                },
+                Piece::Text {
+                    range: SourceRange::new(11, 12),
+                },
+            ],
+            plain: false,
+            display: "See old.".to_owned(),
+            context: TextContext::Flow,
+        };
+        let suggested = [(SourceRange::new(6, 9), 9, "new".to_owned(), false)];
+        assert_eq!(
+            insertions_in(&block, &suggested),
+            [(7, "new".to_owned(), false)]
+        );
+        assert_eq!(
+            struck_in(&block, &suggested),
+            vec![std::ops::Range { start: 4, end: 7 }]
+        );
+        // In another block, nothing.
+        let elsewhere = [(SourceRange::new(20, 23), 23, "new".to_owned(), false)];
+        assert!(insertions_in(&block, &elsewhere).is_empty());
+        assert!(struck_in(&block, &elsewhere).is_empty());
+    }
 }

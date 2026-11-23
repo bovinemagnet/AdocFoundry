@@ -917,15 +917,19 @@ const ALLOWED_WHILE_HOSTING: &[&str] = &[
     "collaboration.revoke_edit",
     "collaboration.share_workspace",
     "collaboration.stop_following",
-    // Comments change only the page's metadata file, never the shared text.
+    // Comments change only the page's metadata file, apart from accepting a suggestion, which
+    // edits the shared text as typing does.
+    "comments.accept",
     "comments.add",
     "comments.delete",
     "comments.edit",
     "comments.next",
     "comments.previous",
     "comments.reopen",
+    "comments.reject",
     "comments.reply",
     "comments.resolve",
+    "comments.suggest",
     "collaboration.stop_sharing",
     "document.browse",
     "document.close",

@@ -474,6 +474,10 @@ A follow-on after COLLAB 8/8. Its engine side is `Engine::follow_participant`, `
 - **Pacing.** A `Focus` changes the roster, which the host sends at most once a pump to each peer and only when it changed, and the host reads at most `SESSION_EVENTS_PER_PUMP` events a pump. A guest's move is due at once (`a_move_to_another_shared_page_is_due_at_once` for the host's).
 - **The simulation** moves participants between pages and follows, and checks after each settle that a follower shows its leader's page (`check_following`).
 
+### Suggested changes in a session (#763, SUGGEST 2/4)
+
+Protocol version 3 carries suggestions in the comment messages (`SuggestionChange` on an add, the changes `Accept`, `Reject` and `EditSuggestion`, and `SharedThread::suggestion`). A guest's accept is a request the host applies as an untracked edit, in nobody's undo history. See `docs/prd/PRD-AdocFoundry_Suggestions.md` §13.2.
+
 ## 15. References
 
 - Epic #686.

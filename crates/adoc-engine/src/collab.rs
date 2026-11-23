@@ -521,6 +521,55 @@ impl Engine {
         Ok(())
     }
 
+    /// The host applies `edit` to shared document `id` for a participant (a guest's accepted
+    /// suggestion, spec §8): checked against the rope, applied to the replica outside the
+    /// host's undo history, sent to everyone like the host's own change, and taken by the rope
+    /// as a participant's edit, so nobody's Undo reaches it. It ends what the host could redo, as
+    /// any new edit of its own does: a Redo of the host's own accept of the same suggestion,
+    /// undone and the suggestion reopened, would otherwise apply it a second time. A refusal
+    /// before the rope changes nothing.
+    pub(crate) fn apply_untracked_shared_edit(
+        &mut self,
+        id: DocumentId,
+        edit: TextEdit,
+    ) -> Result<(), EngineError> {
+        let shared = self.shared.get(&id).ok_or_else(|| refused("not shared"))?;
+        if shared.role != SharedRole::Host {
+            return Err(refused("only the host applies a participant's change"));
+        }
+        let document = self
+            .documents
+            .get(&id)
+            .ok_or(EngineError::UnknownDocument(id))?;
+        let forward = edit::validate(&document.text, vec![edit])?;
+        let Some(shared) = self.shared.get_mut(&id) else {
+            return Err(refused("not shared"));
+        };
+        let change = shared
+            .replica
+            .apply_untracked(&byte_edits(&forward))
+            .map_err(|error| collab_error(&error))?;
+        shared.replica.clear_redo();
+        // As a participant's change does, it moves text under the host's typing run: the
+        // host's next keystroke starts a new undo group.
+        shared.typing = None;
+        shared.group = None;
+        if let Some(update) = change.outbound {
+            shared.outbox.push(update);
+        }
+        if self
+            .edit_document(id, forward, false, EditOrigin::Remote)
+            .is_err()
+        {
+            // The rope refused what it had accepted a moment before: never go on with the two
+            // apart.
+            self.broken(id);
+            return Err(refused("the shared document had to be rebuilt"));
+        }
+        self.emit(EngineEvent::SharedUpdates(id));
+        Ok(())
+    }
+
     /// A host's save of shared document `id` is starting with the text of document `version`:
     /// refused while a change on disk waits to be resolved, unless `overwrite`, the host's own
     /// choice to write over it.

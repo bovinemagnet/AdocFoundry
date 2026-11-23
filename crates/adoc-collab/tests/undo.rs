@@ -101,3 +101,40 @@ fn a_guest_undo_and_redo_name_only_the_guest() {
     host.receive(&redo);
     assert_eq!(host.rope, guest.rope);
 }
+
+#[test]
+fn an_untracked_edit_is_sent_but_never_undone() {
+    let mut alice = Peer::host("Para.\n", 1);
+    let mut bob = Peer::join(&alice, 2);
+
+    bob.receive(&alice.edit(&[ByteEdit::new(4, 4, " typed")]));
+    alice.replica.end_group();
+    let change = alice
+        .replica
+        .apply_untracked(&[ByteEdit::new(0, 4, "Line")])
+        .unwrap();
+    alice.apply(&change);
+    bob.receive(&change.outbound.expect("an untracked edit is sent"));
+    assert_eq!(alice.rope, "Line typed.\n");
+    assert_eq!(bob.rope, alice.rope);
+
+    let undone = alice.replica.undo_local().unwrap().unwrap();
+    alice.apply(&undone);
+    assert_eq!(alice.rope, "Line.\n", "only the typing is undone");
+    assert!(alice.replica.undo_local().unwrap().is_none());
+}
+
+#[test]
+fn clearing_the_redo_keeps_the_undo() {
+    let mut peer = Peer::host("", 1);
+    peer.edit(&[ByteEdit::new(0, 0, "one")]);
+    peer.replica.end_group();
+    peer.edit(&[ByteEdit::new(3, 3, " two")]);
+    peer.undo();
+    assert!(peer.replica.can_redo());
+    peer.replica.clear_redo();
+    assert!(!peer.replica.can_redo());
+    assert!(peer.replica.redo_local().unwrap().is_none());
+    peer.undo();
+    assert_eq!(peer.rope, "", "what was done can still be undone");
+}

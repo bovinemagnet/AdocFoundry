@@ -583,7 +583,7 @@ impl VisualView {
         let (path, block) = self.block_at(self.selection.head)?;
         let display = block.display_offset(self.selection.head)?;
         let composing = self.composing.as_deref().map(|text| (display, text));
-        let shown = text::shown(&block, composing, &self.formula_gaps);
+        let shown = self.shown_text(&block, composing);
         let drawn = text::caret_point(&self.layouts, &path, &shown, display)
             .zip(text::bounds_of(&self.layouts, &path));
         if let Some(((point, line_height), bounds)) = drawn {
@@ -610,7 +610,7 @@ impl VisualView {
         let (path, block) = self.block_at(self.selection.head)?;
         let display = block.display_offset(self.selection.head)?;
         let composing = self.composing.as_deref().map(|text| (display, text));
-        let shown = text::shown(&block, composing, &self.formula_gaps);
+        let shown = self.shown_text(&block, composing);
         let (point, line_height) = text::caret_point(&self.layouts, &path, &shown, display)?;
         let x = *self.goal_x.get_or_insert(point.x);
         let target_y = if down {
@@ -677,7 +677,7 @@ impl VisualView {
             }
         }
         if let Some((_, _, other, other_block, y)) = best {
-            let other_shown = text::shown(&other_block, None, &self.formula_gaps);
+            let other_shown = self.shown_text(&other_block, None);
             let index = text::hit(&self.layouts, &other, gpui::point(x, y), &other_shown)?;
             return other_block.source_offset(index, other_block.marks_at(index));
         }
@@ -724,7 +724,8 @@ impl VisualView {
     }
 
     /// The ranges of the page's open comments (#762), when the model shown is of its current
-    /// version, as the source editor marks them.
+    /// version, as the source editor marks them. Pending suggestions are marked apart
+    /// (`suggested`); an outdated one, with nothing to show, is filled as a comment is.
     pub fn commented(&self, document: &VisualDocument, cx: &App) -> Vec<SourceRange> {
         let engine = &self.app.read(cx).engine;
         let current = engine
@@ -736,9 +737,78 @@ impl VisualView {
         engine
             .comments(self.document)
             .into_iter()
-            .filter(|comment| !comment.detached && comment.resolved.is_none())
+            .filter(|comment| {
+                !comment.detached
+                    && comment.resolved.is_none()
+                    && comment.suggestion.as_ref().is_none_or(|suggestion| {
+                        suggestion.state != adoc_engine::SuggestionState::Pending
+                    })
+            })
             .map(|comment| comment.range)
             .collect()
+    }
+
+    /// The page's pending suggestions (#763), when the model shown is of its current version:
+    /// the part each would remove, the source offset where what it would insert goes (the
+    /// removed part's end), that text, and whether text typed there goes before it, as it does
+    /// at the start of the suggestion's range (`words` to `the words`).
+    pub fn suggested(
+        &self,
+        document: &VisualDocument,
+        cx: &App,
+    ) -> Vec<(SourceRange, usize, String, bool)> {
+        let engine = &self.app.read(cx).engine;
+        let current = engine
+            .document(self.document)
+            .is_some_and(|open| open.version == document.version);
+        if !current {
+            return Vec::new();
+        }
+        engine
+            .comments(self.document)
+            .into_iter()
+            .filter(|comment| !comment.detached)
+            .filter_map(|comment| Some((comment.range, comment.suggestion?)))
+            .filter(|(_, suggestion)| suggestion.state == adoc_engine::SuggestionState::Pending)
+            .map(|(range, suggestion)| {
+                (
+                    suggestion.removed,
+                    suggestion.removed.end,
+                    suggestion.inserted,
+                    // Typed at the range's start, text goes before the range.
+                    suggestion.removed.end == range.start,
+                )
+            })
+            .collect()
+    }
+
+    /// `block` as it was last drawn: with `composing`, the formulas' gaps and what pending
+    /// suggestions would insert, so offsets map as they did on screen.
+    fn shown_text(&self, block: &TextBlock, composing: Option<(usize, &str)>) -> text::Shown {
+        let insertions = self
+            .frame
+            .as_ref()
+            .map(|frame| frame.insertions(block))
+            .unwrap_or_default();
+        text::shown(block, composing, &insertions, &self.formula_gaps)
+    }
+
+    /// The text block holding `offset` as it was last drawn, without a composition.
+    #[cfg(test)]
+    pub fn shown_text_for_test(&self, offset: usize) -> Option<text::Shown> {
+        let (_, block) = self.block_at(offset)?;
+        Some(self.shown_text(&block, None))
+    }
+
+    /// The caret's text block as drawn, and the caret's index in it, as `text_inner` draws it.
+    #[cfg(test)]
+    pub fn caret_shown_for_test(&self) -> Option<(text::Shown, usize)> {
+        let (_, block) = self.block_at(self.selection.head)?;
+        let display = block.display_offset(self.selection.head)?;
+        let composing = self.composing.as_deref().map(|text| (display, text));
+        let shown = self.shown_text(&block, composing);
+        let index = shown.index(display);
+        Some((shown, index))
     }
 
     /// Opens the spelling menu for the misspelt word under `position` in the text block at
@@ -800,7 +870,7 @@ impl VisualView {
         .then(|| block.display_offset(self.selection.head))
         .flatten();
         let composing = caret_display.zip(self.composing.as_deref());
-        let shown = text::shown(block, composing, &self.formula_gaps);
+        let shown = self.shown_text(block, composing);
         let display = text::hit(&self.layouts, path, position, &shown)?;
         block.source_offset(display, block.marks_at(display))
     }

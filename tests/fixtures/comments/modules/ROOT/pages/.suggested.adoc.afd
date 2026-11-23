@@ -1,0 +1,20 @@
+# AdocFoundry page metadata
+format = 2
+
+[[comment]]
+id = "3c5f9a20e71b4d86"
+author = "Ada Lovelace"
+email = "ada@example.org"
+created = 2026-11-22T09:00:00Z
+start = 27
+end = 37
+revision = "sha256:12eadf8986aff4285c0b7b31721a90d2aa8a3740995b7b80f2b1791b6d080666"
+quote = "asks twice"
+before = "= Suggested\n\nThe installer "
+after = " before it starts.\n"
+text = "Once is enough."
+resolved = false
+
+[comment.suggestion]
+original = "asks twice"
+replacement = "asks once"

@@ -62,6 +62,10 @@ If the codes differ, the guest should not go on.
 === Letting people in
 
 When someone has connected and compared the code, they appear under *Waiting* in the *Session* panel as "asks to join".
+If they gave an e-mail address for commit credit, a line under their name reads "Gives the address ... (not checked)".
+The address is only their claim, and the app checks that it looks like an e-mail address, not that it belongs to them.
+Look at it before you choose, and turn away a request whose address you do not expect.
+Someone who gives another person's address could edit or delete that person's comments, and be credited as them in commits.
 You choose:
 
 *Admit*:: They join as a Viewer.
@@ -117,6 +121,7 @@ The other background pages close.
 Choose *Join Session…* from the *File* menu or the command palette.
 
 . Paste the invitation you were sent, check your name (it starts as your account's name, and the host sees it), and choose *Connect*.
+Under your name, the optional *E-mail for commit credit (optional)* field is how the host can credit you in Git, as xref:collaboration.adoc#_credit_for_guests[Credit for guests] describes.
 . The app connects and checks that the host holds the certificate the invitation names.
 If it does not, nothing is sent and the app says so.
 . A dialog shows the safety code.
@@ -328,7 +333,62 @@ It does not change what you may edit.
 
 Everyone with a shared page open sees its comments, on the same text whoever types, and Viewers can comment and reply too.
 The host keeps them in its comments file beside the page.
-See xref:comments.adoc[Comments].
+Suggested changes work the same way.
+A Viewer may suggest but not accept, while an Editor and the host may accept, and the host applies each accept once.
+See xref:comments.adoc#_suggesting_a_change[Suggesting a change] and xref:comments.adoc[Comments].
+
+== Credit for guests
+
+In a session only the host writes files and commits.
+Without anything more, every commit would carry everyone's edits under the host's name.
+Git has a convention for crediting others: a `Co-authored-by: Name <email>` line at the end of the commit message.
+GitHub, GitLab and other services show these lines beside the commit.
+AdocFoundry uses it to credit the guests who changed the files a commit takes.
+A guest whose suggestion is accepted is credited for that page as if it had typed the change, whoever accepts it, the guest itself included.
+As always, the guest needs a usable address.
+
+=== Giving your address
+
+*Join Session…* has a field, *E-mail for commit credit (optional)*, under your name.
+It is filled in from `[comments] email` in your user settings file, or else from your global Git `user.email`.
+You can change it or empty it.
+
+If what you type is not an e-mail address, "Not an e-mail address" shows under the field, and *Connect* waits until you fix it or empty it.
+Without an address you are not credited.
+
+Only the host is told your address.
+Other guests never see it.
+The host sees it in the *Session* panel under your name while you wait to be admitted, marked as not checked, so that a wrong one can be spotted.
+It is not shown once you are in.
+The host also keeps your comments on a shared page with your address, so the page's comments file, which is usually committed, holds it, as it does for the host's own comments.
+Because the host knows your comments by your address, you can edit your own comments in a later session, even under another name.
+
+=== Crediting guests when you commit
+
+When you are the host and commit, a *Co-authors* list appears under the files in the commit dialog if guests changed any of the files the commit takes.
+That means the files you gave and anything already staged.
+There is one checkbox for each guest, ticked, with their name and address.
+Untick anyone who should not be credited.
+The commit adds a `Co-authored-by:` line for each guest left ticked.
+
+Nothing shows when nobody else changed those files.
+You are never listed, nor is anyone whose address is the commit's author's or committer's.
+
+CAUTION: Nobody checks the address a guest gives, so look at the list before you commit.
+You also saw each address when the guest asked to join.
+
+=== What counts
+
+A guest is credited for a file only if they changed its text, by typing or deleting.
+Opening a file, reading it or moving the caret does not count.
+
+Credit is kept until the files are committed.
+It survives the connection dropping and coming back, the page being reloaded from disk, the session ending and the app quitting, because the host's app keeps it in its own state folder.
+Renaming a page in the app keeps its credit.
+If a file's text goes back to what was last committed, its credit is dropped when the commit dialog opens.
+
+After a commit, the files it took start again with nobody credited.
+The exception is a guest who changed a file after it was staged, who is offered again next time.
 
 == Sharing a session or sharing a repository
 
@@ -347,7 +407,8 @@ They are never written to the guest's disk, not even as crash recovery, and a gu
 * A guest who also has a clone of the same repository finds it untouched by the session.
 * Only the host commits, so a change made in the session is committed once, from one place.
 * The host's commits carry everyone's edits under the host's name.
-Co-authorship, with a `Co-authored-by:` line for each participant who changed a committed file, is planned and is not built yet.
+They also credit guests with `Co-authored-by:` lines, chosen in the commit dialog.
+See xref:collaboration.adoc#_credit_for_guests[Credit for guests].
 
 If Git or another tool changes a shared file on the host's disk, for example in a checkout or a pull, it becomes a conflict for the host to resolve, and the file is never silently overwritten.
 The host keeps the shared text or reloads the file's.
@@ -378,7 +439,7 @@ Each person's commits are their own, and conflicts are resolved by merging.
 |After the work is pushed and pulled
 
 |Authorship
-|The host's name on every commit; co-authorship is planned
+|The host's name on every commit, crediting guests who give an address as co-authors the host chooses
 |Each person's own commits
 
 |Conflicts

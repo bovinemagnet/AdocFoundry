@@ -2666,7 +2666,7 @@ fn save_and_commit_commits_the_page_and_counts_it_unpushed(cx: &mut TestAppConte
 
     cx.update(|window, cx| {
         workspace.update(cx, |workspace, cx| {
-            workspace.commit(message, &paths, false, window, cx)
+            workspace.commit(message, &paths, &[], &[], false, window, cx)
         });
     });
     settle_engine(&app, &mut cx);
@@ -2675,6 +2675,114 @@ fn save_and_commit_commits_the_page_and_counts_it_unpushed(cx: &mut TestAppConte
     assert!(labels.is_empty(), "committed: {labels:?}");
     let ahead = cx.update(|_, cx| app.read(cx).engine.git().repositories()[0].ahead);
     assert_eq!(ahead, Some(1), "one commit not pushed");
+}
+
+/// The commit dialog offers the guests who changed the files a commit takes, each ticked; one
+/// unticked is left out of the commit's message.
+#[gpui::test]
+fn the_commit_dialog_offers_co_authors(cx: &mut TestAppContext) {
+    use adoc_collab::testing::{GuestLink, HostLink, Net};
+    use adoc_engine::{
+        protocol::{PeerId, Role},
+        LinkEvent,
+    };
+
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let repo = adoc_git::testing::TestRepo::init(&root);
+    repo.set_identity("Host", "host@example.org");
+    repo.write("a.adoc", "= A\n");
+    repo.write("b.adoc", "= B\n");
+    repo.commit_all("first");
+    let mut host = Engine::new(Settings::default());
+    host.open_workspace(vec![root.clone()]).unwrap();
+    assert!(host.wait_for_workers(std::time::Duration::from_secs(10)));
+    let net = std::sync::Arc::new(std::sync::Mutex::new(Net::default()));
+    host.host_session(
+        Box::new(HostLink(net.clone())),
+        &root,
+        &["a.adoc".into(), "b.adoc".into()],
+        "Host",
+    )
+    .unwrap();
+    let peer = PeerId(1);
+    let mut guest = Engine::new(Settings::default().with_git_opt_in());
+    guest
+        .join_session(Box::new(GuestLink {
+            net: net.clone(),
+            me: peer,
+        }))
+        .unwrap();
+    net.lock().unwrap().to_host.push_back(LinkEvent::Knock {
+        peer,
+        name: "Ada".to_owned(),
+        email: Some("ada@example.org".to_owned()),
+    });
+    let pump = |host: &mut Engine, guest: &mut Engine| {
+        for _ in 0..10 {
+            guest.pump();
+            host.pump();
+        }
+    };
+    pump(&mut host, &mut guest);
+    host.admit_peer(peer).unwrap();
+    host.set_peer_role(peer, Role::Editor).unwrap();
+    pump(&mut host, &mut guest);
+    for file in [1, 2] {
+        guest.open_session_file(file).unwrap();
+        pump(&mut host, &mut guest);
+        let id = guest.session_document(file).unwrap();
+        guest
+            .invoke(
+                ids::EDIT_INSERT_TEXT,
+                adoc_engine::CommandArgs::Text {
+                    id,
+                    range: adoc_core::SourceRange::new(0, 0),
+                    text: "Ada. ".to_owned(),
+                },
+            )
+            .unwrap();
+        pump(&mut host, &mut guest);
+        let shared = host.session_document(file).unwrap();
+        host.save(shared).unwrap();
+    }
+    assert!(host.wait_for_workers(std::time::Duration::from_secs(10)));
+    let (a, b) = (root.join("a.adoc"), root.join("b.adoc"));
+    assert_eq!(host.coauthors_of(&[a.clone(), b.clone()]).len(), 1);
+    let app = app_with(host, cx);
+    let (workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    settle_engine(&app, &mut cx);
+
+    // Unticked: committed without the trailer.
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_commit_dialog("docs: a".to_owned(), vec![a.clone()], window, cx);
+        });
+    });
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("commit-coauthor-0").is_some());
+    click("commit-coauthor-0", &mut cx);
+    redraw(&app, &mut cx);
+    click("commit-only", &mut cx);
+    settle_engine(&app, &mut cx);
+    assert_eq!(repo.head_message(), "docs: a");
+
+    // Left ticked: credited.
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_commit_dialog("docs: b".to_owned(), vec![b.clone()], window, cx);
+        });
+    });
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("commit-coauthor-0").is_some());
+    click("commit-only", &mut cx);
+    settle_engine(&app, &mut cx);
+    assert_eq!(
+        repo.head_message(),
+        "docs: b\n\nCo-authored-by: Ada <ada@example.org>\n"
+    );
+    drop(guest);
 }
 
 // --- visual editor ---------------------------------------------------------------------------
@@ -12000,6 +12108,91 @@ fn collab_share_needs_confirmation(cx: &mut TestAppContext) {
     assert!(cx.update(|_, cx| !app.read(cx).engine.in_session()));
 }
 
+#[gpui::test]
+fn the_join_dialog_fills_and_checks_the_address(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    std::fs::write(root.join("page.adoc"), "= Page\n").unwrap();
+    let user = directory.path().join("settings.toml");
+    std::fs::write(
+        &user,
+        "[collaboration]\nenabled = true\n\n[comments]\nemail = \"ada@example.org\"\n",
+    )
+    .unwrap();
+    let settings = Settings::load(Some(&user), None).unwrap().with_git_opt_in();
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (_workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    redraw(&app, &mut cx);
+
+    cx.dispatch_action(crate::editor::bindings::JoinSession);
+    redraw(&app, &mut cx);
+    let field = cx.debug_bounds("join-email").expect("an address field");
+    assert!(cx.debug_bounds("join-email-problem").is_none());
+    // Filled with the address: one more letter at its end is still one.
+    cx.simulate_click(field.center(), gpui::Modifiers::none());
+    cx.simulate_keystrokes("end");
+    cx.simulate_input("x");
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("join-email-problem").is_none());
+    cx.simulate_input(" not");
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("join-email-problem").is_some());
+    // Join waits until it is fixed or emptied.
+    cx.simulate_keystrokes("enter");
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("join-form").is_some());
+}
+
+/// The Session panel shows the host the address a knocking guest gives, as the guest's own and
+/// unchecked, so a wrong one can be spotted before admitting; a guest who gave none shows none.
+#[gpui::test]
+fn the_session_panel_shows_a_knocking_guests_address(cx: &mut TestAppContext) {
+    use adoc_collab::testing::{HostLink, Net};
+    use adoc_engine::{protocol::PeerId, LinkEvent};
+
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    std::fs::write(root.join("page.adoc"), "= Page\n").unwrap();
+    let net = std::sync::Arc::new(std::sync::Mutex::new(Net::default()));
+    let mut host = Engine::new(Settings::default().with_git_opt_in());
+    host.host_session(
+        Box::new(HostLink(net.clone())),
+        &root,
+        &["page.adoc".into()],
+        "Host",
+    )
+    .unwrap();
+    for (peer, name, email) in [(1, "Ada", Some("ada@example.com")), (2, "Bea", None)] {
+        net.lock().unwrap().to_host.push_back(LinkEvent::Knock {
+            peer: PeerId(peer),
+            name: name.to_owned(),
+            email: email.map(str::to_owned),
+        });
+    }
+    host.pump();
+    assert_eq!(host.session_knocks().len(), 2);
+    let app = app_with(host, cx);
+    let (workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.show_session_for_test(cx)));
+    redraw(&app, &mut cx);
+
+    assert!(cx.debug_bounds("session-admit-1").is_some(), "Ada waits");
+    assert!(
+        cx.debug_bounds("session-knock-email-1").is_some(),
+        "Ada's address is shown"
+    );
+    assert!(cx.debug_bounds("session-admit-2").is_some(), "Bea waits");
+    assert!(
+        cx.debug_bounds("session-knock-email-2").is_none(),
+        "Bea gave no address"
+    );
+}
+
 /// A host engine and the app's engine as a guest, over the in-memory link, with the guest let
 /// in as a Viewer and the shared page open in a source editor.
 struct GuestSetup {
@@ -12455,6 +12648,357 @@ fn a_comment_is_added_from_the_selection_and_shown(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("comments-resolved").is_some());
 }
 
+/// Suggested changes (#763, SUGGEST 3/4): Suggest Change on the selection opens a box with the
+/// selected text to change, the card offers Accept and Reject and says the change in words, and
+/// accepting edits the page, folds the card as accepted and is undone with the page's Undo.
+#[gpui::test]
+fn a_suggestion_is_made_accepted_and_shown(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let page = root.join("page.adoc");
+    let text = "= Page\n\nSome words to comment on.\n";
+    std::fs::write(&page, text).unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+    let start = text.find("words").unwrap();
+    let end = start + "words".len();
+    cx.update(|_, cx| {
+        editor
+            .read(cx)
+            .state_for_test()
+            .clone()
+            .update(cx, |state, cx| {
+                state.set_selected_range(start..end, cx);
+            });
+    });
+
+    cx.dispatch_action(crate::editor::bindings::SuggestChange);
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("comments-panel").is_some());
+    assert!(cx.debug_bounds("suggestion-replacement").is_some());
+    assert!(cx.debug_bounds("comment-box").is_some(), "the note");
+    // The selected text is the replacement's start, all selected: typing replaces it.
+    cx.simulate_keystrokes("t e r m s");
+    click("comment-submit", &mut cx);
+    cx.run_until_parked();
+
+    let id = cx.update(|_, cx| editor.read(cx).document());
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    assert_eq!(comments.len(), 1);
+    let suggestion = comments[0].suggestion.clone().expect("a suggestion");
+    assert_eq!(suggestion.original, "words");
+    assert_eq!(suggestion.replacement, "terms");
+    assert_eq!(comments[0].text, "");
+    assert!(cx.debug_bounds("suggestion-replacement").is_none());
+    let key = comments[0].id;
+    assert!(cx
+        .debug_bounds(Box::leak(format!("comment-accept-{key}").into_boxed_str()))
+        .is_some());
+    assert!(cx
+        .debug_bounds(Box::leak(format!("comment-reject-{key}").into_boxed_str()))
+        .is_some());
+    // Read aloud as the change it makes, the common ending left out.
+    let label = format!(
+        "Suggestion by {}: replace \u{2018}word\u{2019} with \u{2018}term\u{2019}",
+        comments[0].author.name
+    );
+    assert!(
+        cx.debug_bounds(Box::leak(label.clone().into_boxed_str()))
+            .is_some(),
+        "{label}"
+    );
+
+    click_dynamic(&format!("comment-accept-{key}"), &mut cx);
+    cx.run_until_parked();
+    let accepted = "= Page\n\nSome terms to comment on.\n";
+    assert_eq!(document_text(&app, &mut cx), accepted);
+    assert_eq!(widget_text(&editor, &mut cx), accepted);
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    assert_eq!(
+        comments[0].suggestion.as_ref().unwrap().state,
+        adoc_engine::SuggestionState::Accepted
+    );
+    assert!(cx.debug_bounds("comments-resolved").is_some(), "folded");
+    assert!(cx
+        .debug_bounds(Box::leak(format!("comment-accept-{key}").into_boxed_str()))
+        .is_none());
+
+    // Undo puts the text back; the suggestion stays accepted until reopened.
+    let focus = cx.update(|_, cx| gpui::Focusable::focus_handle(editor.read(cx), cx));
+    cx.update(|window, cx| window.focus(&focus, cx));
+    cx.dispatch_action(crate::editor::bindings::Undo);
+    cx.run_until_parked();
+    assert_eq!(document_text(&app, &mut cx), text);
+    assert_eq!(widget_text(&editor, &mut cx), text);
+}
+
+/// Opens Suggest Change on "words" of a new page, types "terms" as the replacement, and inserts
+/// `typed` at `at` bytes into "words" (negative: before it) while the box is open, as someone
+/// else's edit would.
+fn suggest_while_the_page_changes(
+    at: isize,
+    typed: &str,
+    cx: &mut TestAppContext,
+) -> (
+    Entity<AppState>,
+    Entity<WorkspaceView>,
+    adoc_engine::DocumentId,
+    VisualTestContext,
+    tempfile::TempDir,
+) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let page = root.join("page.adoc");
+    let text = "= Page\n\nSome words to comment on.\n";
+    std::fs::write(&page, text).unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+    let start = text.find("words").unwrap();
+    cx.update(|_, cx| {
+        editor
+            .read(cx)
+            .state_for_test()
+            .clone()
+            .update(cx, |state, cx| {
+                state.set_selected_range(start..start + "words".len(), cx);
+            });
+    });
+    cx.dispatch_action(crate::editor::bindings::SuggestChange);
+    cx.run_until_parked();
+    cx.simulate_keystrokes("t e r m s");
+
+    let id = cx.update(|_, cx| editor.read(cx).document());
+    let at = start.checked_add_signed(at).unwrap();
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id,
+                    range: adoc_core::SourceRange::new(at, at),
+                    text: typed.to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        })
+    });
+    cx.run_until_parked();
+    click("comment-submit", &mut cx);
+    cx.run_until_parked();
+    (app, workspace, id, cx, directory)
+}
+
+/// Suggested changes (#763): the box's range follows the text while it is open, so text typed
+/// before the selected words moves the suggestion with them rather than refusing it.
+#[gpui::test]
+fn a_suggestion_box_follows_its_text_as_the_page_changes(cx: &mut TestAppContext) {
+    let (app, _workspace, id, mut cx, _directory) =
+        suggest_while_the_page_changes(-("Some ".len() as isize), "Now ", cx);
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    assert_eq!(comments.len(), 1, "{comments:?}");
+    let text = cx.update(|_, cx| app.read(cx).engine.document(id).unwrap().text.to_string());
+    let start = text.find("words").unwrap();
+    assert_eq!(
+        comments[0].range,
+        SourceRange::new(start, start + "words".len())
+    );
+    let suggestion = comments[0].suggestion.as_ref().unwrap();
+    assert_eq!(suggestion.original, "words");
+    assert_eq!(suggestion.replacement, "terms");
+    assert!(
+        cx.debug_bounds("suggestion-replacement").is_none(),
+        "the box closed"
+    );
+}
+
+/// Suggested changes (#763, SUGGEST 3/4): text typed inside the selected words while the box is
+/// open changes what the suggestion was begun on, so the engine refuses it, and the box stays
+/// open with the replacement typed.
+#[gpui::test]
+fn a_suggestion_box_refuses_text_changed_while_open(cx: &mut TestAppContext) {
+    let (app, workspace, id, mut cx, _directory) = suggest_while_the_page_changes(2, "r", cx);
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    assert!(comments.is_empty(), "{comments:?}");
+    assert!(
+        cx.debug_bounds("suggestion-replacement").is_some(),
+        "still open"
+    );
+    assert_eq!(
+        cx.update(|_, cx| workspace.read(cx).suggestion_replacement_for_test(cx)),
+        Some("terms".to_owned())
+    );
+}
+
+/// Suggested changes (#763, SUGGEST 3/4): the source editor frames an undecided suggestion's
+/// range, strikes through the part accepting would remove while it can be accepted, and marks
+/// its line in the gutter, with no comment fill; the status bar names it with the caret inside;
+/// once accepted it is not marked at all.
+#[gpui::test]
+fn a_suggestion_is_marked_in_the_source_editor(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let page = root.join("page.adoc");
+    let text = "= Page\n\nSome words to comment on.\n";
+    std::fs::write(&page, text).unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+    let id = cx.update(|_, cx| editor.read(cx).document());
+    let suggest = |start: usize, original: &str, replacement: &str, cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            app.update(cx, |app, cx| {
+                app.invoke(
+                    ids::COMMENTS_SUGGEST,
+                    CommandArgs::Comment(adoc_engine::CommentRequest::Suggest {
+                        id,
+                        range: SourceRange::new(start, start + original.len()),
+                        original: Some(original.to_owned()),
+                        replacement: replacement.to_owned(),
+                        text: String::new(),
+                    }),
+                    cx,
+                )
+                .unwrap();
+            })
+        });
+        cx.run_until_parked();
+    };
+    let start = text.find("words").unwrap();
+    let end = start + "words".len();
+    suggest(start, "words", "terms", &mut cx);
+
+    let shown = cx.update(|_, cx| editor.read(cx).shown_suggestions().clone());
+    assert_eq!(shown.frames.len(), 1, "{shown:?}");
+    assert_eq!(shown.frames[0].range(), &(start..end));
+    assert_eq!(
+        shown.frames[0].style(),
+        gpui_component::input::RangeDecorationStyle::Frame
+    );
+    // Accepting would replace "word" with "term": the common "s" is not struck.
+    assert_eq!(shown.struck.len(), 1, "{shown:?}");
+    assert_eq!(shown.struck[0].range, start..start + "word".len());
+    assert!(shown.struck[0].style.strikethrough.is_some());
+    assert_eq!(shown.gutter, vec![start..end]);
+    assert!(
+        cx.update(|_, cx| editor.read(cx).shown_comments().is_empty()),
+        "a suggestion is not filled as a comment is"
+    );
+
+    // The caret inside it: the status bar names it, as a suggestion and not a comment.
+    cx.update(|_, cx| {
+        editor
+            .read(cx)
+            .state_for_test()
+            .clone()
+            .update(cx, |state, cx| {
+                state.set_selected_range(start + 2..start + 2, cx);
+            });
+    });
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("status-suggestion").is_some());
+    assert!(cx.debug_bounds("status-comment").is_none());
+    let author = cx.update(|_, cx| app.read(cx).engine.comments(id)[0].author.name.clone());
+    assert_eq!(
+        cx.update(|_, cx| workspace.read(cx).status_comment_for_test(cx)),
+        Some(format!(
+            "Suggestion by {author}: replace \u{2018}word\u{2019} with \u{2018}term\u{2019}"
+        ))
+    );
+
+    // Accepted, it is marked no more, and the caret inside its text names nothing.
+    let comment = cx.update(|_, cx| app.read(cx).engine.comments(id)[0].id);
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::COMMENTS_ACCEPT,
+                CommandArgs::Comment(adoc_engine::CommentRequest::Accept {
+                    id,
+                    comment,
+                    seen: None,
+                }),
+                cx,
+            )
+            .unwrap();
+        })
+    });
+    cx.run_until_parked();
+    cx.update(|_, cx| {
+        editor
+            .read(cx)
+            .state_for_test()
+            .clone()
+            .update(cx, |state, cx| {
+                state.set_selected_range(start + 2..start + 2, cx);
+            });
+    });
+    cx.run_until_parked();
+    let shown = cx.update(|_, cx| editor.read(cx).shown_suggestions().clone());
+    assert!(shown.frames.is_empty(), "{shown:?}");
+    assert!(shown.struck.is_empty(), "{shown:?}");
+    assert!(shown.gutter.is_empty(), "{shown:?}");
+    assert!(cx.debug_bounds("status-suggestion").is_none());
+    assert!(cx.debug_bounds("status-comment").is_none());
+
+    // An outdated suggestion is framed but not struck: accepting it would do nothing.
+    let at = text.find("comment").unwrap();
+    suggest(at, "comment", "remark", &mut cx);
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(at + 3, at + 3),
+                    text: "x".to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        })
+    });
+    cx.run_until_parked();
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    let outdated = comments
+        .iter()
+        .find(|comment| {
+            comment
+                .suggestion
+                .as_ref()
+                .is_some_and(|suggestion| suggestion.original == "comment")
+        })
+        .expect("the second suggestion");
+    assert_eq!(
+        outdated.suggestion.as_ref().unwrap().state,
+        adoc_engine::SuggestionState::Outdated
+    );
+    let shown = cx.update(|_, cx| editor.read(cx).shown_suggestions().clone());
+    assert_eq!(shown.frames.len(), 1, "{shown:?}");
+    assert_eq!(
+        shown.frames[0].range(),
+        &(outdated.range.start..outdated.range.end)
+    );
+    assert!(shown.struck.is_empty(), "{shown:?}");
+    assert_eq!(shown.gutter.len(), 1);
+}
+
 fn click_dynamic(selector: &str, cx: &mut VisualTestContext) {
     let bounds = cx
         .debug_bounds(Box::leak(selector.to_owned().into_boxed_str()))
@@ -12526,4 +13070,301 @@ fn the_visual_editor_marks_a_pages_comments(cx: &mut TestAppContext) {
     });
     settle_engine(&app, &mut cx);
     assert!(commented(&mut cx).is_empty());
+}
+
+/// Suggested changes (#763, SUGGEST 4/4): the visual editor shows what a pending suggestion
+/// would insert after the part it would remove, as text the page does not hold: typing at the
+/// caret beside it edits only the page, and once accepted it is shown no more.
+#[gpui::test]
+fn the_visual_editor_shows_a_suggestion_inline(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let page = root.join("page.adoc");
+    let text = "= Page\n\nSome words to comment on.\n";
+    std::fs::write(&page, text).unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.simulate_keystrokes("secondary-k w");
+    settle_engine(&app, &mut cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let visual = cx
+        .update(|_, cx| workspace.read(cx).visual_for_test(id).cloned())
+        .expect("a visual editor");
+    let start = text.find("words").unwrap();
+    let end = start + "words".len();
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::COMMENTS_SUGGEST,
+                CommandArgs::Comment(adoc_engine::CommentRequest::Suggest {
+                    id,
+                    range: SourceRange::new(start, end),
+                    original: Some("words".to_owned()),
+                    replacement: "text".to_owned(),
+                    text: String::new(),
+                }),
+                cx,
+            )
+            .unwrap();
+        })
+    });
+    settle_engine(&app, &mut cx);
+    draw_visual(&visual, &mut cx);
+    let suggested = cx.update(|_, cx| {
+        let view = visual.read(cx);
+        let shown = view.shown().cloned().unwrap();
+        (view.suggested(&shown, cx), view.commented(&shown, cx))
+    });
+    assert_eq!(
+        suggested.0,
+        vec![(SourceRange::new(start, end), end, "text".to_owned(), false)]
+    );
+    assert!(
+        suggested.1.is_empty(),
+        "a suggestion is not filled as a comment is"
+    );
+    let shown_at = |offset: usize, cx: &mut VisualTestContext| {
+        cx.update(|_, cx| visual.read(cx).shown_text_for_test(offset).unwrap())
+    };
+    // `Some words` is struck, then `text` shown after it; the display text is the page's.
+    let shown = shown_at(start, &mut cx);
+    assert_eq!(shown.text, "Some wordstext to comment on.");
+    assert_eq!(shown.insertions.len(), 1);
+    assert_eq!(
+        (shown.insertions[0].at, shown.insertions[0].shown.clone()),
+        (10, 10..14)
+    );
+    assert_eq!(shown.span(5..10), 5..10, "the strike stops before it");
+    assert_eq!(shown.display_len, "Some words to comment on.".len());
+
+    // Typed at the caret after `words`, the text goes into the page only, after what is shown.
+    place_caret(&visual, end, &mut cx);
+    cx.simulate_keystrokes("x");
+    settle_engine(&app, &mut cx);
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome wordsx to comment on.\n"
+    );
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    let suggestion = comments[0].suggestion.clone().unwrap();
+    assert_eq!(suggestion.state, adoc_engine::SuggestionState::Pending);
+    draw_visual(&visual, &mut cx);
+    assert_eq!(
+        shown_at(start, &mut cx).text,
+        "Some wordstextx to comment on."
+    );
+    assert_eq!(
+        cx.update(|_, cx| visual.read(cx).selection().head),
+        end + 1,
+        "the caret is in the page's text"
+    );
+
+    // Accepted, it is in the page and shown no more.
+    let comment = comments[0].id;
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::COMMENTS_ACCEPT,
+                CommandArgs::Comment(adoc_engine::CommentRequest::Accept {
+                    id,
+                    comment,
+                    seen: None,
+                }),
+                cx,
+            )
+            .unwrap();
+        })
+    });
+    settle_engine(&app, &mut cx);
+    draw_visual(&visual, &mut cx);
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome textx to comment on.\n"
+    );
+    let shown = shown_at(start, &mut cx);
+    assert_eq!(shown.text, "Some textx to comment on.");
+    assert!(shown.insertions.is_empty());
+}
+
+/// A page in a workspace, so it takes comments, shown in the visual editor.
+fn suggestion_workspace(
+    text: &str,
+    cx: &mut TestAppContext,
+) -> (
+    Entity<AppState>,
+    Entity<crate::visual::VisualView>,
+    adoc_engine::DocumentId,
+    VisualTestContext,
+) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap().keep();
+    let root = adoc_index::normalize_path(&directory);
+    let page = root.join("page.adoc");
+    std::fs::write(&page, text).unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.simulate_keystrokes("secondary-k w");
+    settle_engine(&app, &mut cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let visual = cx
+        .update(|_, cx| workspace.read(cx).visual_for_test(id).cloned())
+        .expect("a visual editor");
+    (app, visual, id, cx)
+}
+
+/// Suggests `replacement` for `original` at `start` of the page.
+fn suggest_at(
+    app: &Entity<AppState>,
+    id: adoc_engine::DocumentId,
+    start: usize,
+    original: &str,
+    replacement: &str,
+    cx: &mut VisualTestContext,
+) {
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::COMMENTS_SUGGEST,
+                CommandArgs::Comment(adoc_engine::CommentRequest::Suggest {
+                    id,
+                    range: SourceRange::new(start, start + original.len()),
+                    original: Some(original.to_owned()),
+                    replacement: replacement.to_owned(),
+                    text: String::new(),
+                }),
+                cx,
+            )
+            .unwrap();
+        })
+    });
+    settle_engine(app, cx);
+}
+
+/// Suggested changes (#763, SUGGEST 4/4): a suggestion that only adds text before its range
+/// (`words` to `the words`) shows it where typed text does not go, so the caret is drawn before
+/// it, and what is typed there appears beside the caret, before the suggested text.
+#[gpui::test]
+fn the_caret_is_drawn_where_typed_text_goes_beside_a_suggestion(cx: &mut TestAppContext) {
+    let text = "= Page\n\nSome words to comment on.\n";
+    let (app, visual, id, mut cx) = suggestion_workspace(text, cx);
+    let start = text.find("words").unwrap();
+    suggest_at(&app, id, start, "words", "the words", &mut cx);
+    draw_visual(&visual, &mut cx);
+    let caret = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| visual.read(cx).caret_shown_for_test().unwrap())
+    };
+
+    place_caret(&visual, start, &mut cx);
+    draw_visual(&visual, &mut cx);
+    let (shown, index) = caret(&mut cx);
+    assert_eq!(shown.text, "Some the words to comment on.");
+    assert_eq!(shown.insertions[0].shown, 5..9);
+    assert_eq!(index, 5, "the caret is drawn before `the `");
+
+    cx.simulate_keystrokes("x");
+    settle_engine(&app, &mut cx);
+    draw_visual(&visual, &mut cx);
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome xwords to comment on.\n"
+    );
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    assert_eq!(
+        comments[0].suggestion.as_ref().unwrap().state,
+        adoc_engine::SuggestionState::Pending
+    );
+    let (shown, index) = caret(&mut cx);
+    assert_eq!(shown.text, "Some xthe words to comment on.");
+    assert_eq!(
+        index, 6,
+        "the caret follows the `x` typed, still before `the `"
+    );
+}
+
+/// Suggested changes (#763, SUGGEST 4/4): the input method is given the page's text, never
+/// what a suggestion would insert, so it can neither read nor convert it.
+#[gpui::test]
+fn the_input_method_never_sees_suggested_text(cx: &mut TestAppContext) {
+    use gpui::EntityInputHandler as _;
+
+    let text = "= Page\n\nSome words to comment on.\n";
+    let (app, visual, id, mut cx) = suggestion_workspace(text, cx);
+    let start = text.find("words").unwrap();
+    let end = start + "words".len();
+    suggest_at(&app, id, start, "words", "text", &mut cx);
+    draw_visual(&visual, &mut cx);
+    place_caret(&visual, start, &mut cx);
+    cx.update(|_, cx| visual.update(cx, |visual, cx| visual.select(start, end, cx)));
+    draw_visual(&visual, &mut cx);
+    let (whole, selected) = cx.update(|window, cx| {
+        visual.update(cx, |visual, cx| {
+            let mut adjusted = None;
+            (
+                visual.text_for_range(0..1000, &mut adjusted, window, cx),
+                visual.selected_text_range(false, window, cx),
+            )
+        })
+    });
+    assert_eq!(whole.as_deref(), Some("Some words to comment on."));
+    assert_eq!(selected.unwrap().range, 5..10, "`words`, without `text`");
+
+    // Replacing the selection as reported replaces only the page's `words`.
+    cx.update(|window, cx| {
+        visual.update(cx, |visual, cx| {
+            visual.replace_text_in_range(Some(5..10), "terms", window, cx);
+        })
+    });
+    settle_engine(&app, &mut cx);
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome terms to comment on.\n"
+    );
+}
+
+/// Suggested changes (#763, SUGGEST 4/4): a pending suggestion is marked as a suggestion, not
+/// filled as a comment is; one outdated, which shows nothing to insert, keeps the comment fill.
+#[gpui::test]
+fn an_outdated_suggestion_keeps_the_comment_fill(cx: &mut TestAppContext) {
+    let text = "= Page\n\nSome words to comment on.\n";
+    let (app, visual, id, mut cx) = suggestion_workspace(text, cx);
+    let start = text.find("words").unwrap();
+    suggest_at(&app, id, start, "words", "terms", &mut cx);
+    let marks = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let view = visual.read(cx);
+            let shown = view.shown().cloned().unwrap();
+            (view.commented(&shown, cx), view.suggested(&shown, cx).len())
+        })
+    };
+    assert_eq!(marks(&mut cx), (Vec::new(), 1));
+
+    // Typed inside it, it is outdated.
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(start + 2, start + 2),
+                    text: "x".to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        })
+    });
+    settle_engine(&app, &mut cx);
+    let comments = cx.update(|_, cx| app.read(cx).engine.comments(id));
+    assert_eq!(
+        comments[0].suggestion.as_ref().unwrap().state,
+        adoc_engine::SuggestionState::Outdated
+    );
+    assert_eq!(marks(&mut cx), (vec![comments[0].range], 0));
 }

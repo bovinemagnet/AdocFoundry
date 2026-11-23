@@ -93,6 +93,15 @@ pub(crate) fn interfaces() -> Vec<Interface> {
 
 /// The name shown to guests: the account's, else a plain one.
 pub(crate) fn own_name() -> String {
+    login_name().unwrap_or_else(|| "Host".to_owned())
+}
+
+/// The name a guest joins with: the login name, else the name comments are written under.
+pub(crate) fn guest_name(engine: &adoc_engine::Engine) -> String {
+    login_name().unwrap_or_else(|| engine.comment_author().name)
+}
+
+fn login_name() -> Option<String> {
     ["USER", "USERNAME", "LOGNAME"]
         .iter()
         .find_map(|key| std::env::var(key).ok())
@@ -103,7 +112,6 @@ pub(crate) fn own_name() -> String {
                 .collect::<String>()
         })
         .filter(|name| !name.is_empty() && !name.chars().any(char::is_control))
-        .unwrap_or_else(|| "Host".to_owned())
 }
 
 /// The app's version, which each side names in its `Hello`.

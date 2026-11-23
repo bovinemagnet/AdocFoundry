@@ -20,7 +20,7 @@ If nothing is selected, AdocFoundry asks you to select some text first.
 == Seeing comments in the editor
 
 The source editor fills commented text and marks the gutter beside it.
-The visual editor fills the text of each open comment in the same colour; it has no gutter, so it shows no gutter mark.
+The visual editor fills the text of each open comment in the same colour, apart from a pending suggestion, which it draws as described under xref:comments.adoc#_seeing_a_suggestion[Seeing a suggestion]; it has no gutter, so it shows no gutter mark.
 When the caret is inside a comment, the status bar says whose it is.
 
 *Edit › Next Comment* and *Edit › Previous Comment* move to the next or previous open comment, going round the page.
@@ -59,6 +59,118 @@ It is listed under *Detached (n)*, with "Was on" and the text it was on.
 
 If the text comes back, for example when you undo the deletion, the comment finds it again once typing pauses.
 
+== Suggesting a change
+
+A suggestion is a comment that proposes replacing the text it is on.
+Suggesting changes nothing in the page.
+Only accepting a suggestion changes it.
+
+The visual editor shows suggestions too.
+A pending suggestion has the part that accepting it would remove struck through, and the text it would add drawn inline right after it, underlined, both in the theme's information colour.
+The added text is for display only.
+It is not part of the page, so you cannot copy or edit it, and the caret never lands inside it.
+The caret steps over it as it steps over an inline formula, and typing beside it edits only the page.
+A selection that spans it is highlighted across it, but copying or cutting that selection takes only the page's text.
+A pending suggestion is not filled in the comment colour.
+
+An outdated suggestion is filled like a comment, in the warning colour, with nothing struck through or added.
+Accepted and rejected suggestions are not shown, as resolved comments are not.
+
+You cannot start a suggestion in the visual editor.
+Use *Suggest Change* in the source editor.
+
+=== Making a suggestion
+
+. Select the text in the source editor.
+. Choose *Edit › Suggest Change*, which follows *Add Comment*, or press kbd:[Cmd+Alt+Shift+M] on macOS or kbd:[Ctrl+Alt+Shift+M] elsewhere.
+. A "Suggested change" box opens in the *Comments* panel.
+The *Replace with* box holds the selected text, all selected, so typing replaces it.
+Add a note if you want to explain the change.
+. Choose *Suggest*, or choose *Cancel*.
+
+Leave *Replace with* empty to suggest deleting the text.
+The replacement must differ from the text it replaces.
+
+AdocFoundry refuses a suggestion in these cases:
+
+* Nothing is selected: "Select the text to change first."
+* More than 4 KiB of text is selected: "Select at most 4 KiB of text to suggest a change."
+* The selected words changed while the box was open: "The text changed while you were suggesting; try again."
+
+The box follows its text as the page changes.
+Text typed before or after the selected words, by you or by anyone in a session, moves it along and does not refuse it.
+Only a change to the selected words themselves refuses it, such as typing inside them or deleting them.
+The box then stays open with what you typed.
+Choosing *Suggest* again cannot succeed on the same selection.
+Copy your replacement if you need it, choose *Cancel*, select the text as it is now and choose *Suggest Change* again.
+As a guest, you are refused on your own machine and the box stays open too.
+If the words changed on the host's copy first, the host refuses after the box has closed, with a notification.
+
+A replacement may be up to 8 KiB.
+
+=== Seeing a suggestion
+
+In the source editor, the text of a pending or outdated suggestion is framed, and its line is marked in the gutter, in the theme's information colour.
+Comments use the warning colour.
+While a suggestion is pending, the part that accepting it would remove is struck through.
+
+When the caret is inside a suggestion, the status bar says what accepting it would do.
+For example, "Suggestion by Ada: replace ‘word’ with ‘term’".
+It reads "delete ‘…’" or "insert ‘…’" when the suggestion only removes or only adds text.
+
+In the *Comments* panel, the card shows the change.
+It shows the original with the part to be removed struck through, then the replacement with the part to be added underlined.
+Choose the change to select its text in the editor.
+
+=== States of a suggestion
+
+Pending:: The text is still what was suggested on.
+Outdated:: The text has changed since this was suggested.
+An outdated suggestion cannot be accepted.
+Reject it, or edit it to suggest again on the current text.
+Accepted:: Someone accepted the suggestion and the text was changed.
+Rejected:: Someone turned the suggestion down.
+
+If the page changes outside AdocFoundry, a suggestion is found again by the text it was on.
+It is outdated unless its place is certain.
+
+=== Accepting, rejecting and the other buttons
+
+A suggestion has the buttons *Accept*, *Reject*, *Reply*, *Edit* and *Delete*, and *Reopen* once it is decided.
+Only those you may use are shown.
+
+* *Edit* changes the replacement and the note while the suggestion is undecided.
+Once it is decided, *Edit* changes the note alone.
+* A suggestion is never just resolved.
+If you try, AdocFoundry says "Accept or reject a suggestion instead of resolving it."
+
+Accepting makes one small edit, and only the part that differs changes.
+The edit is in the page's undo history.
+*Undo* takes it back, and the suggestion's text with it, and *Redo* puts it back.
+The suggestion stays accepted.
+It also stays accepted, and its author stays credited, when you close the page without saving or reload it from disk.
+Choose *Reopen* to take the suggestion back.
+To withdraw the credit, untick the person in the commit dialog's co-author list.
+
+Accepting is refused with "This suggestion has changed since you saw it." when its author changed the replacement, or the text it is on, after the card was shown to you.
+This happens mostly in a session, when the author edits it while you choose *Accept*.
+The card then shows the new change, and *Accept* accepts that.
+
+Accepted and rejected suggestions are folded with the resolved comments, under "Accepted by …" or "Rejected by …".
+
+Accepting a suggestion credits its author as a co-author of your next commit, as edits in a session do.
+Working alone or hosting, accepting your own suggestion credits nobody.
+A guest who accepts its own suggestion in a session is credited, because its words reach the file as the host's edit.
+Nobody is credited when the author gave no usable address.
+See xref:collaboration.adoc#_credit_for_guests[Credit for guests].
+
+=== Who may do what
+
+* Anyone who may comment may suggest.
+* The author of a suggestion may edit it or withdraw it, by rejecting it.
+* Accepting and rejecting the suggestions of others is for whoever is working alone, the host and Editors.
+A Viewer never can.
+
 == Where comments are kept
 
 Comments are written to a file beside the page, named after it with a leading dot and `.afd` added: `.install.adoc.afd` for `install.adoc`.
@@ -66,6 +178,8 @@ It is a TOML file.
 The leading dot keeps it out of the published Antora site.
 
 The page is never changed, so nothing about comments appears in its Git diff.
+Suggestions are kept in the same file.
+A file that holds one is written as `format = 2`, which an older AdocFoundry shows read-only.
 
 === Sharing comments through Git
 
@@ -96,9 +210,10 @@ See xref:settings.adoc[Settings].
 
 == Limits
 
-* 500 comments a page.
+* 500 comments a page, suggestions included.
 * 100 replies to a comment.
 * 8 KiB of text in each comment or reply.
+* 4 KiB of selected text for a suggestion, and 8 KiB for its replacement.
 
 == Comments in a shared session
 
@@ -110,6 +225,17 @@ The host keeps them in its `.afd` file.
 * The host, Editors and the author of a comment can resolve or reopen it.
 * Only the author edits a comment.
 * The author or the host can delete it.
+
+Everyone with the page open sees suggestions too.
+
+* A Viewer may suggest but not accept.
+* An Editor and the host may accept.
+* A guest's suggestion changes nothing until someone accepts it.
+* The host applies every accept once, so two people accepting at once change the text once.
+
+A guest's accept is not in anyone's undo history.
+To take it back, edit the text or suggest the reverse.
+A guest who sees "The text changed while you were suggesting; try again." should simply suggest again.
 
 Guests see names, never e-mail addresses.
 

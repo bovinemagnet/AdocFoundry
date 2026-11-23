@@ -7,7 +7,7 @@
 use std::{cell::RefCell, net::IpAddr, rc::Rc};
 
 use adoc_engine::{
-    protocol::{FileKind, PeerId, Role},
+    protocol::{commit_email, FileKind, PeerId, Role},
     CollaborationStep, SharePlan, SharedSaveState,
 };
 use adoc_share::{Connecting, Invitation, ShareError, Timings};
@@ -64,6 +64,14 @@ fn caret_place(engine: &adoc_engine::Engine, peer: PeerId, place: Option<u64>) -
             Some(format!(" · {}", entry.path))
         })
         .unwrap_or_default()
+}
+
+/// The line under a knocking guest's name giving the address they gave to be credited by: the
+/// guest's own claim, checked only for its form, so the host can spot one that is not theirs
+/// before admitting them. A line of its own, in the app's words, since the name beside it is the
+/// guest's text and could imitate it.
+fn knock_address_note(email: &str) -> String {
+    format!("Gives the address {email} (not checked)")
 }
 
 /// How a shared file stands, said briefly, for the panel and the status bar.
@@ -269,8 +277,9 @@ impl WorkspaceView {
         }
     }
 
-    /// Join Session…: asks for the invitation and a name, connects off the window's thread and
-    /// checks the host's certificate, and goes on only once the safety code is compared.
+    /// Join Session…: asks for the invitation, a name and, optionally, an address to be credited
+    /// by in the host's commits, connects off the window's thread and checks the host's
+    /// certificate, and goes on only once the safety code is compared.
     pub(super) fn on_join_session(
         &mut self,
         _: &JoinSession,
@@ -285,16 +294,42 @@ impl WorkspaceView {
         }
         let invitation =
             cx.new(|cx| InputState::new(window, cx).placeholder("adocfoundry:join?v=1&…"));
+        let engine = &self.app.read(cx).engine;
+        let (own, address) = (
+            crate::collaboration::guest_name(engine),
+            engine.comment_author().email.unwrap_or_default(),
+        );
         let name = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Your name")
-                .default_value(crate::collaboration::own_name())
+                .default_value(own)
+        });
+        let email = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("E-mail for commit credit (optional)")
+                .default_value(address)
         });
         let first = invitation.clone();
         let workspace = cx.weak_entity();
-        window.open_alert_dialog(cx, move |dialog, _, _| {
-            let (invitation, name, workspace) =
-                (invitation.clone(), name.clone(), workspace.clone());
+        window.open_alert_dialog(cx, move |dialog, _, cx| {
+            let (invitation, name, email, workspace) = (
+                invitation.clone(),
+                name.clone(),
+                email.clone(),
+                workspace.clone(),
+            );
+            let invalid = |email: &Entity<InputState>, cx: &App| {
+                let typed = email.read(cx).value();
+                let typed = typed.trim();
+                !typed.is_empty() && commit_email(typed).is_err()
+            };
+            let problem = invalid(&email, cx).then(|| {
+                div()
+                    .debug_selector(|| "join-email-problem".to_owned())
+                    .text_xs()
+                    .text_color(cx.theme().danger)
+                    .child("Not an e-mail address")
+            });
             dialog
                 .title("Join Session")
                 .width(px(600.))
@@ -304,21 +339,50 @@ impl WorkspaceView {
                         .debug_selector(|| "join-form".to_owned())
                         .child("Paste the invitation you were sent.")
                         .child(Input::new(&invitation))
-                        .child(Input::new(&name)),
+                        .child(Input::new(&name))
+                        .child(
+                            div()
+                                .debug_selector(|| "join-email".to_owned())
+                                .child(Input::new(&email)),
+                        )
+                        .children(problem)
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(
+                                    "Only the host is told it, to credit your edits in its \
+                                     commits.",
+                                ),
+                        ),
                 )
                 .confirm()
                 .ok_text("Connect")
                 .on_ok(move |_, window, cx| {
+                    if invalid(&email, cx) {
+                        return false;
+                    }
                     let line = invitation.read(cx).value().to_string();
                     let who = name.read(cx).value().trim().to_owned();
-                    let _ = workspace.update(cx, |this, cx| this.connect(&line, who, window, cx));
+                    let address = email.read(cx).value().trim().to_owned();
+                    let address = (!address.is_empty()).then_some(address);
+                    let _ = workspace.update(cx, |this, cx| {
+                        this.connect(&line, who, address, window, cx);
+                    });
                     true
                 })
         });
         first.update(cx, |input, cx| input.focus(window, cx));
     }
 
-    fn connect(&mut self, line: &str, name: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn connect(
+        &mut self,
+        line: &str,
+        name: String,
+        email: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let invitation = match line.parse::<Invitation>() {
             Ok(invitation) => invitation,
             Err(_) => {
@@ -332,7 +396,7 @@ impl WorkspaceView {
         cx.spawn_in(window, async move |this, cx| {
             let result = connecting.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                this.compare_safety_code(result, name, window, cx);
+                this.compare_safety_code(result, name, email, window, cx);
             });
         })
         .detach();
@@ -344,6 +408,7 @@ impl WorkspaceView {
         &mut self,
         result: Result<Connecting, ShareError>,
         name: String,
+        email: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -365,7 +430,8 @@ impl WorkspaceView {
         let held = Rc::new(RefCell::new(Some(connecting)));
         let workspace = cx.weak_entity();
         window.open_alert_dialog(cx, move |dialog, _, _| {
-            let (held, workspace, name) = (held.clone(), workspace.clone(), name.clone());
+            let (held, workspace, name, email) =
+                (held.clone(), workspace.clone(), name.clone(), email.clone());
             dialog
                 .title("Compare the safety code")
                 .child(
@@ -390,7 +456,7 @@ impl WorkspaceView {
                         return true;
                     };
                     let _ = workspace.update(cx, |this, cx| {
-                        this.authenticate(connecting, &name, window, cx);
+                        this.authenticate(connecting, &name, email.as_deref(), window, cx);
                     });
                     true
                 })
@@ -401,12 +467,13 @@ impl WorkspaceView {
         &mut self,
         connecting: Connecting,
         name: &str,
+        email: Option<&str>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let waker = self.app.read(cx).guest_waker();
         let joined = connecting
-            .authenticate(name, None, env!("CARGO_PKG_VERSION"), waker)
+            .authenticate(name, email, env!("CARGO_PKG_VERSION"), waker)
             .map_err(|error| error.to_string())
             .and_then(|(link, control)| {
                 self.app.update(cx, |app, cx| app.joined(link, control, cx))
@@ -572,10 +639,23 @@ impl WorkspaceView {
                         .child("Waiting"),
                 );
                 for (peer, name) in knocks {
+                    let mut asking = v_flex()
+                        .flex_1()
+                        .child(div().child(format!("{name} asks to join")));
+                    if let Some(email) = engine.session_knock_email(peer) {
+                        let selector = format!("session-knock-email-{}", peer.0);
+                        asking = asking.child(
+                            div()
+                                .text_xs()
+                                .text_color(muted)
+                                .debug_selector(move || selector.clone())
+                                .child(knock_address_note(email)),
+                        );
+                    }
                     panel = panel.child(
                         h_flex()
                             .gap_2()
-                            .child(div().flex_1().child(format!("{name} asks to join")))
+                            .child(asking)
                             .child(action(
                                 format!("session-admit-{}", peer.0),
                                 "Admit",
@@ -833,5 +913,18 @@ impl WorkspaceView {
             }
         }
         panel.into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::knock_address_note;
+
+    #[test]
+    fn a_knocking_guests_address_is_marked_as_not_checked() {
+        assert_eq!(
+            knock_address_note("ada@example.com"),
+            "Gives the address ada@example.com (not checked)"
+        );
     }
 }

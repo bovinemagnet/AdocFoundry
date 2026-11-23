@@ -4,7 +4,7 @@ The release record for collaborative editing (COLLAB 8/8, #695; `docs/prd/PRD-Ad
 
 A case is marked passed only when a named test holds it, or a person has run it and recorded the result here. Nothing unverified is marked as passing.
 
-**State:** every automated row below passes on macOS. The manual checks have not been run yet. One release decision is open: a guest claiming another's address.
+**State:** every automated row below passes on macOS. The manual checks have not been run yet. No release decision is open.
 
 ## Coverage matrix
 
@@ -82,7 +82,12 @@ Each threat, its defence, and the test that holds it. Defects found in `yrs` dur
 | A guest's e-mail address leaking (#761) | Sent only to the host in `Authenticate`, checked by `commit_email`; never in a `Member`, a comment thread sent to a guest (which says only whether it is the guest's own), an error or a log line | `a_guests_email_reaches_only_the_host`, `addresses_are_held_to_the_rule`, `an_invalid_address_is_refused_before_connecting` |
 | A hostile co-authors file (#761) | `coauthors.json` read as untrusted: 1 MiB, 10,000 files, 100 co-authors a file, every name and address checked; an unusable or newer file is left alone and never written over | `an_unusable_state_file_is_left_alone` |
 | Crediting someone who only read | A guest is recorded only when an update it sent changed the text | `a_participant_who_only_read_is_never_credited` |
-| A guest claiming another's address (#761) | Not defended: the host decides whose a comment is by the address a guest gives, which nobody checks and the host does not see when admitting it, so a guest giving someone else's address can edit or delete that person's comments, and can be credited as them in the host's commits until the host unticks them. Names were already as self-chosen; Editors can rewrite the page anyway | open (see Release decisions) |
+| A guest claiming another's address (#761) | Shown, not checked: the host decides whose a comment is by the address a guest gives, checked only for its form, so the Session panel shows a knocking guest's address under their name, as the guest's own and not checked, for the host to turn away a claim it does not expect. The address is shown only there, on the host; no network check is made. A guest admitted with someone else's address can edit or delete that person's comments, and is credited as them in the host's commits unless the host unticks them. Names were already as self-chosen; Editors can rewrite the page anyway | `the_host_sees_a_knocking_guests_address`, `the_session_panel_shows_a_knocking_guests_address` (app); decided (see Release decisions) |
+| A guest's suggestion changing text (#763) | A suggestion changes no text, on any participant, until the host accepts it | `a_viewers_suggestion_changes_nothing_until_accepted` |
+| A suggestion made on text the host does not hold (#763) | The host checks the `original` a guest sends, on suggesting and on editing a suggestion, and changes nothing on a mismatch | `the_host_refuses_a_suggestion_made_on_other_text`, `the_host_refuses_an_edit_of_a_suggestion_made_on_other_text` |
+| A Viewer accepting (#763) | Refused by the host, whatever the guest sends | `a_viewer_cannot_accept` |
+| An accept applied twice (#763) | Two accepts of one suggestion apply once, against the host's text | `two_accepts_apply_once` |
+| An accept applying text its accepter never saw (#763) | An accept carries the original and replacement the accepter saw, held to a suggestion's limits on the wire; the host (and the guest first) refuses it, changing nothing, when the suggestion's author has edited it since, so a Viewer cannot rewrite its suggestion under someone else's accept | `an_accept_in_flight_of_a_changed_suggestion_is_refused`, `suggestion_fields_are_held_to_their_limits` |
 | Comments flooding a guest | Every comment and reply held to its limits on the wire; at most 500 a file and 32 told a pump | `comments_are_held_to_their_limits` |
 | Guest pages parsed on every update (cost, not a breach) | Parsed once typing pauses | `a_guests_page_is_parsed_once_typing_pauses` |
 | Malformed or hostile CRDT data | A grammar check before `yrs` decodes anything; panics caught; the whole text compared after each remote update; a replica that may be wrong is poisoned and rebuilt in a new epoch | `collab_malformed_update_changes_nothing`, `an_update_splitting_a_character_poisons_the_replica`, `a_hostile_update_makes_the_host_rebuild_and_the_guest_start_again`; fuzz target `collab_update` |
@@ -114,10 +119,11 @@ Run with two copies of the app on two machines on one local network, unless the 
 | Screen reader: the Session panel's participants, roles and caret places are read | [ ] | [ ] | [ ] |
 | Follow someone moving between pages and typing: your view goes with them and keeps their caret in view; a click, a scroll or typing ends it (#767) | [ ] | [ ] | [ ] |
 | Comment on a shared page from each side, a Viewer included, while the other types around it; both see the same comments on the same text, and the host's `.afd` file holds them (#762) | [ ] | [ ] | [ ] |
+| A guest joins with an address; the host's Session panel shows it under their name, marked not checked, before admitting them; the host edits nothing, the guest changes one page; the host's commit dialog offers the guest for that page only, and the commit pushed to GitHub shows them as a co-author; the other guest's screen never shows the address (#761) | [ ] | [ ] | [ ] |
 | Stop Sharing: guests are told, the port is closed | [ ] | [ ] | [ ] |
 | The Flatpak package shares and joins on the local network (Linux only) | | | [ ] |
 
 ## Release decisions
 
-- **A guest claiming another's address (#761, open):** whose a comment is, and who is credited, rest on the address a guest gives, which nobody verifies. Options: accept it, as names were accepted; show the address beside the name when the host admits a knock, so the host can turn away a claim it does not expect; or decide comment ownership by name only and use the address for credit alone.
+- **A guest claiming another's address (#761):** whose a comment is, and who is credited, rest on the address a guest gives, which nobody verifies. Decided: the host sees the address when the guest knocks. The Session panel shows it under the guest's name, marked as given by the guest and not checked (`Gives the address ada@example.com (not checked)`), so the host can turn away a claim it does not expect before admitting it. It is display text only, shown on the host alone, never sent to a guest or logged. No DNS or other network check is made; that is left for a later issue.
 - **Flatpak:** the package may use the network (`--share=network` in its manifest, held by `packaging/test_bundle.py`), so it can share and join; nothing listens or connects until the person chooses to.

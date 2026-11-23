@@ -72,6 +72,7 @@ actions!(
         LeaveSession,
         StopFollowing,
         AddComment,
+        SuggestChange,
         NextComment,
         PreviousComment,
         Quit,
@@ -341,6 +342,7 @@ fn binding_for(id: CommandId, keys: &str, cx: &App) -> Option<KeyBinding> {
         ids::COLLAB_LEAVE => key_binding(keys, LeaveSession, workspace, cx),
         ids::COLLAB_STOP_FOLLOWING => key_binding(keys, StopFollowing, workspace, cx),
         ids::COMMENTS_ADD => key_binding(keys, AddComment, workspace, cx),
+        ids::COMMENTS_SUGGEST => key_binding(keys, SuggestChange, workspace, cx),
         ids::COMMENTS_NEXT => key_binding(keys, NextComment, workspace, cx),
         ids::COMMENTS_PREVIOUS => key_binding(keys, PreviousComment, workspace, cx),
         // From any window, the graph and the detached preview too: the app handles it.
@@ -477,6 +479,7 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::COLLAB_LEAVE => Box::new(LeaveSession),
         ids::COLLAB_STOP_FOLLOWING => Box::new(StopFollowing),
         ids::COMMENTS_ADD => Box::new(AddComment),
+        ids::COMMENTS_SUGGEST => Box::new(SuggestChange),
         ids::COMMENTS_NEXT => Box::new(NextComment),
         ids::COMMENTS_PREVIOUS => Box::new(PreviousComment),
         ids::APP_QUIT => Box::new(Quit),
@@ -669,6 +672,8 @@ mod tests {
             ids::COMMENTS_REOPEN,
             ids::COMMENTS_EDIT,
             ids::COMMENTS_DELETE,
+            ids::COMMENTS_ACCEPT,
+            ids::COMMENTS_REJECT,
         ];
         let engine = Engine::new(Settings::default());
         let missing: Vec<&str> = engine

@@ -697,18 +697,18 @@ fn the_host_is_told_the_guests_address() {
 }
 
 #[test]
-fn the_host_says_it_speaks_version_two() {
+fn the_host_says_it_speaks_version_three() {
     let hosting = hosting("= Page\n", timings());
     let invitation = hosting.host.invite().unwrap();
     let mut raw = Raw::connect(&invitation);
     raw.send(&Message::Hello {
         min: 1,
-        max: 2,
+        max: 3,
         app: "raw".to_owned(),
     });
     assert!(matches!(
         raw.next(),
-        Ok(Message::Hello { min: 2, max: 2, .. })
+        Ok(Message::Hello { min: 3, max: 3, .. })
     ));
 }
 
@@ -723,13 +723,13 @@ fn an_invalid_address_is_refused_before_connecting() {
 }
 
 #[test]
-fn a_guest_speaking_only_version_one_is_refused() {
+fn a_guest_speaking_only_version_two_is_refused() {
     let hosting = hosting("= Page\n", timings());
     let invitation = hosting.host.invite().unwrap();
     let mut raw = Raw::connect(&invitation);
     raw.send(&Message::Hello {
         min: 1,
-        max: 1,
+        max: 2,
         app: "old".to_owned(),
     });
     assert!(raw.refused_with(ErrorCode::Incompatible));

@@ -21,8 +21,11 @@ use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, Value};
 
 /// The extension of a page's metadata file.
 pub const SIDECAR_EXTENSION: &str = "afd";
-/// The version of the file this engine writes.
-pub const FORMAT: i64 = 1;
+/// The newest version of the file this engine reads and writes: the one a file holding a
+/// suggested change has.
+pub const FORMAT: i64 = 2;
+/// The version of a file holding no suggested change, which older versions read too.
+pub const FORMAT_PLAIN: i64 = 1;
 /// The largest metadata file read or written.
 pub const MAX_FILE: usize = 4 * 1024 * 1024;
 /// The most comments a page holds.
@@ -137,9 +140,48 @@ pub struct StoredComment {
     pub after: String,
     pub text: String,
     pub resolved: Option<Resolution>,
+    /// The change it suggests, when it suggests one.
+    pub suggestion: Option<StoredSuggestion>,
     /// Its text was not found: `quote` is what it was on.
     pub detached: bool,
     pub replies: Vec<StoredReply>,
+}
+
+/// A change a comment suggests to the text of its range.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StoredSuggestion {
+    /// The text of the range when it was suggested; never empty.
+    pub original: String,
+    /// What the range should become; empty to suggest deleting it.
+    pub replacement: String,
+    /// How it was decided, once the comment is resolved.
+    pub outcome: Option<Outcome>,
+    /// Its place was found again only uncertainly, so it is not to be accepted as it stands.
+    pub uncertain: bool,
+}
+
+/// How a suggestion was decided.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Outcome {
+    Accepted,
+    Rejected,
+}
+
+impl Outcome {
+    fn word(self) -> &'static str {
+        match self {
+            Self::Accepted => "accepted",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+/// Whether `text` may be kept in a suggestion: no control character but line breaks and tabs.
+#[must_use]
+pub fn suggestion_text(text: &str) -> bool {
+    !text
+        .chars()
+        .any(|character| character.is_control() && !matches!(character, '\n' | '\t' | '\r'))
 }
 
 /// A reply to a comment.
@@ -217,7 +259,7 @@ pub struct PageMeta {
 
 impl Default for PageMeta {
     fn default() -> Self {
-        let document: DocumentMut = format!("{HEADER}format = {FORMAT}\n")
+        let document: DocumentMut = format!("{HEADER}format = {FORMAT_PLAIN}\n")
             .parse()
             .expect("the header is TOML");
         Self {
@@ -250,7 +292,7 @@ pub fn parse(bytes: &[u8]) -> Result<PageMeta, MetaProblem> {
         .ok_or_else(|| invalid("it has no format"))?;
     let read = read_comments(&document);
     match (format, read) {
-        (FORMAT, Ok(comments)) => Ok(PageMeta {
+        (FORMAT_PLAIN..=FORMAT, Ok(comments)) => Ok(PageMeta {
             document,
             comments,
             newer: None,
@@ -330,6 +372,19 @@ fn read_comment(table: &Table) -> Result<StoredComment, MetaProblem> {
         Some(Some(detached)) => detached,
         Some(None) => return Err(invalid("`detached` is not true or false")),
     };
+    let suggestion = read_suggestion(table)?;
+    if suggestion
+        .as_ref()
+        .is_some_and(|suggestion| suggestion.outcome.is_some() != resolved.is_some())
+    {
+        return Err(invalid(
+            "a suggestion has an outcome exactly when it is resolved",
+        ));
+    }
+    let note = text(table, "text", MAX_TEXT)?;
+    if note.is_empty() && suggestion.is_none() {
+        return Err(invalid("a comment with no suggestion has no text"));
+    }
     Ok(StoredComment {
         id: id(table)?,
         author: text(table, "author", MAX_AUTHOR)?,
@@ -342,11 +397,46 @@ fn read_comment(table: &Table) -> Result<StoredComment, MetaProblem> {
         quote: text(table, "quote", MAX_QUOTE)?,
         before: optional_text(table, "before", MAX_CONTEXT)?.unwrap_or_default(),
         after: optional_text(table, "after", MAX_CONTEXT)?.unwrap_or_default(),
-        text: text(table, "text", MAX_TEXT)?,
+        text: note,
         resolved,
+        suggestion,
         detached,
         replies,
     })
+}
+
+fn read_suggestion(table: &Table) -> Result<Option<StoredSuggestion>, MetaProblem> {
+    let Some(item) = table.get("suggestion") else {
+        return Ok(None);
+    };
+    let table = item
+        .as_table()
+        .ok_or_else(|| invalid("`suggestion` is not a table"))?;
+    let original = text(table, "original", MAX_QUOTE)?;
+    if original.is_empty() {
+        return Err(invalid("a suggestion's original text is empty"));
+    }
+    let replacement = text(table, "replacement", MAX_TEXT)?;
+    if !suggestion_text(&original) || !suggestion_text(&replacement) {
+        return Err(invalid("a suggestion holds a control character"));
+    }
+    let outcome = match optional_text(table, "outcome", 16)?.as_deref() {
+        None => None,
+        Some("accepted") => Some(Outcome::Accepted),
+        Some("rejected") => Some(Outcome::Rejected),
+        Some(_) => return Err(invalid("`outcome` is not accepted or rejected")),
+    };
+    let uncertain = match table.get("uncertain").map(|item| item.as_bool()) {
+        None => false,
+        Some(Some(uncertain)) => uncertain,
+        Some(None) => return Err(invalid("`uncertain` is not true or false")),
+    };
+    Ok(Some(StoredSuggestion {
+        original,
+        replacement,
+        outcome,
+        uncertain,
+    }))
 }
 
 fn read_reply(table: &Table) -> Result<StoredReply, MetaProblem> {
@@ -501,6 +591,7 @@ const COMMENT_KEYS: &[&str] = &[
     "resolved_by",
     "resolved_at",
     "detached",
+    "suggestion",
     "reply",
 ];
 
@@ -528,6 +619,13 @@ impl PageMeta {
         }) {
             return Err(MetaProblem::TooLong);
         }
+        if comments.iter().any(|comment| {
+            comment.suggestion.as_ref().is_some_and(|suggestion| {
+                suggestion.original.len() > MAX_QUOTE || suggestion.replacement.len() > MAX_TEXT
+            })
+        }) {
+            return Err(MetaProblem::TooLong);
+        }
         let old: Vec<Table> = self
             .document
             .get("comment")
@@ -551,7 +649,12 @@ impl PageMeta {
         } else {
             document.insert("comment", Item::ArrayOfTables(tables));
         }
-        set(document.as_table_mut(), "format", FORMAT);
+        let format = if comments.iter().any(|comment| comment.suggestion.is_some()) {
+            FORMAT
+        } else {
+            FORMAT_PLAIN
+        };
+        set(document.as_table_mut(), "format", format);
         if document.iter().all(|(key, _)| key == "format") {
             return Ok(None);
         }
@@ -637,6 +740,23 @@ fn write_comment(mut table: Table, comment: &StoredComment) -> Table {
             .map(|resolution| to_datetime(resolution.at)),
     );
     set_or_remove(&mut table, "detached", comment.detached.then_some(true));
+    match &comment.suggestion {
+        Some(suggestion) => {
+            let mut kept = table
+                .get("suggestion")
+                .and_then(Item::as_table)
+                .cloned()
+                .unwrap_or_default();
+            set(&mut kept, "original", suggestion.original.as_str());
+            set(&mut kept, "replacement", suggestion.replacement.as_str());
+            set_or_remove(&mut kept, "outcome", suggestion.outcome.map(Outcome::word));
+            set_or_remove(&mut kept, "uncertain", suggestion.uncertain.then_some(true));
+            table.insert("suggestion", Item::Table(kept));
+        }
+        None => {
+            table.remove("suggestion");
+        }
+    }
     let old: Vec<Table> = table
         .get("reply")
         .and_then(Item::as_array_of_tables)
@@ -703,6 +823,7 @@ mod tests {
             text: "Is this right?\nI think so.".to_owned(),
             resolved: None,
             detached: false,
+            suggestion: None,
             replies: vec![StoredReply {
                 id: id + 1,
                 author: "Grace".to_owned(),
@@ -716,6 +837,158 @@ mod tests {
 
     fn written(comments: &[StoredComment]) -> String {
         PageMeta::default().render(comments).unwrap().unwrap()
+    }
+
+    fn suggested(id: u64) -> StoredComment {
+        let mut suggested = comment(id, 8, 12);
+        suggested.text = "Shorter?".to_owned();
+        suggested.suggestion = Some(StoredSuggestion {
+            original: "text".to_owned(),
+            replacement: "words & more".to_owned(),
+            outcome: Some(Outcome::Rejected),
+            uncertain: true,
+        });
+        suggested.resolved = Some(Resolution {
+            by: "Grace".to_owned(),
+            at: at(1_795_000_500),
+        });
+        suggested
+    }
+
+    #[test]
+    fn a_suggestion_round_trips() {
+        let mut lined = suggested(0x1);
+        lined.suggestion.as_mut().unwrap().replacement = "one\n\ttwo\r\n".to_owned();
+        let comments = vec![lined, suggested(0x10)];
+        let text = written(&comments);
+        assert!(text.contains("format = 2"), "{text}");
+        assert!(text.contains("[comment.suggestion]"), "{text}");
+        let read = parse(text.as_bytes()).unwrap();
+        assert_eq!(read.comments, comments);
+        assert_eq!(read.render(&read.comments).unwrap().unwrap(), text);
+        let mut open = suggested(0x1);
+        open.resolved = None;
+        open.suggestion = Some(StoredSuggestion {
+            outcome: None,
+            uncertain: false,
+            ..open.suggestion.unwrap()
+        });
+        let text = written(std::slice::from_ref(&open));
+        assert!(!text.contains("outcome"), "{text}");
+        assert!(!text.contains("uncertain"), "{text}");
+        assert_eq!(parse(text.as_bytes()).unwrap().comments, [open]);
+    }
+
+    #[test]
+    fn suggestions_raise_the_format_only_when_present() {
+        let with = written(&[suggested(0x1)]);
+        assert!(with.contains("format = 2"), "{with}");
+        let read = parse(with.as_bytes()).unwrap();
+        let mut plain = read.comments.clone();
+        plain[0].suggestion = None;
+        plain[0].resolved = None;
+        let without = read.render(&plain).unwrap().unwrap();
+        assert!(without.contains("format = 1"), "{without}");
+        assert!(!without.contains("suggestion"), "{without}");
+
+        let old = written(&[comment(0x1, 8, 12)]);
+        assert!(old.contains("format = 1"), "{old}");
+        let read = parse(old.as_bytes()).unwrap();
+        let mut changed = read.comments.clone();
+        changed[0].text = "Changed.".to_owned();
+        let again = read.render(&changed).unwrap().unwrap();
+        assert_eq!(again, written(&changed));
+        assert!(again.contains("text = \"Changed.\""), "{again}");
+        assert!(!old.contains("text = \"Changed.\""), "{old}");
+    }
+
+    #[test]
+    fn a_format_one_file_holding_a_suggestion_is_read() {
+        let text = written(&[suggested(0x1)]).replace("format = 2", "format = 1");
+        let read = parse(text.as_bytes()).unwrap();
+        assert_eq!(read.newer, None);
+        assert_eq!(read.comments, [suggested(0x1)]);
+        assert!(read
+            .render(&read.comments)
+            .unwrap()
+            .unwrap()
+            .contains("format = 2"));
+    }
+
+    #[test]
+    fn unknown_suggestion_keys_are_kept() {
+        let text = written(&[suggested(0x1)]).replace(
+            "[comment.suggestion]\n",
+            "[comment.suggestion]\nweight = 3 # theirs\n",
+        );
+        let read = parse(text.as_bytes()).unwrap();
+        let mut changed = read.comments.clone();
+        changed[0].suggestion.as_mut().unwrap().replacement = "other".to_owned();
+        let again = read.render(&changed).unwrap().unwrap();
+        assert!(again.contains("weight = 3 # theirs"), "{again}");
+        assert_eq!(parse(again.as_bytes()).unwrap().comments, changed);
+    }
+
+    #[test]
+    fn a_broken_suggestion_makes_the_file_unusable() {
+        let text = written(&[suggested(0x1)]);
+        let swap = |from: &str, to: &str| {
+            assert!(text.contains(from), "{from}");
+            text.replace(from, to)
+        };
+        let long_original = format!("original = \"{}\"", "o".repeat(MAX_QUOTE + 1));
+        let long_replacement = format!("replacement = \"{}\"", "r".repeat(MAX_TEXT + 1));
+        for broken in [
+            swap("original = \"text\"", "original = \"\""),
+            swap("original = \"text\"", &long_original),
+            swap("original = \"text\"", "original = \"a\\u0001b\""),
+            swap("original = \"text\"", "original = 4"),
+            swap("replacement = \"words", "replacement = \"a\\u0007b words"),
+            swap(
+                "replacement = \"words",
+                &format!("{long_replacement}\nx = \""),
+            ),
+            swap("outcome = \"rejected\"", "outcome = \"maybe\""),
+            swap("outcome = \"rejected\"", "outcome = 1"),
+            swap("outcome = \"rejected\"\n", ""),
+            swap("resolved = true", "resolved = false"),
+            swap("uncertain = true", "uncertain = \"yes\""),
+        ] {
+            assert!(
+                matches!(parse(broken.as_bytes()), Err(MetaProblem::Invalid(_))),
+                "{broken}"
+            );
+        }
+        let mut open = suggested(0x1);
+        open.suggestion.as_mut().unwrap().outcome = None;
+        let unresolved_outcome = swap("resolved = true", "resolved = false");
+        assert!(matches!(
+            parse(unresolved_outcome.as_bytes()),
+            Err(MetaProblem::Invalid(_))
+        ));
+        let mut blank = comment(0x1, 8, 12);
+        blank.text = String::new();
+        let empty_note = written(&[blank]);
+        assert!(matches!(
+            parse(empty_note.as_bytes()),
+            Err(MetaProblem::Invalid(_))
+        ));
+        let mut quiet = suggested(0x1);
+        quiet.text = String::new();
+        assert!(parse(written(&[quiet]).as_bytes()).is_ok());
+        let newer = text.replace("format = 2", "format = 3");
+        assert_eq!(parse(newer.as_bytes()).unwrap().newer, Some(3));
+        assert!(suggestion_text("a\nb\tc\r"));
+        assert!(!suggestion_text("a\u{1}b"));
+    }
+
+    #[test]
+    fn the_fixture_suggestion_is_read() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/comments/modules/ROOT/pages/.suggested.adoc.afd");
+        let read = parse(&std::fs::read(path).unwrap()).unwrap();
+        let suggestion = read.comments[0].suggestion.as_ref().unwrap();
+        assert_eq!(suggestion.replacement, "asks once");
     }
 
     #[test]
@@ -899,15 +1172,15 @@ mod tests {
 
     #[test]
     fn a_newer_format_is_read_but_never_written() {
-        let text = written(&[comment(0x1, 0, 1)]).replace("format = 1", "format = 2");
+        let text = written(&[comment(0x1, 0, 1)]).replace("format = 1", "format = 3");
         let read = parse(text.as_bytes()).unwrap();
-        assert_eq!(read.newer, Some(2));
+        assert_eq!(read.newer, Some(3));
         assert_eq!(read.comments.len(), 1);
-        assert_eq!(read.render(&[]), Err(MetaProblem::NewerFormat(2)));
-        let unreadable = "format = 2\ncomment = \"elsewhere\"\n";
+        assert_eq!(read.render(&[]), Err(MetaProblem::NewerFormat(3)));
+        let unreadable = "format = 3\ncomment = \"elsewhere\"\n";
         assert_eq!(
             parse(unreadable.as_bytes()).err(),
-            Some(MetaProblem::NewerFormat(2))
+            Some(MetaProblem::NewerFormat(3))
         );
     }
 

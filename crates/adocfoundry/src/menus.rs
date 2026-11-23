@@ -135,6 +135,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::EDIT_TOGGLE_LINE_COMMENT),
             Separator,
             Command(ids::COMMENTS_ADD),
+            Command(ids::COMMENTS_SUGGEST),
             Command(ids::COMMENTS_NEXT),
             Command(ids::COMMENTS_PREVIOUS),
             Separator,

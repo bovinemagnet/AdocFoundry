@@ -1,0 +1,3 @@
+= Suggested
+
+The installer asks twice before it starts.

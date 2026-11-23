@@ -31,10 +31,13 @@ use std::{
 use adoc_core::SourceRange;
 
 use crate::{
+    coauthors::{is_commit_email, millis, real_path},
     commands::{ids, register, spec},
+    engine::UndoMode,
     page_meta::{
-        self, context, cut, digest, revision_of, sidecar_path, MetaProblem, PageMeta, Resolution,
-        StoredComment, StoredReply, MAX_AUTHOR, MAX_EMAIL, MAX_FILE, MAX_TEXT,
+        self, context, cut, digest, revision_of, sidecar_path, suggestion_text, MetaProblem,
+        Outcome, PageMeta, Resolution, StoredComment, StoredReply, StoredSuggestion, MAX_AUTHOR,
+        MAX_EMAIL, MAX_FILE, MAX_QUOTE, MAX_TEXT,
     },
     CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry, DocumentId,
     Engine, EngineError, EngineEvent, TextEdit,
@@ -67,17 +70,88 @@ pub struct Author {
 /// What the user may do to a comment or reply.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Allowed {
+    /// Resolve or reopen a comment; on a suggestion, reopen it, which it may be only once
+    /// decided (a suggestion is resolved by accepting or rejecting it).
     pub resolve: bool,
+    /// Edit its text; on a suggestion its note, and its replacement too while it is undecided.
     pub edit: bool,
     pub delete: bool,
+    /// Accept a suggestion: only while it is pending. Never on a plain comment or a reply.
+    pub accept: bool,
+    /// Reject a suggestion: only while it is undecided. Never on a plain comment or a reply.
+    pub reject: bool,
 }
 
 impl Allowed {
+    /// Everything a plain comment or reply allows.
     const ALL: Self = Self {
         resolve: true,
         edit: true,
         delete: true,
+        accept: false,
+        reject: false,
     };
+}
+
+/// Where a suggestion stands.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SuggestionState {
+    /// Its range holds the text it was suggested on, at a place it is sure of: it can be
+    /// accepted.
+    Pending,
+    /// Undecided, but its range's text differs from what it was suggested on, or it is detached,
+    /// or it was found again at a place it cannot be sure of: it cannot be accepted.
+    Outdated,
+    Accepted,
+    Rejected,
+}
+
+impl SuggestionState {
+    /// Accepted or rejected.
+    #[must_use]
+    pub fn decided(self) -> bool {
+        matches!(self, Self::Accepted | Self::Rejected)
+    }
+}
+
+/// The change a comment suggests to the text of its range.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Suggestion {
+    /// The text it was suggested on.
+    pub original: String,
+    /// What it would put in its place; empty to delete it.
+    pub replacement: String,
+    pub state: SuggestionState,
+    /// The part of the current text accepting would replace: the range less what `original`
+    /// and `replacement` share at either end (`minimal_edit`). Only meaningful while
+    /// [`SuggestionState::Pending`]; otherwise the whole range.
+    pub removed: SourceRange,
+    /// The text accepting would put at `removed`; otherwise the whole replacement.
+    pub inserted: String,
+}
+
+/// The lengths in bytes of the longest prefix, then of the longest suffix of what is left,
+/// that `original` and `replacement` share: each ends on a character boundary of both strings
+/// and they never overlap, so `prefix + suffix <= min(original.len(), replacement.len())`.
+/// Replacing `original[prefix..original.len() - suffix]` with
+/// `replacement[prefix..replacement.len() - suffix]` turns one into the other, touching only
+/// what differs.
+#[must_use]
+pub(crate) fn minimal_edit(original: &str, replacement: &str) -> (usize, usize) {
+    let prefix: usize = original
+        .chars()
+        .zip(replacement.chars())
+        .take_while(|(left, right)| left == right)
+        .map(|(character, _)| character.len_utf8())
+        .sum();
+    let suffix: usize = original[prefix..]
+        .chars()
+        .rev()
+        .zip(replacement[prefix..].chars().rev())
+        .take_while(|(left, right)| left == right)
+        .map(|(character, _)| character.len_utf8())
+        .sum();
+    (prefix, suffix)
 }
 
 /// A comment on a page, its range in the page's current text.
@@ -95,6 +169,8 @@ pub struct Comment {
     pub resolved: Option<Resolution>,
     /// Its text is gone: [`Comment::quote`] is what it was on.
     pub detached: bool,
+    /// The change it suggests, when it suggests one.
+    pub suggestion: Option<Suggestion>,
     pub replies: Vec<Reply>,
     pub can: Allowed,
 }
@@ -151,7 +227,48 @@ pub enum CommentRequest {
         reply: Option<CommentId>,
     },
     /// From `offset`, for `comments.next` and `comments.previous`.
-    Step { id: DocumentId, offset: usize },
+    Step {
+        id: DocumentId,
+        offset: usize,
+    },
+    /// Suggests `replacement` for the text of `range`, with a note that may be empty.
+    /// `original` is the text the front end showed when the suggestion was begun: refused when
+    /// the range no longer holds it. `None` takes the range's text as it is.
+    Suggest {
+        id: DocumentId,
+        range: SourceRange,
+        original: Option<String>,
+        replacement: String,
+        text: String,
+    },
+    /// Accepts the suggestion; `seen` is the change the front end showed, refused when the
+    /// suggestion no longer holds it. `None` accepts it as it is.
+    Accept {
+        id: DocumentId,
+        comment: CommentId,
+        seen: Option<SeenSuggestion>,
+    },
+    Reject {
+        id: DocumentId,
+        comment: CommentId,
+    },
+    /// Suggests again, on the range's text as it is now: for `comments.edit`.
+    EditSuggestion {
+        id: DocumentId,
+        comment: CommentId,
+        replacement: String,
+        text: String,
+    },
+}
+
+/// Why an accept is refused when the suggestion changed after its accepter saw it.
+pub(crate) const SUGGESTION_CHANGED: &str = "This suggestion has changed since you saw it.";
+
+/// A suggested change as its accepter saw it: what an accept is of.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SeenSuggestion {
+    pub original: String,
+    pub replacement: String,
 }
 
 /// A change to a page's comments, whoever asks for it: the user here, or a guest through the
@@ -178,6 +295,30 @@ pub(crate) enum Change {
     Delete {
         comment: u64,
         reply: Option<u64>,
+    },
+    /// `original` is the text a guest suggested on, checked against the range's text; none
+    /// here.
+    Suggest {
+        range: SourceRange,
+        original: Option<String>,
+        replacement: String,
+        text: String,
+    },
+    /// `seen` is the change the accepter saw, checked against the suggestion's.
+    Accept {
+        comment: u64,
+        seen: Option<SeenSuggestion>,
+    },
+    Reject {
+        comment: u64,
+    },
+    /// `original` is the text a guest saw at the range, checked against the range's text; none
+    /// here.
+    EditSuggestion {
+        comment: u64,
+        original: Option<String>,
+        replacement: String,
+        text: String,
     },
 }
 
@@ -222,18 +363,37 @@ impl Actor {
                 resolve: true,
                 edit: own,
                 delete: true,
+                ..Allowed::ALL
             },
             ActorKind::Editor => Allowed {
                 resolve: true,
                 edit: own,
                 delete: own,
+                ..Allowed::ALL
             },
             ActorKind::Viewer => Allowed {
                 resolve: own,
                 edit: own,
                 delete: own,
+                ..Allowed::ALL
             },
         }
+    }
+
+    /// What the actor may do to a comment that is, or is not, its `own`, suggesting a change
+    /// in `state` when it suggests one (spec §7): the host, Editors and anyone alone accept a
+    /// pending suggestion; they, or its author, reject an undecided one and reopen a decided
+    /// one.
+    pub(crate) fn allowed_on(&self, own: bool, state: Option<SuggestionState>) -> Allowed {
+        let mut allowed = self.allowed_own(own);
+        let Some(state) = state else {
+            return allowed;
+        };
+        let decides = self.kind != ActorKind::Viewer;
+        allowed.accept = decides && state == SuggestionState::Pending;
+        allowed.reject = (decides || own) && !state.decided();
+        allowed.resolve = (decides || own) && state.decided();
+        allowed
     }
 }
 
@@ -244,6 +404,138 @@ struct Live {
     stored: StoredComment,
     /// Where it is in the current text.
     range: SourceRange,
+    /// A suggestion found again at a place it cannot be sure of, so never pending until its
+    /// author suggests again; written to its file as `uncertain` when it is written.
+    uncertain: bool,
+    /// An accepted suggestion's edit, which Undo (then Redo) may yet reverse; kept in memory
+    /// only, as the undo history is.
+    reversal: Option<Reversal>,
+}
+
+/// The edit an accept made, as Undo or Redo would reverse it: when the page is next edited by
+/// exactly that reversal, the suggestion's range is put back over the text it then holds,
+/// which the comments' edge rule alone would not do (spec §6, "Undo").
+#[derive(Clone, Debug)]
+struct Reversal {
+    /// The text the accept's edit changes, where it is now: its replacement's part while the
+    /// accept stands, the original's part once undone.
+    span: SourceRange,
+    /// What reversing puts in place of `span`.
+    back: String,
+    /// What `span` holds now.
+    now: String,
+    /// The common start and end the edit left alone (`minimal_edit`).
+    prefix: usize,
+    suffix: usize,
+}
+
+impl Reversal {
+    /// The text around `span` the reversal relies on: the edit and its unchanged ends.
+    fn guarded(&self) -> SourceRange {
+        SourceRange::new(
+            self.span.start.saturating_sub(self.prefix),
+            self.span.end + self.suffix,
+        )
+    }
+
+    /// Follows `edits`, just applied: where its span starts after them when they hold exactly
+    /// the reversal and touch nothing else it relies on, so that it is now reversed; none when
+    /// it stands. `Err` when they changed what it relies on otherwise, so it can no longer be
+    /// told apart from any other edit.
+    fn follow(&mut self, edits: &[TextEdit]) -> Result<Option<usize>, ()> {
+        let guarded = self.guarded();
+        let mut shift: isize = 0;
+        let mut reversed = None;
+        for edit in edits {
+            if edit.range == self.span && edit.replacement == self.back && reversed.is_none() {
+                reversed = Some(self.span.start.saturating_add_signed(shift));
+            } else if touches(guarded, edit) {
+                return Err(());
+            }
+            if reversed.is_none() && edit.range.end <= self.span.start {
+                shift += edit.replacement.len() as isize - edit.range.len() as isize;
+            }
+        }
+        match reversed {
+            Some(start) => {
+                self.span = SourceRange::new(start, start + self.back.len());
+                std::mem::swap(&mut self.back, &mut self.now);
+                Ok(Some(start))
+            }
+            None => {
+                self.span = map_range(self.span, edits);
+                Ok(None)
+            }
+        }
+    }
+}
+
+/// Whether `edit` replaces or deletes any of `range`, or types inside it; typing at its edges
+/// does not touch it, nor does an edit beside it.
+fn touches(range: SourceRange, edit: &TextEdit) -> bool {
+    let SourceRange { start, end } = edit.range;
+    if range.is_empty() {
+        start < range.start && range.start < end
+    } else if start == end {
+        range.start < start && start < range.end
+    } else {
+        start < range.end && end > range.start
+    }
+}
+
+impl Live {
+    /// Where its suggestion stands, `range_text` being its range's current text; none for a
+    /// plain comment.
+    fn state(&self, range_text: &str) -> Option<SuggestionState> {
+        let suggestion = self.stored.suggestion.as_ref()?;
+        Some(match suggestion.outcome {
+            Some(Outcome::Accepted) => SuggestionState::Accepted,
+            Some(Outcome::Rejected) => SuggestionState::Rejected,
+            None if !self.stored.detached
+                && !self.uncertain
+                && range_text == suggestion.original =>
+            {
+                SuggestionState::Pending
+            }
+            None => SuggestionState::Outdated,
+        })
+    }
+
+    /// What `actor` may do to it, and where its suggestion stands, in the page's `text`.
+    fn allowed(&self, actor: &Actor, text: &str) -> (Allowed, Option<SuggestionState>) {
+        let range_text = text
+            .get(self.range.start..self.range.end)
+            .unwrap_or_default();
+        let state = self.state(range_text);
+        let own = actor.owns(&self.stored.author, self.stored.email.as_deref());
+        (actor.allowed_on(own, state), state)
+    }
+}
+
+/// A suggestion of `replacement` for `original` as a query shows it, in `state` at `range` in
+/// the current text: the host's stored one, or one a guest was told.
+pub(crate) fn shown_suggestion(
+    original: &str,
+    replacement: &str,
+    state: SuggestionState,
+    range: SourceRange,
+) -> Suggestion {
+    let (removed, inserted) = if state == SuggestionState::Pending {
+        let (prefix, suffix) = minimal_edit(original, replacement);
+        (
+            SourceRange::new(range.start + prefix, range.end - suffix),
+            replacement[prefix..replacement.len() - suffix].to_owned(),
+        )
+    } else {
+        (range, replacement.to_owned())
+    };
+    Suggestion {
+        original: original.to_owned(),
+        replacement: replacement.to_owned(),
+        state,
+        removed,
+        inserted,
+    }
 }
 
 /// One open page's comments.
@@ -403,33 +695,67 @@ fn common_suffix(left: &str, right: &str) -> usize {
         .count()
 }
 
-/// Where a stored comment is in `text`: at its offsets when `text` is the one they refer to,
-/// else where its quote is found, else nowhere (detached, at its old start).
-fn anchor(stored: &StoredComment, text: &str, revision: &str) -> (SourceRange, bool) {
+/// Where a stored comment is in `text`, whether it is detached, and whether its place is
+/// certain: at its offsets when `text` is the one they refer to (certain); else where its quote
+/// is found ([`find_again`]); else nowhere (detached, at its old start).
+fn place(stored: &StoredComment, text: &str, revision: &str) -> (SourceRange, bool, bool) {
     let at_offsets = stored.revision == revision
         && stored.end <= text.len()
         && text.is_char_boundary(stored.start)
         && text.is_char_boundary(stored.end);
     if at_offsets && !stored.detached {
-        return (SourceRange::new(stored.start, stored.end), false);
+        return (SourceRange::new(stored.start, stored.end), false, true);
     }
-    match find_quote(
-        text,
-        &stored.quote,
-        &stored.before,
-        &stored.after,
-        stored.start,
-    ) {
-        Some(range) => (range, false),
+    match find_again(text, stored, stored.start) {
+        Some((range, certain)) => (range, false, certain),
         None => {
             let place = stored.start.min(text.len());
             let place = (0..=place)
                 .rev()
                 .find(|offset| text.is_char_boundary(*offset))
                 .unwrap_or(0);
-            (SourceRange::new(place, place), true)
+            (SourceRange::new(place, place), true, false)
         }
     }
+}
+
+/// Where a comment's quote is in `text`, and whether that place is certain: certain at the one
+/// occurrence whose text before and after hold the stored `before` and `after` whole; else the
+/// best occurrence ([`find_quote`]), uncertain. A suggestion is pending only at a certain place,
+/// so it is never accepted on the same words elsewhere.
+fn find_again(text: &str, stored: &StoredComment, near: usize) -> Option<(SourceRange, bool)> {
+    if let Some(range) = only_whole_match(text, &stored.quote, &stored.before, &stored.after) {
+        return Some((range, true));
+    }
+    find_quote(text, &stored.quote, &stored.before, &stored.after, near).map(|range| (range, false))
+}
+
+/// The one occurrence of `quote` in `text`, overlapping ones weighed too, preceded by the whole
+/// of `before` and followed by the whole of `after`; none when there is no such occurrence, more
+/// than one, or more than [`MAX_OCCURRENCES`] occurrences to weigh.
+fn only_whole_match(text: &str, quote: &str, before: &str, after: &str) -> Option<SourceRange> {
+    if quote.is_empty() {
+        return None;
+    }
+    let mut found = None;
+    let mut seen = 0;
+    let mut from = 0;
+    while let Some(offset) = text.get(from..).and_then(|rest| rest.find(quote)) {
+        let start = from + offset;
+        seen += 1;
+        if seen > MAX_OCCURRENCES {
+            return None;
+        }
+        let end = start + quote.len();
+        if text[..start].ends_with(before) && text[end..].starts_with(after) {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(SourceRange::new(start, end));
+        }
+        from = start + text[start..].chars().next().map_or(1, char::len_utf8);
+    }
+    found
 }
 
 fn new_id(taken: &BTreeSet<u64>) -> u64 {
@@ -467,14 +793,52 @@ fn read_sidecar(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
 }
 
 fn checked_text(text: &str) -> Result<String, EngineError> {
-    let text = text.trim_end().to_owned();
-    if text.trim().is_empty() {
+    let text = checked_note(text)?;
+    if text.is_empty() {
         return Err(EngineError::Refused("a comment needs some text".to_owned()));
     }
+    Ok(text)
+}
+
+/// A suggestion's note, which may be empty: trimmed at its end, and empty when only spaces.
+pub(crate) fn checked_note(text: &str) -> Result<String, EngineError> {
+    let text = text.trim_end();
+    let text = if text.trim().is_empty() { "" } else { text };
     if text.len() > MAX_TEXT {
         return Err(EngineError::Refused(MetaProblem::TooLong.to_string()));
     }
-    Ok(text)
+    Ok(text.to_owned())
+}
+
+/// Refuses a suggestion of `replacement` for `original` that its file could not hold, or that
+/// changes nothing.
+pub(crate) fn check_suggestion(original: &str, replacement: &str) -> Result<(), EngineError> {
+    if original.is_empty() {
+        return Err(EngineError::InvalidRequest(
+            "a suggestion is on a range of the page's text".to_owned(),
+        ));
+    }
+    if original.len() > MAX_QUOTE {
+        return Err(EngineError::Refused(
+            "Select at most 4 KiB of text to suggest a change.".to_owned(),
+        ));
+    }
+    if replacement.len() > MAX_TEXT {
+        return Err(EngineError::Refused(
+            "Suggest at most 8 KiB of text.".to_owned(),
+        ));
+    }
+    if !suggestion_text(original) || !suggestion_text(replacement) {
+        return Err(EngineError::Refused(
+            "A suggestion holds no control character but line breaks and tabs.".to_owned(),
+        ));
+    }
+    if original == replacement {
+        return Err(EngineError::Refused(
+            "The suggestion changes nothing.".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// The `comments.*` commands, each a function of its own since commands are plain functions.
@@ -513,6 +877,9 @@ comment_commands! {
     delete_comment: ids::COMMENTS_DELETE, "Delete Comment", None;
     next_comment: ids::COMMENTS_NEXT, "Next Comment", None;
     previous_comment: ids::COMMENTS_PREVIOUS, "Previous Comment", None;
+    suggest_change: ids::COMMENTS_SUGGEST, "Suggest Change", Some("cmd-alt-shift-m");
+    accept_suggestion: ids::COMMENTS_ACCEPT, "Accept Suggestion", None;
+    reject_suggestion: ids::COMMENTS_REJECT, "Reject Suggestion", None;
 }
 
 impl Engine {
@@ -583,6 +950,24 @@ impl Engine {
             .iter()
             .map(|live| {
                 let stored = &live.stored;
+                let range_text = if stored.detached {
+                    String::new()
+                } else {
+                    self.documents
+                        .get(&id)
+                        .map_or_else(String::new, |document| {
+                            document
+                                .text
+                                .slice(live.range.start..live.range.end)
+                                .to_string()
+                        })
+                };
+                let state = live.state(&range_text);
+                let own = actor.owns(&stored.author, stored.email.as_deref());
+                let suggestion = stored.suggestion.as_ref().zip(state);
+                let suggestion = suggestion.map(|(shown, state)| {
+                    shown_suggestion(&shown.original, &shown.replacement, state, live.range)
+                });
                 Comment {
                     id: CommentId(stored.id),
                     author: Author {
@@ -592,17 +977,11 @@ impl Engine {
                     created: stored.created,
                     edited: stored.edited,
                     range: live.range,
+                    suggestion,
                     quote: if stored.detached {
                         stored.quote.clone()
                     } else {
-                        self.documents
-                            .get(&id)
-                            .map_or_else(String::new, |document| {
-                                document
-                                    .text
-                                    .slice(live.range.start..live.range.end)
-                                    .to_string()
-                            })
+                        range_text
                     },
                     text: stored.text.clone(),
                     resolved: stored.resolved.clone(),
@@ -622,7 +1001,7 @@ impl Engine {
                             can: actor.allowed(&reply.author, reply.email.as_deref()),
                         })
                         .collect(),
-                    can: actor.allowed(&stored.author, stored.email.as_deref()),
+                    can: actor.allowed_on(own, state),
                 }
             })
             .collect();
@@ -657,6 +1036,22 @@ impl Engine {
         self.page_comments
             .get(&id)
             .map_or(0, |page| page.generation)
+    }
+
+    /// The ids of document `id`'s suggestions found again at a place they cannot be sure of,
+    /// which guests are told so that they show what the host would refuse (spec §8).
+    #[cfg(feature = "collab")]
+    pub(crate) fn uncertain_suggestions(&self, id: DocumentId) -> BTreeSet<u64> {
+        self.page_comments
+            .get(&id)
+            .map(|page| {
+                page.comments
+                    .iter()
+                    .filter(|live| live.uncertain)
+                    .map(|live| live.stored.id)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Whether document `id`'s comments can be used, or why not.
@@ -751,19 +1146,41 @@ impl Engine {
         let mut changed = false;
         let mut detached = false;
         for live in &mut page.comments {
+            let reversed = match live
+                .reversal
+                .as_mut()
+                .map(|reversal| reversal.follow(edits))
+            {
+                Some(Ok(start)) => start,
+                Some(Err(())) => {
+                    live.reversal = None;
+                    None
+                }
+                None => None,
+            };
             if live.stored.detached {
                 live.range = map_range(live.range, edits);
                 live.range.end = live.range.start;
                 detached = true;
-                continue;
+            } else {
+                let inside = changes_inside(live.range, edits);
+                live.range = map_range(live.range, edits);
+                if live.range.is_empty() {
+                    live.stored.detached = true;
+                    detached = true;
+                }
+                if inside {
+                    page.changed.insert(live.stored.id);
+                    changed = true;
+                }
             }
-            let inside = changes_inside(live.range, edits);
-            live.range = map_range(live.range, edits);
-            if live.range.is_empty() {
-                live.stored.detached = true;
-                detached = true;
-            }
-            if inside {
+            if let (Some(start), Some(reversal)) = (reversed, &live.reversal) {
+                // An accept undone or redone: over the original or the replacement again,
+                // whatever the edge rule made of it.
+                let from = start.saturating_sub(reversal.prefix);
+                let len = reversal.prefix + reversal.span.len() + reversal.suffix;
+                live.range = SourceRange::new(from, from + len);
+                live.stored.detached = live.range.is_empty();
                 page.changed.insert(live.stored.id);
                 changed = true;
             }
@@ -815,7 +1232,11 @@ impl Engine {
             | CommentRequest::Resolve { id, .. }
             | CommentRequest::Edit { id, .. }
             | CommentRequest::Delete { id, .. }
-            | CommentRequest::Step { id, .. } => *id,
+            | CommentRequest::Step { id, .. }
+            | CommentRequest::Suggest { id, .. }
+            | CommentRequest::Accept { id, .. }
+            | CommentRequest::Reject { id, .. }
+            | CommentRequest::EditSuggestion { id, .. } => *id,
         };
         let expected = match &request {
             CommentRequest::Add { .. } => ids::COMMENTS_ADD,
@@ -824,8 +1245,13 @@ impl Engine {
             CommentRequest::Resolve {
                 resolved: false, ..
             } => ids::COMMENTS_REOPEN,
-            CommentRequest::Edit { .. } => ids::COMMENTS_EDIT,
+            CommentRequest::Edit { .. } | CommentRequest::EditSuggestion { .. } => {
+                ids::COMMENTS_EDIT
+            }
             CommentRequest::Delete { .. } => ids::COMMENTS_DELETE,
+            CommentRequest::Suggest { .. } => ids::COMMENTS_SUGGEST,
+            CommentRequest::Accept { .. } => ids::COMMENTS_ACCEPT,
+            CommentRequest::Reject { .. } => ids::COMMENTS_REJECT,
             CommentRequest::Step { .. } if command == ids::COMMENTS_PREVIOUS => {
                 ids::COMMENTS_PREVIOUS
             }
@@ -867,6 +1293,34 @@ impl Engine {
             CommentRequest::Delete { comment, reply, .. } => Change::Delete {
                 comment: comment.0,
                 reply: reply.map(|reply| reply.0),
+            },
+            CommentRequest::Suggest {
+                range,
+                original,
+                replacement,
+                text,
+                ..
+            } => Change::Suggest {
+                range,
+                original,
+                replacement,
+                text,
+            },
+            CommentRequest::Accept { comment, seen, .. } => Change::Accept {
+                comment: comment.0,
+                seen,
+            },
+            CommentRequest::Reject { comment, .. } => Change::Reject { comment: comment.0 },
+            CommentRequest::EditSuggestion {
+                comment,
+                replacement,
+                text,
+                ..
+            } => Change::EditSuggestion {
+                comment: comment.0,
+                original: None,
+                replacement,
+                text,
             },
             CommentRequest::Step { .. } => unreachable!("answered above"),
         };
@@ -919,6 +1373,10 @@ impl Engine {
                 return Err(EngineError::Refused(reason.clone()));
             }
         }
+        if let Change::Accept { comment, seen } = change {
+            // Accepting edits the page, which needs the engine, not only its comments.
+            return self.accept_suggestion(id, comment, seen.as_ref(), actor);
+        }
         let taken: BTreeSet<u64> = page
             .comments
             .iter()
@@ -961,11 +1419,154 @@ impl Engine {
                         text: body,
                         resolved: None,
                         detached: false,
+                        suggestion: None,
                         replies: Vec::new(),
                     },
                     range,
+                    uncertain: false,
+                    reversal: None,
                 });
                 new
+            }
+            Change::Suggest {
+                range,
+                original: expected,
+                replacement,
+                text: note,
+            } => {
+                let note = checked_note(&note)?;
+                // First, so text deleted while the box was open is said to have changed.
+                if expected
+                    .as_deref()
+                    .is_some_and(|expected| text.get(range.start..range.end) != Some(expected))
+                {
+                    return Err(EngineError::Refused(
+                        "The text changed while you were suggesting; try again.".to_owned(),
+                    ));
+                }
+                if range.is_empty()
+                    || range.end > text.len()
+                    || !text.is_char_boundary(range.start)
+                    || !text.is_char_boundary(range.end)
+                {
+                    return Err(EngineError::InvalidRequest(
+                        "a suggestion is on a range of the page's text".to_owned(),
+                    ));
+                }
+                let original = text[range.start..range.end].to_owned();
+                check_suggestion(&original, &replacement)?;
+                if page.comments.len() >= page_meta::MAX_COMMENTS {
+                    return Err(EngineError::Refused(MetaProblem::TooMany.to_string()));
+                }
+                let (quote, before, after) = context(&text, range.start, range.end);
+                let new = new_id(&taken);
+                page.comments.push(Live {
+                    stored: StoredComment {
+                        id: new,
+                        author: author.name,
+                        email: author.email,
+                        created: now,
+                        edited: None,
+                        start: range.start,
+                        end: range.end,
+                        revision: revision_of(&text),
+                        quote,
+                        before,
+                        after,
+                        text: note,
+                        resolved: None,
+                        detached: false,
+                        suggestion: Some(StoredSuggestion {
+                            original,
+                            replacement,
+                            outcome: None,
+                            uncertain: false,
+                        }),
+                        replies: Vec::new(),
+                    },
+                    range,
+                    uncertain: false,
+                    reversal: None,
+                });
+                new
+            }
+            Change::Accept { .. } => unreachable!("accepted above"),
+            Change::Reject { comment } => {
+                let at = page.live(CommentId(comment))?;
+                let (can, state) = page.comments[at].allowed(actor, &text);
+                let Some(state) = state else {
+                    return Err(EngineError::InvalidRequest(
+                        "this comment suggests no change".to_owned(),
+                    ));
+                };
+                if state.decided() {
+                    return Err(EngineError::Refused(
+                        "This suggestion is decided already.".to_owned(),
+                    ));
+                }
+                if !can.reject {
+                    return Err(not_allowed("reject someone else's suggestion"));
+                }
+                let stored = &mut page.comments[at].stored;
+                if let Some(suggestion) = stored.suggestion.as_mut() {
+                    suggestion.outcome = Some(Outcome::Rejected);
+                }
+                stored.resolved = Some(Resolution {
+                    by: author.name,
+                    at: now,
+                });
+                comment
+            }
+            Change::EditSuggestion {
+                comment,
+                original: expected,
+                replacement,
+                text: note,
+            } => {
+                let note = checked_note(&note)?;
+                let at = page.live(CommentId(comment))?;
+                let (can, state) = page.comments[at].allowed(actor, &text);
+                let Some(state) = state else {
+                    return Err(EngineError::InvalidRequest(
+                        "this comment suggests no change".to_owned(),
+                    ));
+                };
+                if !can.edit {
+                    return Err(not_allowed("edit someone else's suggestion"));
+                }
+                if state.decided() {
+                    return Err(EngineError::Refused(
+                        "Reopen this suggestion first.".to_owned(),
+                    ));
+                }
+                let live = &mut page.comments[at];
+                if live.stored.detached {
+                    return Err(EngineError::Refused(
+                        "The text this suggestion was on is gone.".to_owned(),
+                    ));
+                }
+                let original = text
+                    .get(live.range.start..live.range.end)
+                    .unwrap_or_default()
+                    .to_owned();
+                if expected.is_some_and(|expected| expected != original) {
+                    return Err(EngineError::Refused(
+                        "The text changed while you were suggesting; try again.".to_owned(),
+                    ));
+                }
+                check_suggestion(&original, &replacement)?;
+                // Suggested again on the text as it is: its place is certain.
+                live.uncertain = false;
+                live.reversal = None;
+                live.stored.suggestion = Some(StoredSuggestion {
+                    original,
+                    replacement,
+                    outcome: None,
+                    uncertain: false,
+                });
+                live.stored.text = note;
+                live.stored.edited = Some(now);
+                comment
             }
             Change::Reply {
                 comment,
@@ -990,17 +1591,39 @@ impl Engine {
             }
             Change::Resolve { comment, resolved } => {
                 let at = page.live(CommentId(comment))?;
+                let (can, state) = page.comments[at].allowed(actor, &text);
                 let stored = &mut page.comments[at].stored;
-                if !actor
-                    .allowed(&stored.author, stored.email.as_deref())
-                    .resolve
-                {
-                    return Err(not_allowed("resolve or reopen this comment"));
+                match state {
+                    None => {
+                        if !can.resolve {
+                            return Err(not_allowed("resolve or reopen this comment"));
+                        }
+                        stored.resolved = resolved.then_some(Resolution {
+                            by: author.name,
+                            at: now,
+                        });
+                    }
+                    Some(_) if resolved => {
+                        return Err(EngineError::Refused(
+                            "Accept or reject a suggestion instead of resolving it.".to_owned(),
+                        ));
+                    }
+                    Some(state) if !state.decided() => {
+                        return Err(EngineError::Refused(
+                            "This suggestion is not decided yet.".to_owned(),
+                        ));
+                    }
+                    Some(_) => {
+                        if !can.resolve {
+                            return Err(not_allowed("reopen someone else's suggestion"));
+                        }
+                        // Reopened: undecided again, and resolved exactly when decided.
+                        stored.resolved = None;
+                        if let Some(suggestion) = stored.suggestion.as_mut() {
+                            suggestion.outcome = None;
+                        }
+                    }
                 }
-                stored.resolved = resolved.then_some(Resolution {
-                    by: author.name,
-                    at: now,
-                });
                 comment
             }
             Change::Edit {
@@ -1008,9 +1631,14 @@ impl Engine {
                 reply,
                 text: body,
             } => {
-                let body = checked_text(&body)?;
                 let at = page.live(CommentId(comment))?;
                 let stored = &mut page.comments[at].stored;
+                // A suggestion's note may be empty; a comment's or a reply's text may not.
+                let body = if reply.is_none() && stored.suggestion.is_some() {
+                    checked_note(&body)?
+                } else {
+                    checked_text(&body)?
+                };
                 match reply {
                     None => {
                         if !actor.allowed(&stored.author, stored.email.as_deref()).edit {
@@ -1087,6 +1715,137 @@ impl Engine {
         page.generation += 1;
         page.write_at = Some(self.clock.now() + COMMENT_SETTLE);
         self.emit(EngineEvent::CommentsChanged(id));
+        Ok(())
+    }
+
+    /// Accepts suggestion `comment` on document `id` for `actor` (spec §6): one edit of the page
+    /// replacing only what differs, in its own undo step, after which the suggestion covers
+    /// exactly its replacement and is accepted; then its author is credited as a co-author when
+    /// they have an address and are not `actor`, or `actor` is a guest. Refused, changing
+    /// nothing, when the suggestion is no longer the change `seen` (what the accepter saw), or
+    /// the edit is refused. `change_comments` has checked that the page's comments can be
+    /// changed.
+    fn accept_suggestion(
+        &mut self,
+        id: DocumentId,
+        comment: u64,
+        seen: Option<&SeenSuggestion>,
+        actor: &Actor,
+    ) -> Result<(), EngineError> {
+        let document = self
+            .documents
+            .get(&id)
+            .ok_or(EngineError::UnknownDocument(id))?;
+        let text = document.text.to_string();
+        let path = document.path.clone();
+        let page = self
+            .page_comments
+            .get(&id)
+            .ok_or_else(|| EngineError::Refused("This page does not take comments.".to_owned()))?;
+        let live = &page.comments[page.live(CommentId(comment))?];
+        let (can, state) = live.allowed(actor, &text);
+        let (Some(state), Some(suggestion)) = (state, live.stored.suggestion.as_ref()) else {
+            return Err(EngineError::InvalidRequest(
+                "this comment suggests no change".to_owned(),
+            ));
+        };
+        if !can.accept {
+            return Err(EngineError::Refused(
+                match state {
+                    SuggestionState::Outdated => "The text has changed since this was suggested.",
+                    SuggestionState::Accepted | SuggestionState::Rejected => {
+                        "This suggestion is decided already."
+                    }
+                    SuggestionState::Pending => "You cannot accept a suggestion.",
+                }
+                .to_owned(),
+            ));
+        }
+        // Its author may have changed it since the accepter saw it (spec §8).
+        if seen.is_some_and(|seen| {
+            seen.original != suggestion.original || seen.replacement != suggestion.replacement
+        }) {
+            return Err(EngineError::Refused(SUGGESTION_CHANGED.to_owned()));
+        }
+        // A file edited by hand may hold a suggestion that changes nothing.
+        check_suggestion(&suggestion.original, &suggestion.replacement)?;
+        let (prefix, suffix) = minimal_edit(&suggestion.original, &suggestion.replacement);
+        let start = live.range.start;
+        let edit = TextEdit::new(
+            SourceRange::new(start + prefix, live.range.end - suffix),
+            suggestion.replacement[prefix..suggestion.replacement.len() - suffix].to_owned(),
+        );
+        let covered = SourceRange::new(start, start + suggestion.replacement.len());
+        let reversal = Reversal {
+            span: SourceRange::new(edit.range.start, edit.range.start + edit.replacement.len()),
+            back: suggestion.original[prefix..suggestion.original.len() - suffix].to_owned(),
+            now: edit.replacement.clone(),
+            prefix,
+            suffix,
+        };
+        // A guest's accept reaches the file as the host's edit, so a guest is credited for its
+        // own suggestion too; alone or hosting, an accept of one's own is one's own edit.
+        let guest = matches!(actor.kind, ActorKind::Editor | ActorKind::Viewer);
+        let credit = live
+            .stored
+            .email
+            .clone()
+            .filter(|email| {
+                is_commit_email(email) && (guest || !actor.owns(&live.stored.author, Some(email)))
+            })
+            .map(|email| (live.stored.author.clone(), email));
+        match actor.kind {
+            ActorKind::Alone | ActorKind::Host => {
+                let group = self.new_group();
+                self.apply_edits(id, vec![edit], UndoMode::Group(group))?;
+            }
+            // A guest's accept, which only the host applies (a guest's request goes to the
+            // host, `guest_comment`): in nobody's undo history, reaching everyone as the host's
+            // edit (spec §8).
+            #[cfg(feature = "collab")]
+            ActorKind::Editor | ActorKind::Viewer => {
+                self.apply_untracked_shared_edit(id, edit)?;
+            }
+            #[cfg(not(feature = "collab"))]
+            ActorKind::Editor | ActorKind::Viewer => {
+                return Err(EngineError::Refused(
+                    "You cannot accept a suggestion.".to_owned(),
+                ));
+            }
+        }
+        let now = self.clock.wall();
+        let later = self.clock.now() + COMMENT_SETTLE;
+        if let Some(page) = self.page_comments.get_mut(&id) {
+            if let Some(live) = page
+                .comments
+                .iter_mut()
+                .find(|live| live.stored.id == comment)
+            {
+                // Whatever the edge rule made of it; and Undo puts it back over its original.
+                live.range = covered;
+                live.reversal = Some(reversal);
+                if let Some(suggestion) = live.stored.suggestion.as_mut() {
+                    suggestion.outcome = Some(Outcome::Accepted);
+                }
+                live.stored.resolved = Some(Resolution {
+                    by: actor.author.name.clone(),
+                    at: now,
+                });
+                page.changed.insert(comment);
+            }
+            page.generation += 1;
+            page.write_at = Some(later);
+        }
+        self.emit(EngineEvent::CommentsChanged(id));
+        if let Some((name, email)) = credit {
+            let at = millis(now);
+            if self
+                .coauthors_mut()
+                .record(&real_path(&path), &name, &email, at)
+            {
+                self.save_coauthors();
+            }
+        }
         Ok(())
     }
 
@@ -1186,17 +1945,18 @@ impl Engine {
         };
         page.search_detached_at = None;
         let mut found = false;
-        for live in page.comments.iter_mut().filter(|live| live.stored.detached) {
-            let stored = &live.stored;
-            if let Some(range) = find_quote(
-                &text,
-                &stored.quote,
-                &stored.before,
-                &stored.after,
-                live.range.start,
-            ) {
+        // An accepted suggestion whose accept may yet be undone is where Undo will put it, never
+        // moved onto the same words elsewhere.
+        for live in page
+            .comments
+            .iter_mut()
+            .filter(|live| live.stored.detached && live.reversal.is_none())
+        {
+            if let Some((range, certain)) = find_again(&text, &live.stored, live.range.start) {
                 live.range = range;
                 live.stored.detached = false;
+                // Found again where it cannot be sure: a suggestion stays outdated.
+                live.uncertain |= live.stored.suggestion.is_some() && !certain;
                 page.changed.insert(live.stored.id);
                 found = true;
             }
@@ -1430,6 +2190,9 @@ fn refresh_changed(page: &mut PageComments, text: &str) {
         stored.start = live.range.start;
         stored.end = live.range.end;
         stored.revision.clone_from(&revision);
+        if let Some(suggestion) = stored.suggestion.as_mut() {
+            suggestion.uncertain = live.uncertain;
+        }
         if !stored.detached {
             let (quote, before, after) = context(text, live.range.start, live.range.end);
             stored.quote = quote;
@@ -1445,16 +2208,25 @@ fn read_into(page: &mut PageComments, bytes: &[u8], text: &str) {
     match page_meta::parse(bytes) {
         Ok(meta) => {
             let revision = revision_of(text);
-            page.comments = meta
-                .comments
-                .iter()
-                .map(|stored| {
-                    let (range, detached) = anchor(stored, text, &revision);
-                    let mut stored = stored.clone();
-                    stored.detached = detached;
-                    Live { stored, range }
-                })
-                .collect();
+            page.comments =
+                meta.comments
+                    .iter()
+                    .map(|stored| {
+                        let (range, detached, certain) = place(stored, text, &revision);
+                        // Uncertain as its file says, or for where it was found now.
+                        let uncertain = stored.suggestion.as_ref().is_some_and(|suggestion| {
+                            suggestion.uncertain || (!detached && !certain)
+                        });
+                        let mut stored = stored.clone();
+                        stored.detached = detached;
+                        Live {
+                            stored,
+                            range,
+                            uncertain,
+                            reversal: None,
+                        }
+                    })
+                    .collect();
             page.state = match meta.newer {
                 Some(format) => {
                     CommentsState::ReadOnly(MetaProblem::NewerFormat(format).to_string())
@@ -1521,6 +2293,14 @@ fn reread(page: &mut PageComments, text: Option<&str>) {
                 live.stored.replies = replies;
                 live.range = mine.range;
                 live.stored.detached = mine.stored.detached;
+                live.reversal.clone_from(&mine.reversal);
+                // Placed where it is here, as sure as it is here, and as the file says.
+                live.uncertain = mine.uncertain
+                    || live
+                        .stored
+                        .suggestion
+                        .as_ref()
+                        .is_some_and(|suggestion| suggestion.uncertain);
             }
         }
         live.stored
@@ -1654,5 +2434,125 @@ mod tests {
         );
         assert_eq!(find_quote(text, "delta", "", "", 0), None);
         assert_eq!(find_quote(text, "", "", "", 0), None);
+    }
+
+    /// Spec §7: who may accept, reject and reopen a suggestion, and edit and delete it as a
+    /// comment.
+    #[test]
+    fn who_may_decide_a_suggestion() {
+        use SuggestionState::{Accepted, Outdated, Pending, Rejected};
+        // (kind, own, decides: accept and reject or reopen, withdraws: reject or reopen,
+        // edit, delete)
+        let table = [
+            (ActorKind::Alone, false, true, true, true, true),
+            (ActorKind::Host, false, true, true, false, true),
+            (ActorKind::Host, true, true, true, true, true),
+            (ActorKind::Editor, false, true, true, false, false),
+            (ActorKind::Editor, true, true, true, true, true),
+            (ActorKind::Viewer, false, false, false, false, false),
+            (ActorKind::Viewer, true, false, true, true, true),
+        ];
+        for (kind, own, decides, withdraws, edit, delete) in table {
+            let actor = Actor {
+                author: Author {
+                    name: "Ada".to_owned(),
+                    email: None,
+                },
+                kind,
+            };
+            for state in [Pending, Outdated, Accepted, Rejected] {
+                let can = actor.allowed_on(own, Some(state));
+                let case = format!("{kind:?} own {own} {state:?}");
+                assert_eq!(can.accept, decides && state == Pending, "accept: {case}");
+                assert_eq!(can.reject, withdraws && !state.decided(), "reject: {case}");
+                assert_eq!(can.resolve, withdraws && state.decided(), "reopen: {case}");
+                assert_eq!((can.edit, can.delete), (edit, delete), "{case}");
+            }
+            let plain = actor.allowed_on(own, None);
+            assert!(!plain.accept && !plain.reject, "plain: {kind:?} own {own}");
+        }
+    }
+
+    #[test]
+    fn a_reversal_is_followed_only_while_what_it_relies_on_is_intact() {
+        // "It is very good." with "very " deleted at 6: Undo types it back there.
+        let accepted = || Reversal {
+            span: SourceRange::new(6, 6),
+            back: "very ".to_owned(),
+            now: String::new(),
+            prefix: 0,
+            suffix: 4,
+        };
+        let edit = |start, end, text: &str| TextEdit::new(SourceRange::new(start, end), text);
+
+        // Text typed before it moves it; the reversal itself is found among other edits.
+        let mut reversal = accepted();
+        assert_eq!(reversal.follow(&[edit(0, 0, "So ")]), Ok(None));
+        assert_eq!(reversal.span, SourceRange::new(9, 9));
+        assert_eq!(
+            reversal.follow(&[edit(0, 3, ""), edit(9, 9, "very "), edit(13, 13, "!")]),
+            Ok(Some(6))
+        );
+        // Now it awaits Redo, which deletes "very " again.
+        assert_eq!(reversal.span, SourceRange::new(6, 11));
+        assert_eq!(
+            (reversal.back.as_str(), reversal.now.as_str()),
+            ("", "very ")
+        );
+        assert_eq!(reversal.follow(&[edit(6, 11, "")]), Ok(Some(6)));
+
+        // Anything else changing the text it relies on ends it, as does a different reversal.
+        assert_eq!(accepted().follow(&[edit(7, 8, "")]), Err(()));
+        assert_eq!(accepted().follow(&[edit(6, 6, "rather ")]), Ok(None));
+        assert_eq!(accepted().follow(&[edit(5, 7, "")]), Err(()));
+        // Text typed at its far edge leaves it.
+        assert_eq!(accepted().follow(&[edit(10, 10, "!")]), Ok(None));
+    }
+
+    #[test]
+    fn only_what_differs_is_replaced() {
+        assert_eq!(minimal_edit("asks twice", "asks once"), (5, 2));
+        assert_eq!(minimal_edit("asks before", "asks once before"), (5, 6));
+        assert_eq!(minimal_edit("abab", "ab"), (2, 0), "never overlapping");
+        assert_eq!(minimal_edit("ab", "abab"), (2, 0));
+        assert_eq!(minimal_edit("same", ""), (0, 0));
+        assert_eq!(minimal_edit("aXa", "aYa"), (1, 1));
+        // é and è share their first byte, é and ĩ their last: neither is split.
+        assert_eq!(minimal_edit("é", "è"), (0, 0));
+        assert_eq!(minimal_edit("xé", "xĩ"), (1, 0));
+        assert_eq!(minimal_edit("éa", "ĩa"), (0, 1));
+        for (original, replacement) in [("naïve café", "naive cafe"), ("😀😀", "😀😁😀")]
+        {
+            let (prefix, suffix) = minimal_edit(original, replacement);
+            assert!(prefix + suffix <= original.len().min(replacement.len()));
+            for text in [original, replacement] {
+                assert!(text.is_char_boundary(prefix));
+                assert!(text.is_char_boundary(text.len() - suffix));
+            }
+        }
+    }
+
+    #[test]
+    fn a_place_is_certain_only_when_its_context_is_whole_and_alone() {
+        let text = "one: the words here. two: the words there.";
+        let second = SourceRange::new(26, 35);
+        assert_eq!(&text[second.start..second.end], "the words");
+        assert_eq!(
+            only_whole_match(text, "the words", "two: ", " there"),
+            Some(second)
+        );
+        assert_eq!(only_whole_match(text, "the words", ": ", " "), None);
+        assert_eq!(only_whole_match(text, "the words", "", ""), None, "two");
+        assert_eq!(only_whole_match(text, "the words", "six: ", ""), None);
+        // Overlapping occurrences are weighed too.
+        assert_eq!(only_whole_match("aaa", "aa", "", ""), None);
+        assert_eq!(
+            only_whole_match("aaab", "aa", "a", "b"),
+            Some(SourceRange::new(1, 3))
+        );
+        assert_eq!(
+            only_whole_match("é é", "é", "", " "),
+            Some(SourceRange::new(0, 2))
+        );
     }
 }
