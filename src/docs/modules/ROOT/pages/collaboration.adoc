@@ -62,6 +62,10 @@ If the codes differ, the guest should not go on.
 === Letting people in
 
 When someone has connected and compared the code, they appear under *Waiting* in the *Session* panel as "asks to join".
+If they gave an e-mail address for commit credit, a line under their name reads "Gives the address ... (not checked)".
+The address is only their claim, and the app checks that it looks like an e-mail address, not that it belongs to them.
+Look at it before you choose, and turn away a request whose address you do not expect.
+Someone who gives another person's address could edit or delete that person's comments, and be credited as them in commits.
 You choose:
 
 *Admit*:: They join as a Viewer.
@@ -351,7 +355,9 @@ If what you type is not an e-mail address, "Not an e-mail address" shows under t
 Without an address you are not credited.
 
 Only the host is told your address.
-Other guests never see it, and it is not shown in the *Session* panel.
+Other guests never see it.
+The host sees it in the *Session* panel under your name while you wait to be admitted, marked as not checked, so that a wrong one can be spotted.
+It is not shown once you are in.
 The host also keeps your comments on a shared page with your address, so the page's comments file, which is usually committed, holds it, as it does for the host's own comments.
 Because the host knows your comments by your address, you can edit your own comments in a later session, even under another name.
 
@@ -367,6 +373,7 @@ Nothing shows when nobody else changed those files.
 You are never listed, nor is anyone whose address is the commit's author's or committer's.
 
 CAUTION: Nobody checks the address a guest gives, so look at the list before you commit.
+You also saw each address when the guest asked to join.
 
 === What counts
 

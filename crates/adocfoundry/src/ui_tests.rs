@@ -12147,6 +12147,52 @@ fn the_join_dialog_fills_and_checks_the_address(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("join-form").is_some());
 }
 
+/// The Session panel shows the host the address a knocking guest gives, as the guest's own and
+/// unchecked, so a wrong one can be spotted before admitting; a guest who gave none shows none.
+#[gpui::test]
+fn the_session_panel_shows_a_knocking_guests_address(cx: &mut TestAppContext) {
+    use adoc_collab::testing::{HostLink, Net};
+    use adoc_engine::{protocol::PeerId, LinkEvent};
+
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    std::fs::write(root.join("page.adoc"), "= Page\n").unwrap();
+    let net = std::sync::Arc::new(std::sync::Mutex::new(Net::default()));
+    let mut host = Engine::new(Settings::default().with_git_opt_in());
+    host.host_session(
+        Box::new(HostLink(net.clone())),
+        &root,
+        &["page.adoc".into()],
+        "Host",
+    )
+    .unwrap();
+    for (peer, name, email) in [(1, "Ada", Some("ada@example.com")), (2, "Bea", None)] {
+        net.lock().unwrap().to_host.push_back(LinkEvent::Knock {
+            peer: PeerId(peer),
+            name: name.to_owned(),
+            email: email.map(str::to_owned),
+        });
+    }
+    host.pump();
+    assert_eq!(host.session_knocks().len(), 2);
+    let app = app_with(host, cx);
+    let (workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.show_session_for_test(cx)));
+    redraw(&app, &mut cx);
+
+    assert!(cx.debug_bounds("session-admit-1").is_some(), "Ada waits");
+    assert!(
+        cx.debug_bounds("session-knock-email-1").is_some(),
+        "Ada's address is shown"
+    );
+    assert!(cx.debug_bounds("session-admit-2").is_some(), "Bea waits");
+    assert!(
+        cx.debug_bounds("session-knock-email-2").is_none(),
+        "Bea gave no address"
+    );
+}
+
 /// A host engine and the app's engine as a guest, over the in-memory link, with the guest let
 /// in as a Viewer and the shared page open in a source editor.
 struct GuestSetup {

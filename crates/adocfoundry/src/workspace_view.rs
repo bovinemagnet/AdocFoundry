@@ -1674,6 +1674,13 @@ impl WorkspaceView {
             .collect()
     }
 
+    /// Shows the Session panel.
+    #[cfg(test)]
+    pub fn show_session_for_test(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_tab = SidebarTab::Session;
+        cx.notify();
+    }
+
     /// Shows the Problems panel.
     #[cfg(test)]
     pub fn show_problems_for_test(&mut self, cx: &mut Context<Self>) {
