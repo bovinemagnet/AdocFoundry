@@ -20,7 +20,7 @@ If nothing is selected, AdocFoundry asks you to select some text first.
 == Seeing comments in the editor
 
 The source editor fills commented text and marks the gutter beside it.
-The visual editor fills the text of each open comment in the same colour; it has no gutter, so it shows no gutter mark.
+The visual editor fills the text of each open comment in the same colour, apart from a pending suggestion, which it draws as described under xref:comments.adoc#_seeing_a_suggestion[Seeing a suggestion]; it has no gutter, so it shows no gutter mark.
 When the caret is inside a comment, the status bar says whose it is.
 
 *Edit › Next Comment* and *Edit › Previous Comment* move to the next or previous open comment, going round the page.
@@ -65,8 +65,18 @@ A suggestion is a comment that proposes replacing the text it is on.
 Suggesting changes nothing in the page.
 Only accepting a suggestion changes it.
 
-The visual editor fills a suggestion's text in the same colour as a comment's, but you cannot suggest a change there.
-The change itself shows only in the source editor and the *Comments* panel for now.
+The visual editor shows suggestions too.
+A pending suggestion has the part that accepting it would remove struck through, and the text it would add drawn inline right after it, underlined, both in the theme's information colour.
+The added text is for display only.
+It is not part of the page, and you cannot select, copy or edit it.
+The caret steps over it as it steps over an inline formula, and typing beside it edits only the page.
+A pending suggestion is not filled in the comment colour.
+
+An outdated suggestion is filled like a comment, in the warning colour, with nothing struck through or added.
+Accepted and rejected suggestions are not shown, as resolved comments are not.
+
+You cannot start a suggestion in the visual editor.
+Use *Suggest Change* in the source editor.
 
 === Making a suggestion
 
