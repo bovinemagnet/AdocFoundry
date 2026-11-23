@@ -12843,7 +12843,11 @@ fn a_suggestion_is_marked_in_the_source_editor(cx: &mut TestAppContext) {
         app.update(cx, |app, cx| {
             app.invoke(
                 ids::COMMENTS_ACCEPT,
-                CommandArgs::Comment(adoc_engine::CommentRequest::Accept { id, comment }),
+                CommandArgs::Comment(adoc_engine::CommentRequest::Accept {
+                    id,
+                    comment,
+                    seen: None,
+                }),
                 cx,
             )
             .unwrap();
@@ -13079,7 +13083,11 @@ fn the_visual_editor_shows_a_suggestion_inline(cx: &mut TestAppContext) {
         app.update(cx, |app, cx| {
             app.invoke(
                 ids::COMMENTS_ACCEPT,
-                CommandArgs::Comment(adoc_engine::CommentRequest::Accept { id, comment }),
+                CommandArgs::Comment(adoc_engine::CommentRequest::Accept {
+                    id,
+                    comment,
+                    seen: None,
+                }),
                 cx,
             )
             .unwrap();

@@ -13,7 +13,9 @@
 //! part it would add underlined, and offers Accept and Reject as the engine allows; decided ones
 //! fold with resolved comments.
 
-use adoc_engine::{Comment, CommentId, CommentRequest, CommentsState, SuggestionState};
+use adoc_engine::{
+    Comment, CommentId, CommentRequest, CommentsState, SeenSuggestion, SuggestionState,
+};
 use gpui::{AnyElement, HighlightStyle, StrikethroughStyle, StyledText, UnderlineStyle};
 
 use super::*;
@@ -566,6 +568,12 @@ impl WorkspaceView {
         let mut decisions = Vec::new();
         if let Some(suggestion) = suggestion {
             if comment.can.accept && suggestion.state == SuggestionState::Pending {
+                // The change this card shows: the engine refuses it if the suggestion is no
+                // longer that.
+                let seen = SeenSuggestion {
+                    original: suggestion.original.clone(),
+                    replacement: suggestion.replacement.clone(),
+                };
                 decisions.push(button("accept", "Accept").on_click(cx.listener(
                     move |this, _, window, cx| {
                         this.invoke(
@@ -573,6 +581,7 @@ impl WorkspaceView {
                             CommandArgs::Comment(CommentRequest::Accept {
                                 id: document,
                                 comment: id,
+                                seen: Some(seen.clone()),
                             }),
                             window,
                             cx,

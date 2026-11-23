@@ -23,7 +23,10 @@ use adoc_core::SourceRange;
 
 use super::{Session, Side};
 use crate::{
-    comments::{check_suggestion, checked_note, shown_suggestion, Actor, ActorKind, Change},
+    comments::{
+        check_suggestion, checked_note, shown_suggestion, Actor, ActorKind, Change, SeenSuggestion,
+        SUGGESTION_CHANGED,
+    },
     page_meta::cut,
     Allowed, Author, Comment, CommentId, DocumentId, Engine, EngineError, EngineEvent, Reply,
     SuggestionState,
@@ -468,7 +471,7 @@ impl Engine {
                     Some(selection),
                 )
             }
-            Change::Accept { comment } => {
+            Change::Accept { comment, seen } => {
                 let (thread, state) = suggestion(comment)?;
                 if !thread.can.accept {
                     return refusal(match state {
@@ -481,7 +484,25 @@ impl Engine {
                         SuggestionState::Pending => "You cannot accept a suggestion.",
                     });
                 }
-                (CommentChange::Accept { comment }, None)
+                // The change this guest was told of, which the host checks against its own.
+                let Some(told) = thread.suggestion.as_ref() else {
+                    return Err(EngineError::InvalidRequest(
+                        "this comment suggests no change".to_owned(),
+                    ));
+                };
+                if seen.is_some_and(|seen| {
+                    seen.original != told.original || seen.replacement != told.replacement
+                }) {
+                    return refusal(SUGGESTION_CHANGED);
+                }
+                (
+                    CommentChange::Accept {
+                        comment,
+                        original: told.original.clone(),
+                        replacement: told.replacement.clone(),
+                    },
+                    None,
+                )
             }
             Change::Reject { comment } => {
                 let (thread, state) = suggestion(comment)?;
@@ -651,7 +672,18 @@ impl Engine {
             },
             CommentChange::Delete { comment, reply } => Change::Delete { comment, reply },
             // The host applies the accept, in nobody's undo history (`accept_suggestion`).
-            CommentChange::Accept { comment } => Change::Accept { comment },
+            // Of the change the guest saw (spec §8).
+            CommentChange::Accept {
+                comment,
+                original,
+                replacement,
+            } => Change::Accept {
+                comment,
+                seen: Some(SeenSuggestion {
+                    original,
+                    replacement,
+                }),
+            },
             CommentChange::Reject { comment } => Change::Reject { comment },
             // Checked against the host's text at the range, as a new suggestion is.
             CommentChange::EditSuggestion {

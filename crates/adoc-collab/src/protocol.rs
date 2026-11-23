@@ -539,8 +539,12 @@ pub enum CommentChange {
         /// A suggested change to the selected text; the note may then be empty.
         suggestion: Option<SuggestionChange>,
     },
+    /// Accepts the change from `original` to `replacement`, as the guest saw it: the host
+    /// refuses the accept when the suggestion no longer holds them.
     Accept {
         comment: u64,
+        original: String,
+        replacement: String,
     },
     Reject {
         comment: u64,
@@ -1143,12 +1147,19 @@ impl Message {
                         suggestion_text(replacement, MAX_COMMENT_TEXT, true)?;
                         note_text(text, true)
                     }
+                    CommentChange::Accept {
+                        original,
+                        replacement,
+                        ..
+                    } => {
+                        suggestion_text(original, MAX_COMMENT_QUOTE, false)?;
+                        suggestion_text(replacement, MAX_COMMENT_TEXT, true)
+                    }
                     CommentChange::Reply { text, .. } | CommentChange::Edit { text, .. } => {
                         comment_text(text)
                     }
                     CommentChange::Resolve { .. }
                     | CommentChange::Delete { .. }
-                    | CommentChange::Accept { .. }
                     | CommentChange::Reject { .. } => Ok(()),
                 }
             }

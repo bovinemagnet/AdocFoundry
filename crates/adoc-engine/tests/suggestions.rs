@@ -12,8 +12,8 @@ use std::{
 use adoc_core::SourceRange;
 use adoc_engine::{
     commands::ids, normalize_path, revision_of, CoAuthor, CommandArgs, Comment, CommentId,
-    CommentRequest, DocumentId, Engine, EngineError, EngineEvent, ManualClock, Settings,
-    SuggestionState, COMMENT_SETTLE, INDEX_SETTLE,
+    CommentRequest, DocumentId, Engine, EngineError, EngineEvent, ManualClock, SeenSuggestion,
+    Settings, SuggestionState, COMMENT_SETTLE, INDEX_SETTLE,
 };
 
 const WINDOWS: &str = "asks before it starts";
@@ -348,7 +348,11 @@ fn an_outdated_suggestion_cannot_be_accepted() {
     let reason = refused(invoke(
         &mut engine,
         ids::COMMENTS_ACCEPT,
-        CommentRequest::Accept { id, comment: made },
+        CommentRequest::Accept {
+            id,
+            comment: made,
+            seen: None,
+        },
     ));
     assert_eq!(reason, "The text has changed since this was suggested.");
 
@@ -629,8 +633,69 @@ fn accept(engine: &mut Engine, id: DocumentId, suggestion: CommentId) -> Result<
         CommentRequest::Accept {
             id,
             comment: suggestion,
+            seen: None,
         },
     )
+}
+
+/// Accepts `suggestion` as the change from `original` to `replacement`, as a card showed it.
+fn accept_seen(
+    engine: &mut Engine,
+    id: DocumentId,
+    suggestion: CommentId,
+    original: &str,
+    replacement: &str,
+) -> Result<(), EngineError> {
+    invoke(
+        engine,
+        ids::COMMENTS_ACCEPT,
+        CommentRequest::Accept {
+            id,
+            comment: suggestion,
+            seen: Some(SeenSuggestion {
+                original: original.to_owned(),
+                replacement: replacement.to_owned(),
+            }),
+        },
+    )
+}
+
+/// An accept is of the change its accepter saw (spec §6): once the suggestion's replacement has
+/// changed, an accept of the one shown before is refused and changes nothing; the one shown
+/// now is accepted.
+#[test]
+fn an_accept_of_a_changed_suggestion_is_refused() {
+    const FIRST: &str = "asks once before it starts";
+    const SECOND: &str = "asks first";
+    let setup = Setup::new();
+    let mut engine = setup.engine();
+    let id = engine.open(&setup.page()).unwrap();
+    let before = text(&engine, id);
+    let range = range_of(&engine, id, WINDOWS);
+    let made = suggest(&mut engine, id, range, FIRST, "").unwrap();
+    invoke(
+        &mut engine,
+        ids::COMMENTS_EDIT,
+        CommentRequest::EditSuggestion {
+            id,
+            comment: made,
+            replacement: SECOND.to_owned(),
+            text: String::new(),
+        },
+    )
+    .unwrap();
+
+    let reason = refused(accept_seen(&mut engine, id, made, WINDOWS, FIRST));
+    assert_eq!(reason, "This suggestion has changed since you saw it.");
+    assert_eq!(text(&engine, id), before, "nothing applied");
+    assert_eq!(state(&engine, id, made), SuggestionState::Pending);
+    assert!(engine.undo_stack(id).unwrap().is_empty());
+    let reason = refused(accept_seen(&mut engine, id, made, "asks", SECOND));
+    assert_eq!(reason, "This suggestion has changed since you saw it.");
+
+    accept_seen(&mut engine, id, made, WINDOWS, SECOND).unwrap();
+    assert_eq!(text(&engine, id), before.replacen(WINDOWS, SECOND, 1));
+    assert_eq!(state(&engine, id, made), SuggestionState::Accepted);
 }
 
 fn reopen(engine: &mut Engine, id: DocumentId, suggestion: CommentId) {

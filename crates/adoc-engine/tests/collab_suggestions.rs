@@ -16,7 +16,7 @@ use adoc_engine::{
     commands::ids,
     protocol::{CommentChange, Message, PeerId},
     CoAuthor, CommandArgs, Comment, CommentId, CommentRequest, DocumentId, Engine, EngineError,
-    SuggestionState,
+    SeenSuggestion, SuggestionState,
 };
 use collab_common::*;
 
@@ -82,7 +82,33 @@ fn accept(engine: &mut Engine, id: DocumentId, comment: CommentId) -> Result<(),
     invoke(
         engine,
         ids::COMMENTS_ACCEPT,
-        CommentRequest::Accept { id, comment },
+        CommentRequest::Accept {
+            id,
+            comment,
+            seen: None,
+        },
+    )
+}
+
+/// Accepts `comment` as `engine` shows it now, as the card's Accept does.
+fn accept_shown(
+    engine: &mut Engine,
+    id: DocumentId,
+    comment: CommentId,
+) -> Result<(), EngineError> {
+    let seen = engine
+        .comments(id)
+        .into_iter()
+        .find(|shown| shown.id == comment)
+        .and_then(|shown| shown.suggestion)
+        .map(|suggestion| SeenSuggestion {
+            original: suggestion.original,
+            replacement: suggestion.replacement,
+        });
+    invoke(
+        engine,
+        ids::COMMENTS_ACCEPT,
+        CommentRequest::Accept { id, comment, seen },
     )
 }
 
@@ -286,7 +312,11 @@ fn a_viewer_cannot_accept() {
             file: 1,
             epoch: 1,
             request: 88,
-            change: CommentChange::Accept { comment: comment.0 },
+            change: CommentChange::Accept {
+                comment: comment.0,
+                original: QUOTE.to_owned(),
+                replacement: REPLACEMENT.to_owned(),
+            },
             selection: None,
         },
     );
@@ -397,6 +427,78 @@ fn accepting_a_guests_suggestion_credits_the_guest() {
             email: "guest1@example.org".to_owned(),
         }]
     );
+}
+
+const CHANGED: &str = "This suggestion has changed since you saw it.";
+
+/// An Editor's accept is of the change it saw: when the suggestion's author, a Viewer, edits it
+/// while the accept is on its way, the host refuses the accept and the page is unchanged; the
+/// change shown now can then be accepted.
+#[test]
+fn an_accept_in_flight_of_a_changed_suggestion_is_refused() {
+    let mut session = session();
+    let ada = session.guest(1, true);
+    let bea = session.guest(2, false);
+    let mine = guest_doc(&mut session, bea);
+    suggest(session.engine(bea), mine).unwrap();
+    session.settle();
+    let id = guest_doc(&mut session, ada);
+    let comment = the_comment(session.engine(ada), id).id;
+
+    // The author's edit reaches the host first; the Editor accepted what its card showed.
+    edit_suggestion(session.engine(bea), mine, comment, "the system", "").unwrap();
+    accept_shown(session.engine(ada), id, comment).unwrap();
+    session.settle();
+    assert_eq!(refusals(&session, ada), [CHANGED]);
+    assert_eq!(texts(&mut session, &[ada, bea]), PAGE, "nothing applied");
+    assert_eq!(host_state(&session), SuggestionState::Pending);
+    assert!(session.removed().is_empty());
+
+    // A guest refuses one it can see is stale without asking the host.
+    let refused = invoke(
+        session.engine(ada),
+        ids::COMMENTS_ACCEPT,
+        CommentRequest::Accept {
+            id,
+            comment,
+            seen: Some(SeenSuggestion {
+                original: QUOTE.to_owned(),
+                replacement: REPLACEMENT.to_owned(),
+            }),
+        },
+    );
+    assert!(
+        matches!(&refused, Err(EngineError::Refused(reason)) if reason == CHANGED),
+        "{refused:?}"
+    );
+    assert!(session.net.lock().unwrap().to_host.is_empty());
+
+    // And the host refuses a modified guest's.
+    session.forge(
+        ada,
+        Message::Comment {
+            file: 1,
+            epoch: 1,
+            request: 88,
+            change: CommentChange::Accept {
+                comment: comment.0,
+                original: QUOTE.to_owned(),
+                replacement: REPLACEMENT.to_owned(),
+            },
+            selection: None,
+        },
+    );
+    session.settle();
+    assert_eq!(refusals(&session, ada), [CHANGED, CHANGED]);
+    assert_eq!(texts(&mut session, &[ada, bea]), PAGE);
+
+    accept_shown(session.engine(ada), id, comment).unwrap();
+    session.settle();
+    assert_eq!(
+        texts(&mut session, &[ada, bea]),
+        PAGE.replace(QUOTE, "the system")
+    );
+    assert_eq!(host_state(&session), SuggestionState::Accepted);
 }
 
 /// An Editor guest accepting its own suggestion is credited: its words reach the file as the

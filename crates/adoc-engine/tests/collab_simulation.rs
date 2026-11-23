@@ -1012,7 +1012,11 @@ impl Simulation {
                     let before = self.text(actor, id);
                     let result = self.engine(actor).invoke(
                         ids::COMMENTS_ACCEPT,
-                        CommandArgs::Comment(adoc_engine::CommentRequest::Accept { id, comment }),
+                        CommandArgs::Comment(adoc_engine::CommentRequest::Accept {
+                            id,
+                            comment,
+                            seen: None,
+                        }),
                     );
                     let changed = self.text(actor, id) != before;
                     if changed && matches!(actor, Actor::Guest(_)) {

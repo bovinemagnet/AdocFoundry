@@ -782,7 +782,14 @@ fn suggestions_round_trip() {
             },
             true,
         ),
-        (CommentChange::Accept { comment: 4 }, false),
+        (
+            CommentChange::Accept {
+                comment: 4,
+                original: "Pa\r\nge".to_owned(),
+                replacement: String::new(),
+            },
+            false,
+        ),
         (CommentChange::Reject { comment: 4 }, false),
         (
             CommentChange::EditSuggestion {
@@ -863,6 +870,17 @@ fn suggestion_fields_are_held_to_their_limits() {
             false,
         )
     };
+    // The change the accepter saw, held as a suggestion's is.
+    let accept = |original: String, replacement: String| {
+        suggestion_message(
+            CommentChange::Accept {
+                comment: 1,
+                original,
+                replacement,
+            },
+            false,
+        )
+    };
     let thread_with = |text: &str, original: String, replacement: String| Message::CommentThread {
         file: 1,
         epoch: 1,
@@ -894,6 +912,9 @@ fn suggestion_fields_are_held_to_their_limits() {
         edit_on("x".repeat(MAX_COMMENT_QUOTE)),
         edit_on("a\r\n\tb".to_owned()),
         thread_with("", "Page".to_owned(), String::new()),
+        accept("Page".to_owned(), String::new()),
+        accept("x".repeat(MAX_COMMENT_QUOTE), "x".repeat(MAX_COMMENT_TEXT)),
+        accept("a\r\n\tb".to_owned(), "c\r\n\td".to_owned()),
     ] {
         assert!(accepted.encode().is_ok(), "{accepted:?}");
     }
@@ -912,6 +933,11 @@ fn suggestion_fields_are_held_to_their_limits() {
         thread_with("", String::new(), "y".to_owned()),
         thread_with("", "Page".to_owned(), "bell\u{7}".to_owned()),
         thread_with("", "x".repeat(MAX_COMMENT_QUOTE + 1), "y".to_owned()),
+        accept(String::new(), "y".to_owned()),
+        accept("x".repeat(MAX_COMMENT_QUOTE + 1), "y".to_owned()),
+        accept("Page".to_owned(), "x".repeat(MAX_COMMENT_TEXT + 1)),
+        accept("Pa\u{7}ge".to_owned(), "y".to_owned()),
+        accept("Page".to_owned(), "bell\u{7}".to_owned()),
         // An empty note is allowed only with a suggestion.
         suggestion_message(
             CommentChange::Add {
@@ -936,5 +962,37 @@ fn suggestion_fields_are_held_to_their_limits() {
         },
     ] {
         assert!(refused.encode().is_err(), "{refused:?}");
+    }
+    // Decoding holds an accept's fields as encoding does, and an accept naming neither is
+    // refused.
+    let valid = accept("Page".to_owned(), "y".to_owned()).encode().unwrap();
+    let (kind, length) = (
+        valid[4],
+        usize::from(u16::from_be_bytes([valid[5], valid[6]])),
+    );
+    let control = std::str::from_utf8(&valid[7..7 + length])
+        .unwrap()
+        .to_owned();
+    let payload = &valid[7 + length..];
+    assert!(decode(&body(kind, &control, payload)).is_ok());
+    for (from, to) in [
+        (r#""original":"Page""#, r#""original":"""#.to_owned()),
+        (
+            r#""original":"Page""#,
+            format!(r#""original":"{}""#, "x".repeat(MAX_COMMENT_QUOTE + 1)),
+        ),
+        (
+            r#""replacement":"y""#,
+            format!(r#""replacement":"{}""#, "x".repeat(MAX_COMMENT_TEXT + 1)),
+        ),
+        (
+            r#""replacement":"y""#,
+            r#""replacement":"\u0007""#.to_owned(),
+        ),
+        (r#","original":"Page","replacement":"y""#, String::new()),
+    ] {
+        assert!(control.contains(from), "{control}");
+        let forged = control.replace(from, &to);
+        assert!(decode(&body(kind, &forged, payload)).is_err(), "{forged}");
     }
 }

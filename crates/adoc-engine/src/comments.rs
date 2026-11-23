@@ -241,9 +241,12 @@ pub enum CommentRequest {
         replacement: String,
         text: String,
     },
+    /// Accepts the suggestion; `seen` is the change the front end showed, refused when the
+    /// suggestion no longer holds it. `None` accepts it as it is.
     Accept {
         id: DocumentId,
         comment: CommentId,
+        seen: Option<SeenSuggestion>,
     },
     Reject {
         id: DocumentId,
@@ -256,6 +259,16 @@ pub enum CommentRequest {
         replacement: String,
         text: String,
     },
+}
+
+/// Why an accept is refused when the suggestion changed after its accepter saw it.
+pub(crate) const SUGGESTION_CHANGED: &str = "This suggestion has changed since you saw it.";
+
+/// A suggested change as its accepter saw it: what an accept is of.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SeenSuggestion {
+    pub original: String,
+    pub replacement: String,
 }
 
 /// A change to a page's comments, whoever asks for it: the user here, or a guest through the
@@ -291,8 +304,10 @@ pub(crate) enum Change {
         replacement: String,
         text: String,
     },
+    /// `seen` is the change the accepter saw, checked against the suggestion's.
     Accept {
         comment: u64,
+        seen: Option<SeenSuggestion>,
     },
     Reject {
         comment: u64,
@@ -1291,7 +1306,10 @@ impl Engine {
                 replacement,
                 text,
             },
-            CommentRequest::Accept { comment, .. } => Change::Accept { comment: comment.0 },
+            CommentRequest::Accept { comment, seen, .. } => Change::Accept {
+                comment: comment.0,
+                seen,
+            },
             CommentRequest::Reject { comment, .. } => Change::Reject { comment: comment.0 },
             CommentRequest::EditSuggestion {
                 comment,
@@ -1355,9 +1373,9 @@ impl Engine {
                 return Err(EngineError::Refused(reason.clone()));
             }
         }
-        if let Change::Accept { comment } = change {
+        if let Change::Accept { comment, seen } = change {
             // Accepting edits the page, which needs the engine, not only its comments.
-            return self.accept_suggestion(id, comment, actor);
+            return self.accept_suggestion(id, comment, seen.as_ref(), actor);
         }
         let taken: BTreeSet<u64> = page
             .comments
@@ -1699,13 +1717,15 @@ impl Engine {
     /// Accepts suggestion `comment` on document `id` for `actor` (spec §6): one edit of the page
     /// replacing only what differs, in its own undo step, after which the suggestion covers
     /// exactly its replacement and is accepted; then its author is credited as a co-author when
-    /// they have an address and are not `actor`, or `actor` is a guest. Nothing changes when the
-    /// edit is refused.
-    /// `change_comments` has checked that the page's comments can be changed.
+    /// they have an address and are not `actor`, or `actor` is a guest. Refused, changing
+    /// nothing, when the suggestion is no longer the change `seen` (what the accepter saw), or
+    /// the edit is refused. `change_comments` has checked that the page's comments can be
+    /// changed.
     fn accept_suggestion(
         &mut self,
         id: DocumentId,
         comment: u64,
+        seen: Option<&SeenSuggestion>,
         actor: &Actor,
     ) -> Result<(), EngineError> {
         let document = self
@@ -1736,6 +1756,12 @@ impl Engine {
                 }
                 .to_owned(),
             ));
+        }
+        // Its author may have changed it since the accepter saw it (spec §8).
+        if seen.is_some_and(|seen| {
+            seen.original != suggestion.original || seen.replacement != suggestion.replacement
+        }) {
+            return Err(EngineError::Refused(SUGGESTION_CHANGED.to_owned()));
         }
         // A file edited by hand may hold a suggestion that changes nothing.
         check_suggestion(&suggestion.original, &suggestion.replacement)?;
