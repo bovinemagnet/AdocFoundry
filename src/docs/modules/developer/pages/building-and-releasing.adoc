@@ -21,7 +21,7 @@ cargo xtask package                                      # release build and arc
 cargo xtask bench ci                                     # the benchmarks as CI judges them
 cargo xtask bench dev --only parse                       # compared with main on this machine
 cargo xtask bench release                                # every budget, before a release
-cargo xtask bump 0.13.0                                  # set the version for a release
+cargo xtask bump 0.14.0                                  # set the version for a release
 cargo xtask notices target/THIRD-PARTY-NOTICES.txt       # the third-party licence notices
 ----
 
@@ -496,10 +496,10 @@ A release goes in this order:
 [source,sh]
 ----
 cargo xtask bench release
-cargo xtask bump 0.13.0
-git commit -am "Release 0.13.0"
-git tag v0.13.0
-git push origin v0.13.0
+cargo xtask bump 0.14.0
+git commit -am "Release 0.14.0"
+git tag v0.14.0
+git push origin v0.14.0
 ----
 
 The `version` job of the release workflow fails the run if the tag and the three files disagree.
@@ -519,7 +519,7 @@ A scheduled workflow in the bucket, Scoop's Excavator, runs every four hours and
 
 Each release has its manual checks in an issue labelled `qa` (0.7.0's is https://github.com/bovinemagnet/AdocFoundry/issues/385[#385]), drawn from the checklists in `docs/qa/`.
 
-The documentation site stays unversioned and shows the release as its display version, set as `display_version` in `src/docs/antora.yml` (currently `0.13.0`).
+The documentation site stays unversioned and shows the release as its display version, set as `display_version` in `src/docs/antora.yml` (currently `0.14.0`).
 
 == Conventions for contributions
 
