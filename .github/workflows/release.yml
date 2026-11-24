@@ -215,7 +215,9 @@ jobs:
             arch: x64
           - target: aarch64-pc-windows-msvc
             arch: arm64
-    timeout-minutes: 60
+    # The app is built apart from the other three (below), so much of the workspace compiles
+    # twice: about 58 minutes for v0.14.0, which a limit of 60 cut short.
+    timeout-minutes: 90
     runs-on: windows-latest
     env:
       # Authenticode through Azure Artifact Signing; without its secrets nothing is signed.
