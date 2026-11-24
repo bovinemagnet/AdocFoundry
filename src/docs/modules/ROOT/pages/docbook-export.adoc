@@ -121,7 +121,7 @@ Any other address (`javascript:`, `data:`, `file:` and the like) is written as i
 
 === In the application
 
-Choose one of these from the File menu.
+Choose one of these from the Export menu.
 Each is also in the command palette.
 
 * Export Page as DocBook… (`export.docbook_page`) exports the active page.
