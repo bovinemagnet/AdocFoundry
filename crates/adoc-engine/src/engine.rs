@@ -69,6 +69,8 @@ pub struct Engine {
     pub(crate) workspace_replacements: u64,
     /// The last workspace seen by [`Engine::workspace_revision`] and the number given it.
     pub(crate) workspace_revision: std::cell::Cell<((u64, u64, u64), u64)>,
+    /// A navigation file's text changed, to be announced at the next pump.
+    pub(crate) nav_files_changed: bool,
     pub(crate) watcher: Option<FileWatcher>,
     /// How the next workspace opened is watched: the platform's way, but tests try both.
     pub(crate) watch_mode: crate::workspace::WatchMode,
@@ -244,6 +246,7 @@ impl Engine {
             index_generation: 0,
             workspace_replacements: 0,
             workspace_revision: std::cell::Cell::new(((0, 0, 0), 0)),
+            nav_files_changed: false,
             watcher: None,
             watch_mode: crate::workspace::WatchMode::PLATFORM,
             history: crate::navigation::History::default(),

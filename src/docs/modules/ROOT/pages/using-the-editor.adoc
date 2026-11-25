@@ -28,6 +28,8 @@ See xref:settings.adoc[Settings].
 
 AdocFoundry watches the workspace.
 A file changed on disk is re-indexed, and `antora.yml` is re-read when it changes.
+The Navigation panel follows its navigation files (a module's `nav.adoc`, or any file `antora.yml` lists under `nav`): when one changes on disk, when a page is added to it in the app, and as you type in it, once typing pauses.
+Its branches stay open or closed as you left them.
 A page, partial or image added, deleted or renamed outside the app is found by links at once: xrefs to a new page resolve, and xrefs to a deleted one are reported.
 An open file, a page or any other such as `antora.yml` or the playbook, with no unsaved edits follows its file, changing only what differs, so the caret stays where it was and one undo goes back to the text before.
 A buffer with unsaved edits is never overwritten: you are told that the file changed on disk and your buffer is kept.

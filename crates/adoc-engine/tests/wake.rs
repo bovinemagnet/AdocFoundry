@@ -358,6 +358,34 @@ fn a_graph_to_update_is_due_at_once() {
     assert_eq!(engine.next_due(), Some(clock.now()));
 }
 
+/// A navigation file indexed at once leaves announcing it to the next pump.
+#[test]
+fn a_changed_navigation_file_is_due_at_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    fs::create_dir_all(root.join("modules/ROOT")).unwrap();
+    fs::write(
+        root.join("antora.yml"),
+        "name: demo\nversion: '1.0'\nnav:\n- modules/ROOT/nav.adoc\n",
+    )
+    .unwrap();
+    let nav = root.join("modules/ROOT/nav.adoc");
+    fs::write(&nav, "* Entry\n").unwrap();
+    let (mut engine, clock) = manual(plain());
+    engine.open_workspace(vec![root.to_path_buf()]).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let id = engine.open(&nav).unwrap();
+    settle(&mut engine);
+    let events = engine.subscribe();
+    insert(&mut engine, id, "* xref:other.adoc[]\n");
+    assert_eq!(engine.next_due(), Some(clock.now()));
+    engine.pump();
+    assert!(events
+        .try_iter()
+        .any(|event| matches!(event, adoc_engine::EngineEvent::NavFilesChanged)));
+    assert_eq!(engine.next_due().filter(|due| *due <= clock.now()), None);
+}
+
 /// An export waits for its page's preview, then is due at once.
 #[test]
 fn an_html_export_is_due_once_its_preview_has_finished() {

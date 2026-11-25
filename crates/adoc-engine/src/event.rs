@@ -80,6 +80,9 @@ pub enum EngineEvent {
     CatalogChanged {
         descriptor: PathBuf,
     },
+    /// The text of a file the catalog names as navigation changed, on disk or in its buffer once
+    /// typing pauses: `Engine::nav_trees` may give other trees.
+    NavFilesChanged,
     /// Back/forward availability or the active document changed.
     NavigationChanged,
     /// Matches of search `request`, in batches: the last has `done`, and `limited` when the
