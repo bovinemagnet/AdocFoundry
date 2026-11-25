@@ -7,6 +7,10 @@ Bindings come from the engine's command definitions, so the command palette and 
 In the engine, `cmd` means the platform's primary modifier: Command on macOS and Control on Linux and Windows.
 Two bindings, Go Back and Go Forward, use Control on every platform.
 
+The tables list the defaults.
+You can give a command other keys, or take its keys away, with `[keymap]` in the user settings file; see xref:settings.adoc#key-bindings[Key bindings].
+The command id column gives the id to write there, and the command palette finds a command by its id as well as its title.
+
 .The command palette filtered by preview
 image::app-command-palette.png["The command palette filtered by the word preview, listing Pin Preview, Retry Failed Diagrams, Detach Preview, Toggle PDF Preview, Toggle PDF Preview Window, Toggle Preview and Toggle Preview Scroll Sync"]
 
@@ -175,7 +179,7 @@ image::app-command-palette.png["The command palette filtered by the word preview
 |Shift-F10
 |UI only
 
-|Open settings
+|Open settings window
 |Cmd-,
 |Ctrl-,
 |`settings.open`
@@ -224,7 +228,7 @@ image::app-command-palette.png["The command palette filtered by the word preview
 Open Recent Folder… (`workspace.open_recent`) has no default binding and is available from the palette and the File menu.
 See xref:using-the-editor.adoc#open-recent-folder[Open Recent Folder].
 
-Fifteen commands have no default binding and are available from the palette: Re-index Workspace (`workspace.reindex`), Reload Settings (`settings.reload`), Refresh Git Status (`git.refresh`), Revert Change (`git.revert_hunk`), Show Changes (`git.show_changes`), Toggle Blame (`git.show_blame`), Open in Another Version (`navigate.open_in_version`), Open on Remote (`navigate.open_on_remote`), Copy Remote Link (`navigate.copy_remote_link`), Stage (`git.stage`), Unstage (`git.unstage`), Stage All Changes (`git.stage_all_adoc`), Commit (`git.commit`), Push (`git.push`) and Save and Commit (`git.save_and_commit`).
+Sixteen commands have no default binding and are available from the palette: Re-index Workspace (`workspace.reindex`), Reload Settings (`settings.reload`), Open Settings File (`settings.open_file`, also in the menu; it opens `adocfoundry.toml` in a tab), Refresh Git Status (`git.refresh`), Revert Change (`git.revert_hunk`), Show Changes (`git.show_changes`), Toggle Blame (`git.show_blame`), Open in Another Version (`navigate.open_in_version`), Open on Remote (`navigate.open_on_remote`), Copy Remote Link (`navigate.copy_remote_link`), Stage (`git.stage`), Unstage (`git.unstage`), Stage All Changes (`git.stage_all_adoc`), Commit (`git.commit`), Push (`git.push`) and Save and Commit (`git.save_and_commit`).
 Four sidebar commands also have no default binding and are available from the palette and the View menu: Expand All in Sidebar (`sidebar.expand_all`), Collapse All in Sidebar (`sidebar.collapse_all`), Collapse Sidebar One Level (`sidebar.collapse_one_level`) and Reset Sidebar to Configured Default (`sidebar.reset_expansion`).
 Reveal in Files also has no default binding and is available from the palette and the View menu.
 In the Files view, kbd:[Space] opens the selected file.
@@ -390,4 +394,4 @@ Windows closes the window with Alt-F4 as usual, which is not Quit.
 
 The Source, Visual and Split commands are chords like Toggle Preview: hold the modifier for kbd:[K] only, release it, then press the letter on its own.
 
-NOTE: User-defined key bindings are not implemented.
+NOTE: The keys in force, with any of your own, are shown by the command palette, and by the menus but for the rest of a chord; see xref:settings.adoc#key-bindings[Key bindings].

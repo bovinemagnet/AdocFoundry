@@ -107,6 +107,8 @@ pub mod ids {
     pub const COMMENTS_SUGGEST: CommandId = CommandId::new("comments.suggest");
     pub const COMMENTS_ACCEPT: CommandId = CommandId::new("comments.accept");
     pub const COMMENTS_REJECT: CommandId = CommandId::new("comments.reject");
+    pub const SETTINGS_OPEN_FILE: CommandId = CommandId::new("settings.open_file");
+    pub const SETTINGS_SAVE: CommandId = CommandId::new("settings.save");
     pub const SETTINGS_RELOAD: CommandId = CommandId::new("settings.reload");
     pub const VIEW_TOGGLE_PREVIEW: CommandId = CommandId::new("view.toggle_preview");
     pub const VIEW_DETACH_PREVIEW: CommandId = CommandId::new("view.detach_preview");
@@ -217,7 +219,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     use CommandCategory::{Document, Edit, Help, Navigate, View, Workspace};
     use CommandContext::{ActiveDocument, ActiveTab, Always};
 
-    let builtin: [(CommandSpec, Run); 43] = [
+    let builtin: [(CommandSpec, Run); 44] = [
         (
             spec(
                 ids::WORKSPACE_SEARCH,
@@ -396,7 +398,18 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
                 Some("cmd-,"),
                 Always,
             ),
-            settings_open,
+            // The front end shows them.
+            |_, _| Ok(CommandOutcome::Done),
+        ),
+        (
+            spec(
+                ids::SETTINGS_OPEN_FILE,
+                "Open Settings File",
+                View,
+                None,
+                Always,
+            ),
+            settings_open_file,
         ),
         (
             spec(ids::APP_QUIT, "Quit", Workspace, Some("cmd-q"), Always),
@@ -654,6 +667,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     crate::deletion::register_deletion(registry);
     crate::comments::register_comments(registry);
     crate::appearance::register_appearance(registry);
+    crate::setting_specs::register_setting_specs(registry);
     #[cfg(feature = "collab")]
     crate::collab_session::register_collaboration(registry);
     crate::font_sets::register_font_sets(registry);
@@ -959,7 +973,7 @@ fn check_for_updates(_: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, E
     ))
 }
 
-fn settings_open(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
+fn settings_open_file(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
     let path = engine
         .settings()
         .user_file()

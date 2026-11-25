@@ -11,9 +11,13 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
   - **Copy As** (right-click, the Edit menu or the palette): Plain Text, AsciiDoc, Markdown, or Formatted Text for Word and Google Docs (macOS and Windows). AsciiDoc over an include gives the included text, never the `include::` line.
   - **Copy button** on code blocks: the code without its callouts, so it can be run.
   - **Right-click** in either shows Cut, Copy, Copy As, Paste and Select All, with any spelling suggestions first.
+- Custom key bindings (#79). `[keymap]` in the user settings file gives commands other keys (`"document.close_all" = "cmd-k x"`) or none (`""`), any command that can be run from the palette among them, and takes effect as the file is saved. A key given to one command is taken from the command that had it. What cannot be followed is warned about, and the command keeps its own keys.
+- A settings window (#80), which Open Settings (Cmd/Ctrl-,) opens: the editor's, appearance, ignored folders, tools, Git and PDF settings, each with what it does, searchable and reset to its default with a button. A change is written to the user settings file and applies at once, and everything else in the file, comments included, is kept. A setting the workspace's file gives is shown and cannot be changed there.
 
 ### Changed
 
+- Open Settings opens the settings window; Open Settings File opens the file, as Open Settings did.
+- The command palette shows each command's keys.
 - The ☰ menu has an Export menu, between Git and Help, which holds every export that was in the File menu: PDF, Word, Kindle, EPUB, DocBook, HTML and the graph (#790). Commands, titles and the palette are unchanged.
 - Clicking read-only text in the visual editor, or a block in the preview, shows its source after about a third of a second, so that a double click can select a word first.
 - A numbered list shown in the preview or the visual editor counts from its `start`, and down when it is reversed, as the exports do.
@@ -22,6 +26,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 - Copying in the visual editor no longer leaves out read-only text without saying so, or copies text otherwise than it is shown (`[subs=none]`).
 - The Navigation panel follows a navigation file whenever its text changes (#795): on disk, as a page is added to it in the app, and as it is typed in, once typing pauses. It needed Re-index Workspace before.
+- A settings file with something to warn about, such as a key it does not know, no longer stops the app as its window opens.
 
 ## 0.14.0 — 2026-11-23
 

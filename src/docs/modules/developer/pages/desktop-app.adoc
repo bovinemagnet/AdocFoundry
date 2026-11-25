@@ -104,6 +104,13 @@ Any other file is opened through `open_item` as an image or text tab, or refused
 The engine writes bindings as `cmd-s`; the application maps `cmd` to GPUI's `secondary` modifier, which is Command on macOS and Control elsewhere.
 A command has an action only when the application defines one for its id.
 
+The keys in force are the engine's: `Engine::keymap` gives each command's keys, its default or the user's `[keymap]` entry (see xref:engine.adoc#keymap[Keymap]).
+`bind` keeps the bindings that were there before the app's, the widgets' own, and binds every command over them.
+`rebind` clears every binding, puts the widgets' own back and binds every command again (`bind_over_base`), those the settings give last so that they win; it runs from `AppState::follow_keymap` when `SettingsChanged` has changed the keymap.
+Where a command's default keys belong to an action of the editor widget, `unbind_widgets` adds an `Unbind` so the widget's own action no longer answers, and `custom_contexts` gives the key contexts a custom binding is made in.
+`settings_warnings` reports what cannot be bound, such as a first stroke that would type or a command with no action.
+`contexts` gives the key contexts of a command's base binding.
+
 Three actions have no engine command and are bound in the application: the command palette, the theme toggle and the read-only second window.
 The palette lists every command with its title from the registry.
 
@@ -148,6 +155,12 @@ Window creation lives in `app.rs`.
 `Mirror` is a read-only view of the active document that follows its edits.
 `Preview` is the rendered preview detached from the workspace window, and closing it docks the preview again.
 `Graph` is the link graph's window, one for each workspace window, which opening again focuses.
+`Settings` is the settings window (#80), which `WorkspaceView` opens on `OpenSettings` and brings to the front when it is open already.
+`src/settings_view.rs` holds `SettingsView`, which builds a gpui-component `Settings` page for each `page` of the engine's `setting_specs` (see xref:engine.adoc#settings[Settings]).
+It reads each value and its `SettingSource` from `Engine::setting`, shows a setting from the workspace's file with a note and disabled, and saves through `settings.save`.
+Switches and choices are saved at once; text and numbers are held until typing pauses for `COMMIT_DELAY` (half a second), then saved, and are also saved on Enter, on leaving the field, as the window closes and as the app quits.
+A refused save is shown in the window, and `EngineEvent::SettingsChanged` redraws it.
+The Open File button, and `settings.open_file`, go through `WorkspaceView::open_settings_file`.
 It remembers its size and position (`graph_window` in `session.json`, kept by the engine); `app.rs` checks the saved bounds against the displays and, when less than half lies on one, centres the window on the main display and shrinks it to fit.
 
 == The preview

@@ -12,7 +12,7 @@ There are two layers, and the workspace layer is applied after the user layer.
 
 |User
 |`adocfoundry/adocfoundry.toml` in the platform configuration directory: `~/.config` on Linux, `~/Library/Application Support` on macOS and `%APPDATA%` on Windows.
-Open Settings creates it if it is missing.
+Open Settings File creates it if it is missing.
 
 |Workspace
 |`.adocfoundry.toml` at the root of the workspace.
@@ -20,6 +20,61 @@ Open Settings creates it if it is missing.
 
 Saving either file applies it, whether in AdocFoundry or in another editor while a workspace is open.
 Reload Settings re-reads both.
+
+[#settings-window]
+== The settings window
+
+Open Settings (`Cmd-,` or `Ctrl-,`) opens a window of the settings most people change, so that you need not edit the file.
+Pressed again, it brings the window to the front.
+Open Settings File opens `adocfoundry.toml` in a tab instead, creating it if it is missing, and so does the window's Open File button.
+Open Settings File has no default keys and is in the menu and the command palette.
+
+The window has a page for each group of settings:
+
+[cols="1,3"]
+|===
+|Page |Settings
+
+|Editor
+|`editor.font_family`, `editor.font_size`, `editor.soft_wrap`, `editor.tab_width`, `editor.preview_tabs` and `editor.auto_save`.
+
+|Appearance
+|`appearance.mode`, `appearance.light_theme`, `appearance.dark_theme`, `appearance.font_set` and `appearance.font_scale`.
+
+|Workspace
+|`workspace.ignore`.
+
+|Tools
+|`tools.asciidoctor`, `tools.git`, `tools.dot`, `tools.plantuml`, `tools.d2`, `tools.node`, `tools.diagram_timeout`, `tools.build_timeout` and `tools.commit_timeout`.
+
+|Git
+|`git.enabled`, `git.show_markers`, `git.blame_on_hover` and `git.remote`.
+
+|PDF
+|`pdf.theme`, `pdf.themes_dir`, `pdf.fonts_dir`, `pdf.site_url` and `pdf.standards`.
+|===
+
+Each setting shows its description, and the search box finds a setting by its title, its description or its name in the file.
+Settings that are not in the window are still set in the file.
+
+A change is written to the user settings file, and only that value changes: comments, the order of keys and keys the window does not know are kept, and a settings file that is a symbolic link stays one.
+Switches and choices are saved at once.
+Text and numbers are saved when typing pauses for half a second, on kbd:[Enter], on leaving the field and when the window closes.
+A number outside its range is not saved.
+Emptying a text field, or using the reset button beside a setting you have changed, takes the setting out of the file, so its default applies.
+Changing Mode also removes the older `[editor] theme` setting.
+
+A setting that the workspace's `.adocfoundry.toml` gives is shown with a note saying so, and cannot be changed in the window.
+Change it in that file.
+
+The window shows a message, and leaves the file as it was, when:
+
+* there is no user settings file to save to,
+* the settings file does not parse, or
+* the settings file has unsaved edits in a tab.
+
+A settings tab with no unsaved edits follows the change.
+The window also follows changes made in the file.
 
 [#state-folder]
 The app also keeps two folders and two files in its state folder, `adocfoundry` under the platform's local state location: `$XDG_STATE_HOME/adocfoundry` on Linux, normally `~/.local/state/adocfoundry`; `~/Library/Application Support/adocfoundry` on macOS; and `%LOCALAPPDATA%\adocfoundry` on Windows.
@@ -170,6 +225,9 @@ enabled = false                  # true: Share Workspace... and Join Session... 
 [comments]                       # user file only
 name = "Paul Snow"               # the author of your comments; default your Git name
 email = "paul@example.com"       # optional; default your Git email
+
+[keymap]                         # user file only
+"document.close_all" = "cmd-k x" # keys for a command; "" takes its keys away
 ----
 
 [[font-sets]]
@@ -231,6 +289,61 @@ The families must be installed; a missing interface, source or reading family is
 An id a built-in set has, a bad `based_on` or a bad value leaves the set out with a warning.
 
 *Select Font Set...* in the View menu and the command palette is the quick way to choose; see xref:using-the-editor.adoc#themes[Themes].
+
+[#key-bindings]
+== Key bindings
+
+`[keymap]` in the user settings file gives a command other keys than its default.
+It maps a command id to keys.
+A workspace file's `[keymap]` is ignored with a warning, so a repository cannot take over your keys.
+
+[source,toml]
+----
+[keymap]
+"document.close_all" = "cmd-k x"   # a chord: two strokes
+"view.toggle_preview" = "cmd-alt-p"
+"git.stage" = "ctrl-shift-s"       # a command with no default keys
+"document.save_all" = ""           # takes the command's keys away
+----
+
+The ids may be written without quotes too, as in `document.close_all = "cmd-k x"`.
+Taking the line out gives the command's default back.
+The command palette finds a command by id as well as by title; see xref:keyboard-shortcuts.adoc[Keyboard shortcuts] for the ids of the commands that have default keys.
+
+=== Notation
+
+Keys are one stroke or several, separated by spaces.
+A stroke is any of the modifiers `cmd`, `ctrl`, `alt` and `shift`, in any order and any case, then a key, all joined by `-`.
+`cmd` is Command on macOS and Control on Linux and Windows.
+A key is a letter, a digit or a sign, `f1` to `f24`, or one of `enter`, `escape`, `tab`, `space`, `backspace`, `delete`, `insert`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup` and `pagedown`.
+
+=== What happens
+
+The change takes effect when the user settings file is saved, in AdocFoundry or elsewhere while a workspace is open, or when you choose Reload Settings.
+No restart is needed.
+The command palette shows each command's keys in force.
+The menus do too, but only the first stroke of a chord.
+The tables in xref:keyboard-shortcuts.adoc[Keyboard shortcuts] list the defaults.
+
+Keys you give a command are taken from the command that has them by default.
+Any command that can be run from the palette can be given keys, including those with none by default.
+A command of the window that is given keys wins over the editors' own, so `cmd-f` may be given to another command.
+Moving Undo or Redo off their keys does not bring back the editor widget's own undo and redo.
+
+Some keys belong to the app and not to a command, and cannot be changed: Command Palette, Toggle Light/Dark Theme, Open Read-Only Window, the zoom keys, and the caret movement and clipboard keys.
+
+=== Warnings
+
+These are warned about and not applied:
+
+* an unknown command id;
+* keys that cannot be read;
+* a first stroke that types or moves the caret, which is one with no `cmd`, `ctrl` or `alt`, unless it is a function key or is the command's own default;
+* the same keys given to two commands, where the first by id keeps them;
+* a command that cannot be run from a key.
+
+Keys that begin another command's keys, such as `cmd-k` beside `cmd-k x`, are warned about and applied.
+The longer ones may then not work, or the shorter wait a moment for a second stroke.
 
 == Keys
 
@@ -620,6 +733,13 @@ Accepted only in the user file, so a repository cannot write comments in your na
 |your global Git `user.email`, else none
 |An optional email address written with your comments and replies.
 At most 254 bytes; a longer address is cut.
+Accepted only in the user file.
+
+|`keymap.<command id>`
+|string
+|the command's default keys
+|The keys of the command, as described in xref:#key-bindings[Key bindings].
+`""` takes its keys away.
 Accepted only in the user file.
 |===
 
@@ -1198,6 +1318,7 @@ Both files may set `[quality]`: a rule's severity from the workspace file wins, 
 `spelling.dictionaries` is accepted only in the user file, so a repository cannot point the editor at files of its choosing.
 `collaboration.*` is also accepted only in the user file, so a repository cannot make the editor listen for or join a session.
 `comments.*` is also accepted only in the user file, so a repository cannot choose the name your comments carry.
+`keymap.*` is also accepted only in the user file, so a repository cannot change your keys.
 
 == Warnings
 

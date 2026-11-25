@@ -1157,7 +1157,11 @@ impl Engine {
 impl Engine {
     /// The file of open document `id`, of any type, is `on_disk` now (`None` when it cannot be
     /// read): a clean buffer follows it, a dirty one is told that it changed underneath.
-    fn open_document_changed_on_disk(&mut self, id: crate::DocumentId, on_disk: Option<String>) {
+    pub(crate) fn open_document_changed_on_disk(
+        &mut self,
+        id: crate::DocumentId,
+        on_disk: Option<String>,
+    ) {
         if self.writer.is_saving(id) {
             return; // Our own write, which the save's result settles.
         }

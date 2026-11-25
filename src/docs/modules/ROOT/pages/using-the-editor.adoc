@@ -539,7 +539,7 @@ You are browsing when you:
 * click a link or a block in the rendered preview, or
 * choose Open in a Peek Include.
 
-These open pages as ordinary tabs instead: the Open File dialog, files named on the command line, new untitled pages, Open Settings, and Edit partial in the visual editor.
+These open pages as ordinary tabs instead: the Open File dialog, files named on the command line, new untitled pages, Open Settings File, and Edit partial in the visual editor.
 An Outline entry only moves the caret.
 
 Images share the one preview tab with pages: browsing to an image replaces a preview page, and the reverse.
@@ -1893,9 +1893,9 @@ It uses the same multi-window path as the detachable preview; see xref:preview.a
 
 == Settings and the palette
 
-Open Settings (`Cmd-,` or `Ctrl-,`) opens your user settings file, creating it if necessary.
-Saving it applies the change.
-See xref:settings.adoc[Settings].
+Open Settings (`Cmd-,` or `Ctrl-,`) opens the settings window, and Open Settings File opens your user settings file in a tab, creating it if necessary.
+Saving the file applies the change.
+See xref:settings.adoc#settings-window[The settings window] and xref:settings.adoc[Settings].
 
 The command palette lists every command with its title.
 Bold, Italic, Code and Highlight are listed in every mode.
