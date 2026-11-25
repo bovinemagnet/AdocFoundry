@@ -29,7 +29,7 @@ fn uris(notifications: &[Value]) -> Vec<String> {
 
 #[test]
 fn mcp_resource_change_notifications_are_revision_scoped() {
-    let (_directory, root) = scratch("discovery");
+    let (directory, root) = scratch("discovery");
     let (mut client, initialized) = Client::start_with(&root, true, "2025-06-18");
     assert_eq!(initialized["capabilities"]["resources"]["subscribe"], true);
     let install = uri(&root.join(INSTALL));
@@ -68,7 +68,11 @@ fn mcp_resource_change_notifications_are_revision_scoped() {
     );
 
     // Written on disk by anything else: announced again.
-    std::fs::write(root.join(INSTALL), "= Installing\n\nRewritten elsewhere.\n").unwrap();
+    // Moved into place whole: a check that read the file between `std::fs::write` emptying it and
+    // filling it would announce both.
+    let elsewhere = directory.path().join("install.adoc");
+    std::fs::write(&elsewhere, "= Installing\n\nRewritten elsewhere.\n").unwrap();
+    std::fs::rename(&elsewhere, root.join(INSTALL)).unwrap();
     assert_eq!(
         uris(&client.notifications(UPDATED, SETTLE)),
         std::slice::from_ref(&install)
