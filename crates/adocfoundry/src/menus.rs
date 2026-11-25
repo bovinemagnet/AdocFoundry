@@ -97,6 +97,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::FILE_RESTORE_DELETED),
             Separator,
             Command(ids::SETTINGS_OPEN),
+            Command(ids::SETTINGS_OPEN_FILE),
             Command(ids::SETTINGS_RELOAD),
             Command(ids::WORKSPACE_REINDEX),
             Command(ids::QUALITY_RUN_AUDIT),

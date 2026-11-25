@@ -20,6 +20,7 @@ use crate::{
     graph_view::{GraphMode, GraphView},
     mirror_view::MirrorView,
     preview::PreviewView,
+    settings_view::SettingsView,
     workspace_view::WorkspaceView,
 };
 
@@ -76,6 +77,8 @@ impl DerefMut for PumpedEngine {
 /// and subscribe to the engine events it re-emits.
 pub struct AppState {
     pub engine: PumpedEngine,
+    /// The keymap bound.
+    keymap: adoc_engine::Keymap,
     /// How the releases feed is read: the system's `curl`, or a stand-in in tests.
     pub fetch: crate::updates::Fetch,
     /// How an update is readied: downloaded, checked and staged, or a stand-in in tests.
@@ -141,6 +144,7 @@ impl AppState {
         });
         #[cfg_attr(test, allow(unused_mut))]
         let mut state = Self {
+            keymap: engine.keymap(),
             engine: PumpedEngine { engine, wake },
             fetch: crate::updates::system_fetch(),
             prepare: crate::updates::system_prepare(),
@@ -206,8 +210,21 @@ impl AppState {
                 events.push(event);
             }
         }
+        if events.contains(&EngineEvent::SettingsChanged) {
+            self.follow_keymap(cx);
+        }
         for event in events {
             cx.emit(event);
+        }
+    }
+
+    /// Binds the commands' keys anew when the settings give them others.
+    fn follow_keymap(&mut self, cx: &mut Context<Self>) {
+        let keymap = self.engine.keymap();
+        if keymap != self.keymap {
+            self.keymap = keymap;
+            crate::editor::bindings::rebind(&self.engine, cx);
+            set_app_menu(cx);
         }
     }
 
@@ -258,6 +275,8 @@ pub enum WindowKind {
     Preview,
     /// The workspace's link graph. It opens where it was last, at the size it had.
     Graph,
+    /// The settings, to look at and change.
+    Settings,
 }
 
 /// The graph window's size the first time it opens.
@@ -310,14 +329,20 @@ pub fn open_paths(app: &Entity<AppState>, paths: Vec<PathBuf>, cx: &mut App) {
 /// The actions that belong to the app rather than a window: Quit, from any window, the
 /// keymap, the palette or a menu; on macOS, hiding, and the app menu in the menu bar.
 pub fn bind_app_actions(app: &Entity<AppState>, cx: &mut App) {
-    use crate::editor::bindings::{
-        HideApp, HideOtherApps, OpenSettings, Quit, ShowAbout, ShowAllApps,
-    };
+    use crate::editor::bindings::{HideApp, HideOtherApps, Quit, ShowAllApps};
     let quitting = app.clone();
     cx.on_action(move |_: &Quit, cx| quit(&quitting, cx));
     cx.on_action(|_: &HideApp, cx| cx.hide());
     cx.on_action(|_: &HideOtherApps, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAllApps, cx| cx.unhide_other_apps());
+    set_app_menu(cx);
+}
+
+/// The app menu in macOS's menu bar, whose items show the keys bound as it is set.
+fn set_app_menu(cx: &mut App) {
+    use crate::editor::bindings::{
+        HideApp, HideOtherApps, OpenSettings, Quit, ShowAbout, ShowAllApps,
+    };
     if cfg!(target_os = "macos") {
         use gpui::{Menu, MenuItem, SystemMenuType};
         // The app menu macOS users look for first; the rest is the ☰ menu in the title bar.
@@ -409,6 +434,9 @@ pub fn open_secondary_window(
                 Some(graph_window_bounds(app.read(cx).engine.graph_window(), cx));
             options
         }
+        WindowKind::Settings => {
+            window_options(Bounds::centered(None, size(px(900.), px(680.)), cx))
+        }
         _ => window_options(Bounds::centered(None, size(px(720.), px(640.)), cx)),
     };
     let mut view: Option<AnyView> = None;
@@ -439,6 +467,12 @@ pub fn open_secondary_window(
             });
             view = Some(preview.clone().into());
             cx.new(|cx| Root::new(preview, window, cx))
+        }
+        WindowKind::Settings => {
+            let settings = cx.new(|cx| SettingsView::new(app.clone(), window, cx));
+            window.set_window_title("Settings");
+            view = Some(settings.clone().into());
+            cx.new(|cx| Root::new(settings, window, cx))
         }
         WindowKind::Graph => {
             let graph = cx.new(|cx| {

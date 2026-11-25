@@ -337,7 +337,7 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `Peek`, `E
 |`page.new`
 |Make a page and add it to the navigation. See <<new-page>>.
 
-|`settings.open`, `settings.reload`
+|`settings.open`, `settings.open_file`, `settings.reload`, `settings.save`
 |Settings.
 
 |`export.pdf_page`, `export.pdf_component`
@@ -380,6 +380,15 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `Peek`, `E
 There is no public way to change document text except through commands.
 
 [#undo-groups]
+[#keymap]
+== Keymap
+
+`src/keymap.rs` decides which command has which keys, and a front end binds them.
+`Keys` is one checked key string, written as `cmd-k x`: strokes separated by spaces, each its modifiers then a key joined by `-` (`Keys::parse` refuses what cannot be read).
+`Keymap`, from `Engine::keymap`, holds each command's `default_binding` with the user settings file's `[keymap]` laid over it; `keys(id)` gives the keys in force, `is_custom(id)` whether the user changed them, and `problems()` what was left out, which front ends show as settings warnings.
+A key given to a command is taken from the command that has it by default, and the same keys given to two commands go to the first by id.
+`[keymap]` is accepted only in the user file; the user documentation is xref:ROOT:settings.adoc#key-bindings[Key bindings].
+
 == Undo groups and typing coalescing
 
 Each document has an undo stack of entries holding an undo group, the forward and inverse edits and the versions before and after.
@@ -1691,6 +1700,16 @@ The UI never reads the settings file itself.
 It uses `Settings::write_appearance`, which edits the file with `toml_edit` so that other lines and the comments above existing keys are kept, writes only `mode`, `light_theme` and `dark_theme`, and takes out an `[editor] theme` line.
 The result goes to a temporary file that is renamed over the settings file, and `reload_settings` then announces `SettingsChanged`.
 `open_workspace` reloads through `Settings::reload_skipping_broken_files`, so a settings file that is not valid TOML becomes a settings warning naming the file, line and column and the folder opens without it; a later reload (`Reload Settings`, or the watcher) reports the parse error and keeps the settings in force.
+
+=== Settings the window offers
+
+`setting_specs.rs` lists the settings a front end offers (#80): `setting_specs()` gives each `SettingSpec` (`id` as the file names it, `title`, `description`, `page` and a `SettingKind`: switch, number or scale with a range, text, list, choice, light or dark theme, or font set).
+`Engine::setting(id)` gives its current `SettingValue` and a `SettingSource`: `Default`, `User` or `Workspace`, the layer that wrote it.
+`Engine::save_setting`, which is `settings.save` with `CommandArgs::Setting(SettingChange)`, writes one value to the user settings file, or takes it out when the value is `None` or empty text, through `Settings::write_keys`.
+`write_keys` edits the file with `toml_edit` so that other lines and comments are kept, follows a symbolic link instead of replacing it, and can take out an older setting; saving `appearance.mode` takes out `[editor] theme`.
+A value the settings could not use is refused before anything is written, as is a save when there is no user settings file, when the file does not parse, or when the file is open in a tab with unsaved changes.
+A settings tab without unsaved changes is replaced with the new text through `open_document_changed_on_disk`, and `reload_settings` then announces `SettingsChanged`.
+`settings.open` opens the settings window, which is the front end's, and `settings.open_file` opens the file.
 
 == File access
 

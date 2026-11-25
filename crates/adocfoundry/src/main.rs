@@ -26,6 +26,7 @@ mod references_view;
 mod renders;
 mod rich_clipboard;
 mod search_view;
+mod settings_view;
 mod sidebar;
 mod spelling;
 mod typing_bench;

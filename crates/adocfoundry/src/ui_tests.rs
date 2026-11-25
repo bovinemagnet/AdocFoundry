@@ -14216,3 +14216,489 @@ fn every_kind_of_text_can_be_selected_in_the_preview(cx: &mut TestAppContext) {
         assert!(missing.is_none(), "{missing:?} in the preview");
     }
 }
+
+// --- custom key bindings (#79) ----------------------------------------------------------------
+
+/// A workspace window on `page.adoc`, holding `= A Page`, whose user settings file holds
+/// `settings`.
+struct Rebound {
+    _config: tempfile::TempDir,
+    user: PathBuf,
+    page: PathBuf,
+    app: Entity<AppState>,
+    workspace: Entity<WorkspaceView>,
+    cx: VisualTestContext,
+}
+
+fn rebound(settings: &str, cx: &mut TestAppContext) -> Rebound {
+    init(cx);
+    let config = tempfile::tempdir().unwrap();
+    let user = config.path().join("adocfoundry.toml");
+    std::fs::write(&user, settings).unwrap();
+    let page = config.path().join("page.adoc");
+    std::fs::write(&page, "= A Page\n").unwrap();
+    let app = app_with(Engine::new(settings_in(config.path())), cx);
+    let (workspace, cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    Rebound {
+        _config: config,
+        user,
+        page,
+        app,
+        workspace,
+        cx,
+    }
+}
+
+impl Rebound {
+    fn settings(&mut self, text: &str) {
+        std::fs::write(&self.user, text).unwrap();
+        self.app.update(&mut self.cx, |app, cx| {
+            app.invoke(ids::SETTINGS_RELOAD, CommandArgs::None, cx)
+                .unwrap();
+        });
+        self.cx.run_until_parked();
+    }
+
+    fn press(&mut self, keys: &str) {
+        self.cx.simulate_keystrokes(keys);
+        self.cx.run_until_parked();
+    }
+
+    fn dirty(&mut self) -> bool {
+        self.cx.update(|_, cx| {
+            let engine = &self.app.read(cx).engine;
+            engine.document(engine.active().unwrap()).unwrap().dirty
+        })
+    }
+
+    fn type_x(&mut self) {
+        self.cx.simulate_input("x");
+        self.cx.run_until_parked();
+        assert!(self.dirty());
+    }
+
+    fn text(&mut self) -> String {
+        document_text(&self.app, &mut self.cx)
+    }
+
+    fn bindings(&mut self) -> usize {
+        self.cx
+            .update(|_, cx| cx.key_bindings().borrow().bindings().count())
+    }
+}
+
+/// Saving the settings file rebinds a command with no restart, and taking the line out again
+/// gives it its own key back.
+#[gpui::test]
+fn a_command_is_rebound_without_a_restart(cx: &mut TestAppContext) {
+    let mut setup = rebound("", cx);
+    let bindings = setup.bindings();
+    setup.type_x();
+    setup.settings("[keymap]\n\"document.save\" = \"cmd-j\"\n");
+    setup.press("secondary-s");
+    assert!(setup.dirty(), "Save no longer has its own key");
+    setup.press("secondary-j");
+    assert!(!setup.dirty(), "Save has its new one");
+
+    setup.settings("");
+    setup.type_x();
+    setup.press("secondary-j");
+    assert!(setup.dirty());
+    setup.press("secondary-s");
+    assert!(!setup.dirty());
+    assert_eq!(setup.bindings(), bindings, "nothing is left behind");
+}
+
+/// The same from the app's start, saving the file itself in a tab.
+#[gpui::test]
+fn saving_the_settings_file_in_a_tab_rebinds(cx: &mut TestAppContext) {
+    let mut setup = rebound("[keymap]\n\"document.save\" = \"cmd-j\"\n", cx);
+    setup.type_x();
+    setup.press("secondary-j");
+    assert!(!setup.dirty());
+    let user = setup.user.clone();
+    open_path(
+        &setup.workspace,
+        &user,
+        adoc_engine::OpenDisposition::Persistent,
+        &mut setup.cx,
+    );
+    let end = setup.text().len();
+    setup.app.update(&mut setup.cx, |app, cx| {
+        let id = app.engine.active().unwrap();
+        let args = CommandArgs::Text {
+            id,
+            range: adoc_core::SourceRange::new(0, end),
+            text: "[keymap]\n\"document.save\" = \"cmd-alt-j\"\n".to_owned(),
+        };
+        app.invoke(ids::EDIT_REPLACE_RANGE, args, cx).unwrap();
+        app.invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(id), cx)
+            .unwrap();
+    });
+    setup.cx.run_until_parked();
+    let page = setup.page.clone();
+    open_path(
+        &setup.workspace,
+        &page,
+        adoc_engine::OpenDisposition::Persistent,
+        &mut setup.cx,
+    );
+    setup.type_x();
+    setup.press("secondary-j");
+    assert!(setup.dirty());
+    setup.press("secondary-alt-j");
+    assert!(!setup.dirty());
+}
+
+/// The editor widget has an undo of its own on Cmd-Z, with a history of its own: it must not
+/// come back when the engine's Undo moves to other keys.
+#[gpui::test]
+fn moving_undo_does_not_bring_back_the_widgets_own(cx: &mut TestAppContext) {
+    let mut setup = rebound("[keymap]\n\"edit.undo\" = \"cmd-j\"\n", cx);
+    setup.type_x();
+    let typed = setup.text();
+    setup.press("secondary-z");
+    assert_eq!(setup.text(), typed);
+    setup.press("secondary-j");
+    assert_eq!(setup.text(), "= A Page\n");
+    // And in the visual editor.
+    setup.press("secondary-k w");
+    setup.type_x();
+    let typed = setup.text();
+    setup.press("secondary-z");
+    assert_eq!(setup.text(), typed);
+    setup.press("secondary-j");
+    assert_eq!(setup.text(), "= A Page\n");
+}
+
+/// Another command given Cmd-Z has it, in the editor too.
+#[gpui::test]
+fn a_key_taken_from_the_editor_runs_the_command_it_is_given_to(cx: &mut TestAppContext) {
+    // Cmd-Z is the engine's Undo, Cmd-F the widget's find.
+    for key in ["z", "f"] {
+        let mut setup = rebound(
+            &format!("[keymap]\n\"document.save\" = \"cmd-{key}\"\n"),
+            cx,
+        );
+        setup.type_x();
+        let typed = setup.text();
+        setup.press(&format!("secondary-{key}"));
+        assert!(!setup.dirty(), "cmd-{key}");
+        assert_eq!(setup.text(), typed);
+    }
+}
+
+/// A command with no key of its own can be given one, in either editor.
+#[gpui::test]
+fn a_command_without_a_key_is_given_one(cx: &mut TestAppContext) {
+    let mut setup = rebound("[keymap]\n\"edit.copy_plain\" = \"cmd-alt-c\"\n", cx);
+    setup.press("secondary-k w");
+    setup.press("secondary-a");
+    setup.press("secondary-alt-c");
+    assert_eq!(clipboard(&mut setup.cx).as_deref(), Some("A Page"));
+}
+
+#[gpui::test]
+fn the_palette_shows_the_keys_commands_have(cx: &mut TestAppContext) {
+    let mut setup = rebound("[keymap]\n\"document.save\" = \"cmd-k j\"\n", cx);
+    let mut shown = |query: &str, selector: &'static str| {
+        setup.press("secondary-shift-p");
+        setup.cx.simulate_input(query);
+        setup.cx.run_until_parked();
+        setup.cx.update(|window, cx| window.draw(cx).clear(cx));
+        let shown = setup.cx.debug_bounds(selector).is_some();
+        setup.press("escape");
+        shown
+    };
+    assert!(shown("document.save", "palette-keys-document.save-cmd-k j"));
+    assert!(!shown("document.save", "palette-keys-document.save-cmd-s"));
+    assert!(shown("document.close", "palette-keys-document.close-cmd-w"));
+}
+
+/// What a keymap cannot do is said, once for each.
+#[gpui::test]
+fn a_keymaps_problems_are_shown(cx: &mut TestAppContext) {
+    let mut setup = rebound(
+        "[keymap]\n\"no.such\" = \"cmd-j\"\n\"edit.insert_text\" = \"cmd-alt-j\"\n\
+         \"document.save\" = \"hyper-s\"\n",
+        cx,
+    );
+    let problems = setup
+        .cx
+        .update(|_, cx| crate::editor::bindings::settings_warnings(&setup.app.read(cx).engine));
+    for name in ["no.such", "edit.insert_text", "document.save"] {
+        assert_eq!(
+            problems
+                .iter()
+                .filter(|problem| problem.contains(&format!("`keymap.{name}`")))
+                .count(),
+            1,
+            "{name}: {problems:?}"
+        );
+    }
+    assert_eq!(problems.len(), 3);
+}
+
+/// The window opens, and says so, when the settings file has something it cannot follow.
+#[gpui::test]
+fn a_settings_warning_at_startup_is_shown(cx: &mut TestAppContext) {
+    init(cx);
+    let config = tempfile::tempdir().unwrap();
+    std::fs::write(
+        config.path().join("adocfoundry.toml"),
+        "[editor]\nno_such = 1\n",
+    )
+    .unwrap();
+    let app = app_with(Engine::new(settings_in(config.path())), cx);
+    cx.update(|cx| crate::app::open_main_window(app.clone(), None, Vec::new(), cx));
+    cx.run_until_parked();
+    let window = app.read_with(cx, |app, _| app.main.as_ref().unwrap().0);
+    let shown = cx
+        .update_window(window, |_, window, cx| {
+            gpui_component::WindowExt::notifications(window, cx).len()
+        })
+        .unwrap();
+    assert_eq!(shown, 1);
+}
+
+// --- the settings window (#80) ----------------------------------------------------------------
+
+/// A workspace window and the settings window its Open Settings opened.
+struct SettingsWindow {
+    setup: Rebound,
+    cx: VisualTestContext,
+}
+
+fn settings_window(settings: &str, cx: &mut TestAppContext) -> SettingsWindow {
+    let mut setup = rebound(settings, cx);
+    setup.press("secondary-,");
+    let handle = setup
+        .workspace
+        .read_with(&setup.cx, |workspace, _| {
+            workspace.settings_window_for_test()
+        })
+        .expect("Open Settings opens the window");
+    let mut cx = VisualTestContext::from_window(handle.into(), cx);
+    cx.simulate_resize(size(px(1000.), px(1400.)));
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    SettingsWindow { setup, cx }
+}
+
+impl SettingsWindow {
+    fn click(&mut self, selector: &'static str) {
+        self.cx.update(|window, cx| window.draw(cx).clear(cx));
+        // At its left: a number's buttons are at either end, its text in the middle.
+        let bounds = self
+            .cx
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector} is drawn"));
+        let at = bounds.center();
+        self.cx.simulate_click(at, gpui::Modifiers::none());
+        self.cx.run_until_parked();
+    }
+
+    /// Replaces what the field `selector` holds with `text`.
+    fn type_in(&mut self, selector: &'static str, text: &str) {
+        self.click(selector);
+        self.cx.simulate_keystrokes("secondary-a");
+        self.cx.simulate_input(text);
+        self.cx.run_until_parked();
+    }
+
+    fn pause(&mut self) {
+        self.cx
+            .executor()
+            .advance_clock(crate::settings_view::COMMIT_DELAY * 2);
+        self.cx.run_until_parked();
+    }
+
+    fn file(&self) -> String {
+        std::fs::read_to_string(&self.setup.user).unwrap()
+    }
+
+    fn engine_font_size(&mut self) -> u32 {
+        let app = self.setup.app.clone();
+        self.cx
+            .update(|_, cx| app.read(cx).engine.settings().editor.font_size)
+    }
+
+    fn editor_size(&mut self) -> u32 {
+        let app = self.setup.app.clone();
+        self.cx
+            .update(|_, cx| crate::fonts::source(app.read(cx).engine.settings(), cx).1)
+    }
+}
+
+/// Changing the font size in the window updates the editor at once and the change is in the file,
+/// its comments kept.
+#[gpui::test]
+fn changing_the_font_size_in_the_settings_window_changes_the_editor(cx: &mut TestAppContext) {
+    let mut window = settings_window("# mine\n[editor]\nfont_size = 13 # points\n", cx);
+    assert_eq!(window.editor_size(), 13);
+    window.type_in("setting-editor.font_size", "20");
+    assert_eq!(window.engine_font_size(), 13, "not at each keystroke");
+    window.pause();
+    assert_eq!(window.editor_size(), 20);
+    assert_eq!(window.file(), "# mine\n[editor]\nfont_size = 20 # points\n");
+}
+
+#[gpui::test]
+fn enter_saves_what_a_settings_field_holds(cx: &mut TestAppContext) {
+    let mut window = settings_window("", cx);
+    window.type_in("setting-editor.tab_width", "4");
+    window.cx.simulate_keystrokes("enter");
+    window.cx.run_until_parked();
+    assert_eq!(window.file(), "[editor]\ntab_width = 4\n");
+}
+
+/// A number out of range, or no number, is not saved.
+#[gpui::test]
+fn a_settings_field_saves_only_what_it_may_be(cx: &mut TestAppContext) {
+    let mut window = settings_window("", cx);
+    for text in ["0", "x", "99", "2.5"] {
+        window.type_in("setting-editor.tab_width", text);
+        window.pause();
+        assert_eq!(window.file(), "", "{text}");
+    }
+    // Leaving the field shows what holds, and a number it may be is still taken.
+    window.type_in("setting-editor.tab_width", "x");
+    window.click("setting-editor.font_size");
+    window.pause();
+    assert_eq!(window.file(), "");
+    window.type_in("setting-editor.tab_width", "8");
+    window.pause();
+    assert_eq!(window.file(), "[editor]\ntab_width = 8\n");
+}
+
+#[gpui::test]
+fn a_settings_switch_and_a_choice_are_saved_at_once(cx: &mut TestAppContext) {
+    let mut window = settings_window("", cx);
+    window.click("setting-editor.soft_wrap");
+    assert_eq!(window.file(), "[editor]\nsoft_wrap = false\n");
+    window.click("setting-editor.auto_save");
+    window.cx.simulate_keystrokes("down down down enter");
+    window.cx.run_until_parked();
+    assert_eq!(
+        window.file(),
+        "[editor]\nsoft_wrap = false\nauto_save = \"after_delay\"\n"
+    );
+}
+
+/// A setting of the user's goes back to its default, alone, with its own button; one that is at
+/// its default, and a page as a whole, have none.
+#[gpui::test]
+fn a_setting_is_reset_on_its_own(cx: &mut TestAppContext) {
+    let mut window = settings_window("[editor]\nfont_size = 30\n# wide\ntab_width = 8\n", cx);
+    window.cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(window.cx.debug_bounds("reset-editor.soft_wrap").is_none());
+    window.click("reset-editor.font_size");
+    assert_eq!(window.file(), "[editor]\n# wide\ntab_width = 8\n");
+    assert_eq!(window.engine_font_size(), 13);
+    window.cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(window.cx.debug_bounds("reset-editor.font_size").is_none());
+}
+
+/// The window follows the file.
+#[gpui::test]
+fn the_settings_window_shows_a_change_made_in_the_file(cx: &mut TestAppContext) {
+    let mut window = settings_window("", cx);
+    window.setup.settings("[editor]\nfont_size = 30\n");
+    window.click("setting-editor.font_size");
+    window.cx.simulate_keystrokes("up");
+    window.pause();
+    assert_eq!(window.file(), "[editor]\nfont_size = 31\n");
+}
+
+/// What the workspace's file gives is shown and not changed.
+#[gpui::test]
+fn a_setting_the_workspace_gives_cannot_be_changed_in_the_window(cx: &mut TestAppContext) {
+    let mut window = settings_window("", cx);
+    let folder = tempfile::tempdir().unwrap();
+    std::fs::write(
+        folder.path().join(".adocfoundry.toml"),
+        "[editor]\nsoft_wrap = false\n",
+    )
+    .unwrap();
+    let app = window.setup.app.clone();
+    app.update(&mut window.cx, |app, cx| {
+        let path = folder.path().to_path_buf();
+        app.invoke(ids::WORKSPACE_OPEN_FOLDER, CommandArgs::Path(path), cx)
+            .unwrap();
+    });
+    window.cx.run_until_parked();
+    window.click("setting-editor.soft_wrap");
+    assert_eq!(window.file(), "");
+    window.cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        window.cx.debug_bounds("settings-problem").is_none(),
+        "the switch takes no click"
+    );
+    // Others can be.
+    window.click("setting-editor.preview_tabs");
+    assert_eq!(window.file(), "[editor]\npreview_tabs = false\n");
+}
+
+/// A change that cannot be saved says why, and the window shows what still holds.
+#[gpui::test]
+fn the_settings_window_says_why_a_change_was_not_saved(cx: &mut TestAppContext) {
+    let mut window = settings_window("", cx);
+    std::fs::write(&window.setup.user, "[editor\n").unwrap();
+    assert!(window.cx.debug_bounds("settings-problem").is_none());
+    window.click("setting-editor.soft_wrap");
+    window.cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(window.cx.debug_bounds("settings-problem").is_some());
+    assert_eq!(window.file(), "[editor\n");
+}
+
+/// What was typed last is saved though the window closes before the pause.
+#[gpui::test]
+fn closing_the_settings_window_saves_what_was_typed(cx: &mut TestAppContext) {
+    let mut window = settings_window("", cx);
+    window.type_in("setting-editor.font_size", "21");
+    assert_eq!(window.file(), "");
+    assert!(window.cx.simulate_close());
+    assert_eq!(window.file(), "[editor]\nfont_size = 21\n");
+}
+
+/// Open Settings brings the window it opened to the front; Open File opens the file itself.
+#[gpui::test]
+fn there_is_one_settings_window_and_it_opens_the_file(cx: &mut TestAppContext) {
+    let mut window = settings_window("", cx);
+    let windows = window.cx.update(|_, cx| cx.windows().len());
+    window.setup.press("secondary-,");
+    assert_eq!(window.cx.update(|_, cx| cx.windows().len()), windows);
+    let workspace = window.setup.workspace.downgrade();
+    let handle = window.setup.cx.update(|window, _| window.window_handle());
+    let app = window.setup.app.clone();
+    app.update(&mut window.cx, |app, _| {
+        app.main = Some((handle, workspace))
+    });
+    window.click("open-settings-file");
+    assert_eq!(
+        active_path(&app, &mut window.setup.cx),
+        Some(window.setup.user.clone())
+    );
+}
+
+/// What the settings file has wrong is said once, not again at each change in the window, and
+/// once more if it is put right and comes back.
+#[gpui::test]
+fn a_settings_warning_is_said_once(cx: &mut TestAppContext) {
+    let wrong = "[keymap]\n\"no.such\" = \"cmd-j\"\n";
+    let mut window = settings_window(wrong, cx);
+    let said = |window: &mut SettingsWindow| {
+        window
+            .setup
+            .cx
+            .update(|window, cx| gpui_component::WindowExt::notifications(window, cx).len())
+    };
+    assert_eq!(said(&mut window), 1);
+    window.click("setting-editor.soft_wrap");
+    window.click("setting-editor.preview_tabs");
+    assert_eq!(said(&mut window), 1);
+    window.setup.settings("");
+    window.setup.settings(wrong);
+    assert_eq!(said(&mut window), 2);
+}

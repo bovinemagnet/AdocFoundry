@@ -2,7 +2,7 @@
 //! plus the few actions that exist only in the UI.
 
 use adoc_engine::{commands::ids, CommandId, Engine};
-use gpui::{actions, Action, App, KeyBinding, KeyBindingContextPredicate};
+use gpui::{actions, Action, App, AsKeystroke as _, KeyBinding, KeyBindingContextPredicate};
 
 actions!(
     adocfoundry,
@@ -60,6 +60,7 @@ actions!(
         RenameAnchor,
         Reindex,
         OpenSettings,
+        OpenSettingsFile,
         ReloadSettings,
         CheckForUpdates,
         ShowDiagnostics,
@@ -196,8 +197,8 @@ pub const ZOOM_UI_ACTIONS: usize = 11;
 
 /// Whether command `id`'s default binding is left out on this platform: Windows quits with
 /// Alt-F4, which closes the window, and gives File › Exit no key of its own.
-fn unbound_here(id: CommandId) -> bool {
-    cfg!(target_os = "windows") && id == ids::APP_QUIT
+pub fn unbound_here(keymap: &adoc_engine::Keymap, id: CommandId) -> bool {
+    cfg!(target_os = "windows") && id == ids::APP_QUIT && !keymap.is_custom(id)
 }
 
 /// Translates a `cmd-s` style binding to GPUI's platform-neutral form: `cmd` is the platform's
@@ -225,158 +226,74 @@ pub fn key_binding<A: Action>(
     context: Option<&str>,
     cx: &App,
 ) -> KeyBinding {
+    boxed_binding(keys, Box::new(action), context, cx)
+        .unwrap_or_else(|error| panic!("binding {keys:?}: {error:?}"))
+}
+
+fn boxed_binding(
+    keys: &str,
+    action: Box<dyn Action>,
+    context: Option<&str>,
+    cx: &App,
+) -> Result<KeyBinding, gpui::InvalidKeystrokeError> {
     let predicate = context.map(|context| {
         KeyBindingContextPredicate::parse(context)
             .expect("a key context is a valid predicate")
             .into()
     });
-    KeyBinding::load(keys, Box::new(action), predicate, false, None, cx)
-        .unwrap_or_else(|error| panic!("binding {keys:?}: {error:?}"))
+    KeyBinding::load(keys, action, predicate, false, None, cx)
 }
 
-fn binding_for(id: CommandId, keys: &str, cx: &App) -> Option<KeyBinding> {
-    let workspace = Some(WORKSPACE_CONTEXT);
-    let editor = Some(EDITOR_CONTEXT);
-    let visual = Some(crate::visual::VISUAL_CONTEXT);
-    Some(match id {
-        ids::WORKSPACE_OPEN_FOLDER => key_binding(keys, OpenFolder, workspace, cx),
-        ids::DOCUMENT_OPEN => key_binding(keys, OpenFile, workspace, cx),
-        ids::WORKSPACE_QUICK_OPEN => key_binding(keys, QuickOpen, workspace, cx),
-        ids::WORKSPACE_OPEN_RECENT => key_binding(keys, OpenRecent, workspace, cx),
-        ids::DOCUMENT_SAVE => key_binding(keys, Save, workspace, cx),
-        ids::DOCUMENT_SAVE_ALL => key_binding(keys, SaveAll, workspace, cx),
-        ids::DOCUMENT_CLOSE => key_binding(keys, CloseDocument, workspace, cx),
-        ids::DOCUMENT_CLOSE_OTHERS => key_binding(keys, CloseOthers, workspace, cx),
-        ids::DOCUMENT_CLOSE_LEFT => key_binding(keys, CloseLeft, workspace, cx),
-        ids::DOCUMENT_CLOSE_RIGHT => key_binding(keys, CloseRight, workspace, cx),
-        ids::DOCUMENT_CLOSE_CLEAN => key_binding(keys, CloseClean, workspace, cx),
-        ids::DOCUMENT_CLOSE_ALL => key_binding(keys, CloseAll, workspace, cx),
-        ids::DOCUMENT_KEEP_OPEN => key_binding(keys, KeepOpen, workspace, cx),
-        ids::DOCUMENT_PIN_TAB => key_binding(keys, PinTab, workspace, cx),
-        ids::DOCUMENT_UNPIN_TAB => key_binding(keys, UnpinTab, workspace, cx),
-        ids::IMAGE_RELOAD => key_binding(
-            keys,
-            ReloadImage,
-            Some(crate::image_view::IMAGE_CONTEXT),
-            cx,
-        ),
-        ids::SIDEBAR_EXPAND_ALL => key_binding(keys, ExpandSidebar, workspace, cx),
-        ids::SIDEBAR_COLLAPSE_ALL => key_binding(keys, CollapseSidebar, workspace, cx),
-        ids::SIDEBAR_COLLAPSE_ONE_LEVEL => key_binding(keys, CollapseSidebarLevel, workspace, cx),
-        ids::SIDEBAR_RESET_EXPANSION => key_binding(keys, ResetSidebar, workspace, cx),
-        ids::EDIT_UNDO => key_binding(keys, Undo, editor, cx),
-        ids::EDIT_REDO => key_binding(keys, Redo, editor, cx),
-        ids::NAVIGATE_DEFINITION => key_binding(keys, GoToDefinition, editor, cx),
-        ids::NAVIGATE_FOLLOW_LINK => key_binding(keys, FollowLink, editor, cx),
-        ids::NAVIGATE_BACK => key_binding(keys, GoBack, workspace, cx),
-        ids::NAVIGATE_FORWARD => key_binding(keys, GoForward, workspace, cx),
-        ids::NAVIGATE_PEEK_INCLUDE => key_binding(keys, PeekInclude, editor, cx),
-        ids::NAVIGATE_FIND_REFERENCES => key_binding(keys, FindReferences, editor, cx),
-        ids::NAVIGATE_INSPECT_ATTRIBUTE => key_binding(keys, InspectAttribute, editor, cx),
-        ids::NAVIGATE_GO_TO_SYMBOL => key_binding(keys, GoToSymbol, workspace, cx),
-        ids::NAVIGATE_GO_TO_SYMBOL_IN_PAGE => key_binding(keys, GoToSymbolInPage, workspace, cx),
-        ids::WORKSPACE_SEARCH => key_binding(keys, FindInWorkspace, workspace, cx),
-        ids::WORKSPACE_REPLACE => key_binding(keys, ReplaceInWorkspace, workspace, cx),
-        ids::PAGE_RENAME => key_binding(keys, RenamePage, workspace, cx),
-        ids::PAGE_NEW => key_binding(keys, NewPage, workspace, cx),
-        ids::MODULE_NEW => key_binding(keys, NewModule, workspace, cx),
-        ids::PROJECT_NEW => key_binding(keys, NewProject, workspace, cx),
-        ids::PROJECT_BUILD_SITE => key_binding(keys, BuildSite, workspace, cx),
-        ids::IMPACT_ANALYSE_CHANGES => key_binding(keys, AnalyseImpact, workspace, cx),
-        ids::IMPACT_COMPARE_REVISIONS => key_binding(keys, CompareRevisions, workspace, cx),
-        ids::IMPACT_INSPECT => key_binding(keys, InspectImpact, workspace, cx),
-        ids::FILE_DELETE => key_binding(keys, DeleteFile, workspace, cx),
-        ids::FILE_UNDO_DELETE => key_binding(keys, UndoDelete, workspace, cx),
-        ids::FILE_RESTORE_DELETED => key_binding(keys, RestoreDeletedFile, workspace, cx),
-        ids::ANCHOR_RENAME => key_binding(keys, RenameAnchor, workspace, cx),
-        ids::WORKSPACE_REINDEX => key_binding(keys, Reindex, workspace, cx),
-        ids::QUALITY_RUN_AUDIT => key_binding(keys, RunAudit, workspace, cx),
-        ids::GIT_REFRESH => key_binding(keys, RefreshGit, workspace, cx),
-        ids::GIT_REVERT_HUNK => key_binding(keys, RevertChange, workspace, cx),
-        ids::EDIT_FORMAT_TABLE => key_binding(keys, FormatTable, workspace, cx),
-        ids::EDIT_TOGGLE_LINE_COMMENT => key_binding(keys, ToggleLineComment, editor, cx),
-        ids::GIT_NEXT_CHANGE => key_binding(keys, NextChange, workspace, cx),
-        ids::GIT_PREVIOUS_CHANGE => key_binding(keys, PreviousChange, workspace, cx),
-        ids::GIT_SHOW_CHANGES => key_binding(keys, ShowChanges, workspace, cx),
-        ids::NAVIGATE_OPEN_IN_VERSION => key_binding(keys, OpenInVersion, workspace, cx),
-        ids::GIT_SHOW_BLAME => key_binding(keys, ToggleBlame, workspace, cx),
-        ids::NAVIGATE_OPEN_ON_REMOTE => key_binding(keys, OpenOnRemote, workspace, cx),
-        ids::NAVIGATE_COPY_REMOTE_LINK => key_binding(keys, CopyRemoteLink, workspace, cx),
-        ids::GIT_STAGE => key_binding(keys, StageFile, workspace, cx),
-        ids::GIT_UNSTAGE => key_binding(keys, UnstageFile, workspace, cx),
-        ids::GIT_STAGE_ALL_ADOC => key_binding(keys, StageAll, workspace, cx),
-        ids::GIT_COMMIT => key_binding(keys, CommitChanges, workspace, cx),
-        ids::GIT_PUSH => key_binding(keys, Push, workspace, cx),
-        ids::GIT_SAVE_AND_COMMIT => key_binding(keys, SaveAndCommit, workspace, cx),
-        ids::EXPORT_PDF_PAGE => key_binding(keys, ExportPagePdf, workspace, cx),
-        ids::EXPORT_HTML_PAGE => key_binding(keys, ExportPageHtml, workspace, cx),
-        ids::DOCUMENT_LOCAL_HISTORY => key_binding(keys, LocalHistory, workspace, cx),
-        ids::DOCUMENT_RECOVER_UNSAVED => key_binding(keys, RecoverUnsaved, workspace, cx),
-        ids::EXPORT_PDF_COMPONENT => key_binding(keys, ExportComponentPdf, workspace, cx),
-        ids::EXPORT_PDF_PROFILE => key_binding(keys, ExportPdfProfile, workspace, cx),
-        ids::EXPORT_DOCX_PAGE => key_binding(keys, ExportPageDocx, workspace, cx),
-        ids::EXPORT_DOCX_COMPONENT => key_binding(keys, ExportComponentDocx, workspace, cx),
-        ids::EXPORT_DOCX_PROFILE => key_binding(keys, ExportDocxProfile, workspace, cx),
-        ids::EXPORT_KINDLE_PAGE => key_binding(keys, ExportPageKindle, workspace, cx),
-        ids::EXPORT_KINDLE_COMPONENT => key_binding(keys, ExportComponentKindle, workspace, cx),
-        ids::EXPORT_KINDLE_PROFILE => key_binding(keys, ExportKindleProfile, workspace, cx),
-        ids::EXPORT_EPUB_PAGE => key_binding(keys, ExportPageEpub, workspace, cx),
-        ids::EXPORT_EPUB_COMPONENT => key_binding(keys, ExportComponentEpub, workspace, cx),
-        ids::EXPORT_EPUB_PROFILE => key_binding(keys, ExportEpubProfile, workspace, cx),
-        ids::EXPORT_DOCBOOK_PAGE => key_binding(keys, ExportPageDocBook, workspace, cx),
-        ids::EXPORT_DOCBOOK_COMPONENT => key_binding(keys, ExportComponentDocBook, workspace, cx),
-        ids::EXPORT_DOCBOOK_PROFILE => key_binding(keys, ExportDocBookProfile, workspace, cx),
-        ids::EXPORT_DOCX_PAGE_THEMED => key_binding(keys, ExportPageDocxThemed, workspace, cx),
-        ids::EXPORT_DOCX_COMPONENT_THEMED => {
-            key_binding(keys, ExportComponentDocxThemed, workspace, cx)
-        }
-        ids::SETTINGS_OPEN => key_binding(keys, OpenSettings, workspace, cx),
-        ids::APP_CHECK_FOR_UPDATES => key_binding(keys, CheckForUpdates, workspace, cx),
-        ids::APP_DIAGNOSTICS => key_binding(keys, ShowDiagnostics, workspace, cx),
-        ids::APP_DOCUMENTATION => key_binding(keys, ShowDocumentation, workspace, cx),
-        ids::APP_ABOUT => key_binding(keys, ShowAbout, workspace, cx),
-        ids::COLLAB_SHARE => key_binding(keys, ShareWorkspace, workspace, cx),
-        ids::COLLAB_JOIN => key_binding(keys, JoinSession, workspace, cx),
-        ids::COLLAB_COPY_INVITATION => key_binding(keys, CopyInvitation, workspace, cx),
-        ids::COLLAB_STOP => key_binding(keys, StopSharing, workspace, cx),
-        ids::COLLAB_LEAVE => key_binding(keys, LeaveSession, workspace, cx),
-        ids::COLLAB_STOP_FOLLOWING => key_binding(keys, StopFollowing, workspace, cx),
-        ids::COMMENTS_ADD => key_binding(keys, AddComment, workspace, cx),
-        ids::COMMENTS_SUGGEST => key_binding(keys, SuggestChange, workspace, cx),
-        ids::COMMENTS_NEXT => key_binding(keys, NextComment, workspace, cx),
-        ids::COMMENTS_PREVIOUS => key_binding(keys, PreviousComment, workspace, cx),
+/// The key contexts command `id` is bound in.
+fn contexts(id: CommandId) -> &'static [Option<&'static str>] {
+    const WORKSPACE: &[Option<&str>] = &[Some(WORKSPACE_CONTEXT)];
+    const EDITOR: &[Option<&str>] = &[Some(EDITOR_CONTEXT)];
+    const VISUAL: &[Option<&str>] = &[Some(crate::visual::VISUAL_CONTEXT)];
+    const EITHER: &[Option<&str>] = &[Some(EDITOR_CONTEXT), Some(crate::visual::VISUAL_CONTEXT)];
+    match id {
         // From any window, the graph and the detached preview too: the app handles it.
-        ids::APP_QUIT => key_binding(keys, Quit, None, cx),
-        ids::SETTINGS_RELOAD => key_binding(keys, ReloadSettings, workspace, cx),
-        ids::VIEW_TOGGLE_PREVIEW => key_binding(keys, TogglePreview, workspace, cx),
-        ids::VIEW_DETACH_PREVIEW => key_binding(keys, DetachPreview, workspace, cx),
-        ids::VIEW_TOGGLE_SCROLL_SYNC => key_binding(keys, TogglePreviewScrollSync, workspace, cx),
-        ids::VIEW_TOGGLE_PDF_PREVIEW => key_binding(keys, TogglePdfPreview, workspace, cx),
-        ids::VIEW_TOGGLE_PDF_WINDOW => key_binding(keys, TogglePdfWindow, workspace, cx),
-        ids::PREVIEW_PIN => key_binding(keys, PinPreview, workspace, cx),
-        ids::PREVIEW_RETRY_DIAGRAMS => key_binding(keys, RetryDiagrams, workspace, cx),
-        ids::VIEW_SHOW_SOURCE => key_binding(keys, ShowSource, workspace, cx),
-        ids::VIEW_SHOW_VISUAL => key_binding(keys, ShowVisual, workspace, cx),
-        ids::VIEW_SHOW_SPLIT => key_binding(keys, ShowSplit, workspace, cx),
-        ids::VIEW_GRAPH => key_binding(keys, ShowGraph, workspace, cx),
-        ids::VIEW_LOCAL_GRAPH => key_binding(keys, ShowLocalGraph, workspace, cx),
-        ids::GRAPH_RESET_LAYOUT => key_binding(keys, ResetGraphLayout, workspace, cx),
-        ids::GRAPH_EXPORT => key_binding(keys, ExportGraph, workspace, cx),
-        ids::EDIT_TOGGLE_STRONG => key_binding(keys, ToggleStrong, visual, cx),
-        ids::EDIT_TOGGLE_EMPHASIS => key_binding(keys, ToggleEmphasis, visual, cx),
-        ids::EDIT_TOGGLE_CODE => key_binding(keys, ToggleCode, visual, cx),
-        ids::EDIT_TOGGLE_HIGHLIGHT => key_binding(keys, ToggleHighlight, visual, cx),
-        ids::EDIT_INSERT_LINK => key_binding(keys, InsertLink, visual, cx),
-        ids::EDIT_REMOVE_LINK => key_binding(keys, RemoveLink, visual, cx),
-        ids::VISUAL_SPLIT_BLOCK => key_binding(keys, NewParagraph, visual, cx),
-        ids::EDIT_INDENT_LIST_ITEM => key_binding(keys, IndentListItem, visual, cx),
-        ids::EDIT_OUTDENT_LIST_ITEM => key_binding(keys, OutdentListItem, visual, cx),
-        ids::EDIT_TOGGLE_BULLET_LIST => key_binding(keys, ToggleBulletList, visual, cx),
-        ids::EDIT_TOGGLE_NUMBERED_LIST => key_binding(keys, ToggleNumberedList, visual, cx),
-        ids::EDIT_TOGGLE_CHECKLIST => key_binding(keys, ToggleChecklist, visual, cx),
-        _ => return None,
-    })
+        ids::APP_QUIT => &[None],
+        ids::IMAGE_RELOAD => &[Some(crate::image_view::IMAGE_CONTEXT)],
+        ids::NAVIGATE_DEFINITION
+        | ids::NAVIGATE_FOLLOW_LINK
+        | ids::NAVIGATE_PEEK_INCLUDE
+        | ids::NAVIGATE_FIND_REFERENCES
+        | ids::NAVIGATE_INSPECT_ATTRIBUTE
+        | ids::EDIT_TOGGLE_LINE_COMMENT => EDITOR,
+        // Undo and redo in the visual editor are the engine's, as in the source editor; the
+        // marks and Insert Link work in the source editor too, on its selection.
+        ids::EDIT_UNDO
+        | ids::EDIT_REDO
+        | ids::EDIT_TOGGLE_STRONG
+        | ids::EDIT_TOGGLE_EMPHASIS
+        | ids::EDIT_TOGGLE_CODE
+        | ids::EDIT_INSERT_LINK => EITHER,
+        ids::EDIT_TOGGLE_HIGHLIGHT
+        | ids::EDIT_REMOVE_LINK
+        | ids::VISUAL_SPLIT_BLOCK
+        | ids::EDIT_INDENT_LIST_ITEM
+        | ids::EDIT_OUTDENT_LIST_ITEM
+        | ids::EDIT_TOGGLE_BULLET_LIST
+        | ids::EDIT_TOGGLE_NUMBERED_LIST
+        | ids::EDIT_TOGGLE_CHECKLIST => VISUAL,
+        _ => WORKSPACE,
+    }
 }
+
+/// The key contexts command `id` is bound in with keys the settings give it: those of the
+/// window's commands include the editors', so that the keys win there over the editors' own.
+fn custom_contexts(id: CommandId) -> Vec<Option<&'static str>> {
+    let mut contexts = contexts(id).to_vec();
+    if contexts.contains(&Some(WORKSPACE_CONTEXT)) {
+        contexts.extend([Some(EDITOR_CONTEXT), Some(crate::visual::VISUAL_CONTEXT)]);
+    }
+    contexts
+}
+
+/// The bindings that were there before the app's, the widgets' own, which a rebinding keeps.
+struct BaseBindings(Vec<KeyBinding>);
+
+impl gpui::Global for BaseBindings {}
 
 /// The action that invokes engine command `id` from the UI, if it has one.
 pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
@@ -474,6 +391,7 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::EXPORT_DOCX_PAGE_THEMED => Box::new(ExportPageDocxThemed),
         ids::EXPORT_DOCX_COMPONENT_THEMED => Box::new(ExportComponentDocxThemed),
         ids::SETTINGS_OPEN => Box::new(OpenSettings),
+        ids::SETTINGS_OPEN_FILE => Box::new(OpenSettingsFile),
         ids::APP_CHECK_FOR_UPDATES => Box::new(CheckForUpdates),
         ids::APP_DIAGNOSTICS => Box::new(ShowDiagnostics),
         ids::APP_DOCUMENTATION => Box::new(ShowDocumentation),
@@ -552,36 +470,53 @@ pub fn ui_action(index: usize) -> Box<dyn gpui::Action> {
     }
 }
 
-/// Binds every command's default binding. Call after `gpui_component::init` so these bindings
-/// take precedence over the editor widget's own.
+/// Binds every command's keys, the settings' `[keymap]` over its own. Call after
+/// `gpui_component::init` so these bindings take precedence over the editor widget's own, and
+/// once: [`rebind`] follows a change of the settings.
 pub fn bind(engine: &Engine, cx: &mut App) {
-    let mut bindings: Vec<KeyBinding> = engine
-        .commands()
-        .all()
-        .filter(|spec| !unbound_here(spec.id))
-        .filter_map(|spec| {
-            let keys = platform_binding(spec.default_binding?);
-            binding_for(spec.id, &keys, cx)
-        })
-        .collect();
-    // Undo and redo in the visual editor are the engine's, as in the source editor.
-    let visual = Some(crate::visual::VISUAL_CONTEXT);
+    let base = cx.key_bindings().borrow().bindings().cloned().collect();
+    cx.set_global(BaseBindings(base));
+    bind_over_base(engine, cx);
+}
+
+/// Binds every command's keys anew, as the settings give them now.
+pub fn rebind(engine: &Engine, cx: &mut App) {
+    let Some(base) = cx.try_global::<BaseBindings>() else {
+        return;
+    };
+    let base = base.0.clone();
+    cx.clear_key_bindings();
+    cx.bind_keys(base);
+    bind_over_base(engine, cx);
+}
+
+fn bind_over_base(engine: &Engine, cx: &mut App) {
+    let keymap = engine.keymap();
+    let mut bindings = Vec::new();
+    // What the settings change, which comes after everything else.
+    let mut custom = Vec::new();
     for spec in engine.commands().all() {
-        let Some(keys) = spec.default_binding.map(platform_binding) else {
+        let Some(action) = action_for(spec.id) else {
             continue;
         };
-        // The marks and Insert Link work in the source editor too, on its selection.
-        let editor = Some(EDITOR_CONTEXT);
-        match spec.id {
-            ids::EDIT_UNDO => bindings.push(key_binding(&keys, Undo, visual, cx)),
-            ids::EDIT_REDO => bindings.push(key_binding(&keys, Redo, visual, cx)),
-            ids::EDIT_TOGGLE_STRONG => bindings.push(key_binding(&keys, ToggleStrong, editor, cx)),
-            ids::EDIT_TOGGLE_EMPHASIS => {
-                bindings.push(key_binding(&keys, ToggleEmphasis, editor, cx));
+        let keys = keymap.keys(spec.id);
+        if keymap.is_custom(spec.id) {
+            let keys = keys.map(platform_binding);
+            for context in keys.iter().flat_map(|_| custom_contexts(spec.id)) {
+                let keys = keys.as_deref().unwrap_or_default();
+                custom.extend(boxed_binding(keys, action.boxed_clone(), context, cx));
             }
-            ids::EDIT_TOGGLE_CODE => bindings.push(key_binding(&keys, ToggleCode, editor, cx)),
-            ids::EDIT_INSERT_LINK => bindings.push(key_binding(&keys, InsertLink, editor, cx)),
-            _ => {}
+        } else if let Some(keys) = keys.filter(|_| !unbound_here(&keymap, spec.id)) {
+            let keys = platform_binding(keys);
+            bindings.extend(contexts(spec.id).iter().filter_map(|context| {
+                boxed_binding(&keys, action.boxed_clone(), *context, cx).ok()
+            }));
+        }
+        if let Some(default) = spec
+            .default_binding
+            .filter(|default| keys != Some(*default))
+        {
+            bindings.extend(unbind_widgets(spec.id, default, cx));
         }
     }
     // The Navigation and Modules panels' menu, from the keyboard, where a tree has focus.
@@ -616,6 +551,67 @@ pub fn bind(engine: &Engine, cx: &mut App) {
     crate::files_view::bind(cx);
     crate::image_view::bind(cx);
     crate::graph_view::bind(cx);
+    cx.bind_keys(custom);
+}
+
+/// Bindings that keep the widgets' own actions on `default`, keys command `id` no longer has,
+/// from coming back where the command stood in for them: the editor widget's Undo has a history
+/// of its own.
+fn unbind_widgets(id: CommandId, default: &str, cx: &App) -> Vec<KeyBinding> {
+    let keys = platform_binding(default);
+    let base = cx.try_global::<BaseBindings>();
+    contexts(id)
+        .iter()
+        .filter(|context| **context == Some(EDITOR_CONTEXT))
+        .filter_map(|context| {
+            let probe = boxed_binding(&keys, Box::new(gpui::NoAction), *context, cx).ok()?;
+            Some((context, probe))
+        })
+        .flat_map(|(context, probe)| {
+            base.iter()
+                .flat_map(|base| &base.0)
+                .filter(|binding| binding.keystrokes() == probe.keystrokes())
+                .filter_map(|binding| {
+                    let unbind = gpui::Unbind(binding.action().name().into());
+                    boxed_binding(&keys, Box::new(unbind), *context, cx).ok()
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// What the settings files could not be followed in: the settings' own warnings, the keymap's,
+/// and the commands it gives keys that nothing can run from a key.
+pub fn settings_warnings(engine: &Engine) -> Vec<String> {
+    let mut warnings = engine.settings().warnings.clone();
+    let keymap = engine.keymap();
+    warnings.extend(keymap.problems().iter().cloned());
+    warnings.extend(
+        engine
+            .commands()
+            .all()
+            .filter(|spec| keymap.is_custom(spec.id) && action_for(spec.id).is_none())
+            .map(|spec| {
+                format!(
+                    "`keymap.{}`: this command cannot be run from a key",
+                    spec.id.as_str()
+                )
+            }),
+    );
+    warnings
+}
+
+/// The strokes of `keys` (an engine binding) as they are shown.
+pub fn shown_keys(keys: &str, cx: &App) -> Vec<gpui::Keystroke> {
+    boxed_binding(&platform_binding(keys), Box::new(gpui::NoAction), None, cx)
+        .map(|binding| {
+            binding
+                .keystrokes()
+                .iter()
+                .map(|stroke| stroke.as_keystroke().clone())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -631,6 +627,48 @@ mod tests {
         assert_eq!(platform_binding("cmd-k cmd-t"), "secondary-k secondary-t");
         assert_eq!(platform_binding("f12"), "f12");
         assert_eq!(platform_binding("ctrl--"), "ctrl--");
+    }
+
+    /// Every key the settings file can name is one GPUI reads, as that key.
+    #[gpui::test]
+    fn every_key_the_engine_reads_is_one_gpui_does(cx: &mut gpui::TestAppContext) {
+        let named = [
+            "enter",
+            "escape",
+            "tab",
+            "space",
+            "backspace",
+            "delete",
+            "insert",
+            "up",
+            "down",
+            "left",
+            "right",
+            "home",
+            "end",
+            "pageup",
+            "pagedown",
+        ];
+        let keys = named
+            .iter()
+            .map(|key| (*key).to_owned())
+            .chain((1..=24).map(|number| format!("f{number}")))
+            .chain(
+                ('!'..='~')
+                    .filter(|c| !c.is_ascii_uppercase())
+                    .map(String::from),
+            );
+        cx.update(|cx| {
+            for key in keys {
+                let parsed =
+                    adoc_engine::Keys::parse(&format!("cmd-ctrl-alt-shift-{key}")).unwrap();
+                let shown = shown_keys(parsed.as_str(), cx);
+                assert_eq!(shown.len(), 1, "{key}");
+                assert_eq!(shown[0].key, key);
+                assert!(shown[0].modifiers.alt && shown[0].modifiers.shift);
+            }
+            assert_eq!(shown_keys("cmd-k cmd-x", cx).len(), 2);
+        });
     }
 
     #[test]
@@ -663,6 +701,8 @@ mod tests {
             ids::EXPORT_PDF_PAGES,
             // Saved by Select Theme… and the appearance commands, which are the app's own.
             ids::APPEARANCE_SAVE,
+            // The settings window's fields.
+            ids::SETTINGS_SAVE,
             // Saved by Select Font Set…, which is the app's own.
             ids::APPEARANCE_SAVE_FONT_SET,
             // The Session panel's buttons, each on the participant or file of its row.

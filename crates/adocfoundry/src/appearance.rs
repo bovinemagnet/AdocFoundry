@@ -16,7 +16,7 @@ use std::{
 };
 
 use adoc_engine::{AppearanceSettings, ThemePreference};
-use gpui::{px, App, Global, Window};
+use gpui::{px, App, Global, SharedString, Window};
 use gpui_component::theme::{Theme, ThemeConfig, ThemeMode, ThemeRegistry, ThemeSet};
 
 /// The theme sets built into the app.
@@ -190,6 +190,16 @@ fn catalog<'a>(dir: Option<&Path>, cx: &'a mut App) -> &'a ThemeCatalog {
         load(dir, cx);
     }
     cx.global::<ThemeCatalog>()
+}
+
+/// The names of `mode`'s themes, by name ignoring case.
+pub fn theme_names(dir: Option<&Path>, mode: ThemeMode, cx: &mut App) -> Vec<SharedString> {
+    catalog(dir, cx)
+        .sorted()
+        .into_iter()
+        .filter(|theme| theme.mode.is_dark() == mode.is_dark())
+        .map(|theme| theme.name.clone())
+        .collect()
 }
 
 /// The themes named for each mode, or that mode's native default, with a warning for a name

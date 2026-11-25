@@ -305,6 +305,9 @@ pub struct WorkspaceView {
     graph: Entity<GraphView>,
     /// The graph window, while it is open.
     graph_window: Option<(gpui::WindowHandle<gpui_component::Root>, Entity<GraphView>)>,
+    settings_window: Option<gpui::WindowHandle<gpui_component::Root>>,
+    /// What was last found wrong with the settings, and said.
+    settings_warnings: Vec<String>,
     /// A signed commit is being made, to be pushed once it is (Commit and Push).
     push_after_commit: bool,
     _subscriptions: Vec<Subscription>,
@@ -401,6 +404,25 @@ pub(crate) fn palette_commands(engine: &adoc_engine::Engine) -> Vec<&adoc_engine
         .all()
         .filter(|spec| engine.command_available(spec.id))
         .collect()
+}
+
+/// A palette row that shows its command's `keys` after its title.
+fn with_keys(item: CommandItem, spec: &adoc_engine::CommandSpec, keys: String) -> CommandItem {
+    let (title, id) = (spec.title, spec.id);
+    item.child(move |_, cx| {
+        let strokes = shown_keys(&keys, cx);
+        h_flex()
+            .w_full()
+            .justify_between()
+            .gap_4()
+            .child(title)
+            .child(
+                h_flex()
+                    .gap_1()
+                    .debug_selector(|| format!("palette-keys-{}-{keys}", id.as_str()))
+                    .children(strokes.into_iter().map(gpui_component::kbd::Kbd::new)),
+            )
+    })
 }
 
 /// An Open Recent row: the folder's name above its path, both searched.
@@ -753,6 +775,8 @@ impl WorkspaceView {
             revealed: None,
             graph,
             graph_window: None,
+            settings_window: None,
+            settings_warnings: Vec::new(),
             push_after_commit: false,
             app,
             _subscriptions: subscriptions,
@@ -2575,10 +2599,23 @@ impl WorkspaceView {
     // --- settings and theme ------------------------------------------------------------------
 
     fn warn_about_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let warnings = self.app.read(cx).engine.settings().warnings.clone();
-        for warning in warnings {
-            window.push_notification(warning, cx);
+        let found = settings_warnings(&self.app.read(cx).engine);
+        // Each once: the settings are read again at every change in the settings window.
+        let warnings: Vec<String> = found
+            .iter()
+            .filter(|warning| !self.settings_warnings.contains(warning))
+            .cloned()
+            .collect();
+        self.settings_warnings = found;
+        if warnings.is_empty() {
+            return;
         }
+        // After the current update: while the window is being opened it has no root yet.
+        cx.defer_in(window, move |_, window, cx| {
+            for warning in warnings {
+                window.push_notification(warning, cx);
+            }
+        });
     }
 
     /// Says, once for the folder, that its Antora components have no playbook, so what a site
@@ -5150,9 +5187,40 @@ impl WorkspaceView {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn settings_window_for_test(
+        &self,
+    ) -> Option<gpui::WindowHandle<gpui_component::Root>> {
+        self.settings_window
+    }
+
+    /// Opens the settings window, or brings it to the front when it is open already.
     fn on_open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
+        self.invoke(ids::SETTINGS_OPEN, CommandArgs::None, window, cx);
+        let shown = self.settings_window.is_some_and(|handle| {
+            handle
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+        });
+        if !shown {
+            self.settings_window =
+                open_secondary_window(self.app.clone(), WindowKind::Settings, cx)
+                    .map(|(handle, _)| handle);
+        }
+    }
+
+    fn on_open_settings_file(
+        &mut self,
+        _: &OpenSettingsFile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_settings_file(window, cx);
+    }
+
+    pub(crate) fn open_settings_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(CommandOutcome::External(path)) =
-            self.invoke(ids::SETTINGS_OPEN, CommandArgs::None, window, cx)
+            self.invoke(ids::SETTINGS_OPEN_FILE, CommandArgs::None, window, cx)
         {
             self.open_at(
                 &path,
@@ -5454,14 +5522,22 @@ impl WorkspaceView {
         // `on_confirm`. Dispatched from the palette's own field, inside the dialog layer that
         // `Root` draws beside this view, it would reach neither the workspace nor an editor.
         let mut actions: Vec<Box<dyn gpui::Action>> = Vec::new();
+        let keymap = self.app.read(cx).engine.keymap();
         let mut items: Vec<CommandItem> = palette_commands(&self.app.read(cx).engine)
             .into_iter()
             .filter_map(|spec| {
                 actions.push(action_for(spec.id)?);
+                let item = CommandItem::new()
+                    .label(spec.title)
+                    .keywords([spec.id.as_str()]);
                 Some(
-                    CommandItem::new()
-                        .label(spec.title)
-                        .keywords([spec.id.as_str()]),
+                    match keymap
+                        .keys(spec.id)
+                        .filter(|_| !unbound_here(&keymap, spec.id))
+                    {
+                        Some(keys) => with_keys(item, spec, keys.to_owned()),
+                        None => item,
+                    },
                 )
             })
             .collect();
@@ -6554,6 +6630,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_export_page_pdf_with_theme))
             .on_action(cx.listener(Self::on_save_and_commit))
             .on_action(cx.listener(Self::on_open_settings))
+            .on_action(cx.listener(Self::on_open_settings_file))
             .on_action(cx.listener(Self::on_check_for_updates))
             .on_action(cx.listener(Self::on_show_diagnostics))
             .on_action(cx.listener(Self::on_show_documentation))

@@ -499,10 +499,16 @@ pub struct Settings {
     pub collaboration: CollaborationSettings,
     pub comments: CommentsSettings,
     pub templates: TemplateSettings,
+    /// `[keymap]`: the keys given to commands, by id, or `None` to take a command's away. Read
+    /// them through [`crate::Engine::keymap`], which knows the commands.
+    pub keymap: std::collections::BTreeMap<String, Option<crate::Keys>>,
     /// Problems found while loading, such as unknown keys. Shown once by the front end.
     pub warnings: Vec<String>,
     user_file: Option<PathBuf>,
     workspace_file: Option<PathBuf>,
+    /// The settings the files give, as `editor.font_size`, each with the file it is from: the
+    /// workspace's where both give it.
+    written: std::collections::BTreeMap<String, Layer>,
     /// Whether a settings file set `[git] enabled`, rather than leaving the default.
     git_enabled_set: bool,
     /// Whether a settings file set `[pdf] theme`, which then names the theme a Word export
@@ -526,8 +532,8 @@ pub struct Settings {
     state_dir: Option<PathBuf>,
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum Layer {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Layer {
     User,
     Workspace,
 }
@@ -754,12 +760,14 @@ impl Settings {
             ThemePreference::Light => "light",
             ThemePreference::Dark => "dark",
         };
-        self.write_appearance_keys(
-            true,
+        let text = |name: Option<&str>| name.map(toml_edit::Value::from);
+        self.write_keys(
+            "appearance",
+            Some(("editor", "theme")),
             &[
-                ("mode", Some(mode)),
-                ("light_theme", light_theme),
-                ("dark_theme", dark_theme),
+                ("mode", text(Some(mode))),
+                ("light_theme", text(light_theme)),
+                ("dark_theme", text(dark_theme)),
             ],
         )
     }
@@ -767,19 +775,23 @@ impl Settings {
     /// Writes `[appearance] font_set` to the user settings file, keeping every other line and
     /// comment, without reading the settings again.
     pub(crate) fn write_font_set(&self, id: &str) -> Result<(), EngineError> {
-        self.write_appearance_keys(false, &[("font_set", Some(id))])
+        self.write_keys("appearance", None, &[("font_set", Some(id.into()))])
     }
 
-    /// Sets `keys` of `[appearance]` in the user settings file (a `None` is taken out), and with
-    /// `drop_editor_theme` takes out the older `[editor] theme`.
-    fn write_appearance_keys(
+    /// Sets `keys` of table `section` in the user settings file (a `None` is taken out), keeping
+    /// every other line and comment, and takes out `replaced`, an older setting by its table and
+    /// key. Does not read the settings again.
+    pub(crate) fn write_keys(
         &self,
-        drop_editor_theme: bool,
-        keys: &[(&str, Option<&str>)],
+        section: &str,
+        replaced: Option<(&str, &str)>,
+        keys: &[(&str, Option<toml_edit::Value>)],
     ) -> Result<(), EngineError> {
         let path = self.user_file.clone().ok_or_else(|| {
             EngineError::Refused("there is no user settings file to save to".to_owned())
         })?;
+        // A file that is a link, as into a dotfiles repository, stays one.
+        let path = fs::canonicalize(&path).unwrap_or(path);
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
@@ -788,30 +800,39 @@ impl Settings {
         let mut document: toml_edit::DocumentMut = text
             .parse()
             .map_err(|error| EngineError::Settings(format!("{}: {error}", path.display())))?;
-        if drop_editor_theme {
-            if let Some(editor) = document
-                .get_mut("editor")
+        if let Some((section, key)) = replaced {
+            if let Some(table) = document
+                .get_mut(section)
                 .and_then(toml_edit::Item::as_table_like_mut)
             {
-                editor.remove("theme");
+                table.remove(key);
             }
         }
-        let appearance = document
-            .entry("appearance")
-            .or_insert_with(toml_edit::table)
-            .as_table_like_mut()
-            .ok_or_else(|| {
-                EngineError::Settings(format!("{}: `appearance` is not a table", path.display()))
-            })?;
-        for (key, text) in keys {
-            match (text, appearance.get_mut(key)) {
-                // A key already there keeps its place and the comments written above it.
-                (Some(text), Some(item)) => *item = toml_edit::value(*text),
-                (Some(text), None) => {
-                    appearance.insert(key, toml_edit::value(*text));
-                }
-                (None, _) => {
-                    appearance.remove(key);
+        // Taking out what is not there makes no table.
+        if document.get(section).is_some() || keys.iter().any(|(_, value)| value.is_some()) {
+            let table = document
+                .entry(section)
+                .or_insert_with(toml_edit::table)
+                .as_table_like_mut()
+                .ok_or_else(|| {
+                    EngineError::Settings(format!("{}: `{section}` is not a table", path.display()))
+                })?;
+            for (key, value) in keys {
+                match (value, table.get_mut(key)) {
+                    // A key already there keeps its place and the comments beside it.
+                    (Some(value), Some(item)) => {
+                        let mut value = value.clone();
+                        if let Some(old) = item.as_value() {
+                            *value.decor_mut() = old.decor().clone();
+                        }
+                        *item = toml_edit::Item::Value(value);
+                    }
+                    (Some(value), None) => {
+                        table.insert(key, toml_edit::Item::Value(value.clone()));
+                    }
+                    (None, _) => {
+                        table.remove(key);
+                    }
                 }
             }
         }
@@ -877,6 +898,19 @@ impl Settings {
                 self.warn(&source, section, "expected a table");
                 continue;
             };
+            if section == "keymap" {
+                match layer {
+                    Layer::User => self.apply_keymap(&source, "", entries),
+                    Layer::Workspace => {
+                        self.warn(
+                            &source,
+                            section,
+                            "can only be set in the user settings file",
+                        );
+                    }
+                }
+                continue;
+            }
             for (key, value) in entries {
                 if section == "pdf" && key == "profiles" {
                     self.apply_profiles(&source, value);
@@ -1012,6 +1046,29 @@ impl Settings {
         Ok(set)
     }
 
+    /// `[keymap]`: the keys of each command named. An id written without quotes is tables
+    /// within tables to TOML, which `prefix` joins again.
+    fn apply_keymap(&mut self, source: &str, prefix: &str, entries: &toml::Table) {
+        for (key, value) in entries {
+            let name = format!("{prefix}{key}");
+            let keys = match value {
+                toml::Value::Table(inner) => {
+                    self.apply_keymap(source, &format!("{name}."), inner);
+                    continue;
+                }
+                toml::Value::String(text) if text.trim().is_empty() => Ok(None),
+                toml::Value::String(text) => crate::Keys::parse(text).map(Some),
+                _ => Err("expected keys such as \"cmd-shift-x\", or \"\" for none"),
+            };
+            match keys {
+                Ok(keys) => {
+                    self.keymap.insert(name, keys);
+                }
+                Err(problem) => self.warn(source, &format!("keymap.{name}"), problem),
+            }
+        }
+    }
+
     /// `[appearance] themes_dir`: a path relative to the user file's folder, `~/` the home folder.
     fn apply_themes_dir(&mut self, source: &str, file: &Path, value: &toml::Value) {
         let Some(text) = value.as_str().filter(|text| !text.trim().is_empty()) else {
@@ -1089,16 +1146,34 @@ impl Settings {
             self.warn(source, &name, "can only be set in the user settings file");
             return;
         }
-        if let Err(problem) = self.set(section, key, value) {
-            if section == "quality" {
-                self.warn_quality(source, &name, problem);
-            } else {
-                self.warn(source, &name, problem);
+        match self.set(section, key, value) {
+            Ok(()) => {
+                self.written.insert(name, layer);
             }
+            Err(problem) if section == "quality" => self.warn_quality(source, &name, problem),
+            Err(problem) => self.warn(source, &name, problem),
         }
     }
 
-    fn set(&mut self, section: &str, key: &str, value: &toml::Value) -> Result<(), &'static str> {
+    /// The file setting `id` is given in, if one gives it. The older `editor.theme` gives the
+    /// mode while `appearance.mode` is not set.
+    pub(crate) fn written_in(&self, id: &str) -> Option<Layer> {
+        self.written
+            .get(id)
+            .or_else(|| {
+                (id == "appearance.mode")
+                    .then(|| self.written.get("editor.theme"))
+                    .flatten()
+            })
+            .copied()
+    }
+
+    pub(crate) fn set(
+        &mut self,
+        section: &str,
+        key: &str,
+        value: &toml::Value,
+    ) -> Result<(), &'static str> {
         match (section, key) {
             ("editor", "font_family") => {
                 self.editor.font_family = string(value)?;
@@ -1342,6 +1417,16 @@ impl Settings {
                 self.warn_quality(source, &name, &problem.to_string());
             }
         }
+    }
+
+    /// A warning about setting `name` of the user file, for what only the engine can tell.
+    pub(crate) fn user_warning(&self, name: &str, problem: &str) -> String {
+        let source = self
+            .user_file
+            .as_deref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
+        format!("{source}: `{name}`: {problem}")
     }
 
     fn warn(&mut self, source: &str, name: &str, problem: &str) {

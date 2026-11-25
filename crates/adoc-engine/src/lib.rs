@@ -45,6 +45,7 @@ mod images;
 mod impact_analysis;
 mod impact_inspection;
 mod index_settle;
+mod keymap;
 mod kindle_settings;
 mod line_comment;
 // Without Git, the engine behaves as with `[git] enabled = false`.
@@ -82,6 +83,7 @@ pub mod report;
 mod search;
 pub use search::SEARCH_MATCH_LIMIT;
 mod session;
+mod setting_specs;
 mod settings;
 mod site_build;
 mod spelling;
@@ -172,6 +174,7 @@ pub use images::{is_image_path, ImageId, OpenImage, IMAGE_EXTENSIONS};
 pub use impact_analysis::{ChangeSource, ImpactError};
 pub use impact_inspection::{ImpactInspection, InspectionState};
 pub use inspect::resource_id_string;
+pub use keymap::{Keymap, Keys};
 pub use kindle_settings::{KindleProfile, KindleSettings};
 pub use language::{SymbolMatch, SYMBOL_RESULTS};
 pub use line_diff::{line_diff, DiffLine, DIFF_CONTEXT};
@@ -199,6 +202,9 @@ pub use rendered::{
 };
 pub use session::{
     WindowPlacement, PLAYBOOK_NOTICES_FILE, RECENT_FOLDERS, RECENT_FOLDERS_FILE, SESSION_FILE,
+};
+pub use setting_specs::{
+    setting_specs, SettingChange, SettingKind, SettingSource, SettingSpec, SettingValue,
 };
 pub use settings::{
     pdf_standard, AppearanceSettings, AutoSave, CollaborationSettings, CommentsSettings,
