@@ -167,7 +167,7 @@ For Kindle books, see xref:kindle-export.adoc[Exporting to Kindle].
 For EPUB books, see xref:epub-export.adoc[Exporting to EPUB].
 A settings warning names `pdf.profiles.<name>`.
 
-To run a profile in the application, choose File › Export PDF Profile… (`export.pdf_profile`), which is also in the command palette.
+To run a profile in the application, choose Export › Export PDF Profile… (`export.pdf_profile`), which is also in the command palette.
 It lists the profiles by name and exports the one you choose to its `output`, with no save dialog.
 A notification offers to open the PDF.
 Without profiles it says to add a `[pdf.profiles.<name>]` table.
@@ -222,7 +222,7 @@ A name that is not bundled is looked for as `<name>-theme.yml` in a themes direc
 That is the page's `pdf-themesdir` attribute, resolved against the page, or else `[pdf] themes_dir`, resolved against the first workspace root.
 A value ending in `.yml` is a theme file.
 
-To try a theme on the active page, choose File › Export Page to PDF with Theme… (also in the command palette).
+To try a theme on the active page, choose Export › Export Page to PDF with Theme… (also in the command palette).
 It lists the bundled themes, marked "(bundled)", and each `<name>-theme.yml` in `[pdf] themes_dir`, shown with its path.
 It then asks where to save the page's PDF in the theme you chose.
 

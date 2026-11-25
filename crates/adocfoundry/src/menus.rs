@@ -88,27 +88,6 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::DOCUMENT_LOCAL_HISTORY),
             Command(ids::DOCUMENT_RECOVER_UNSAVED),
             Separator,
-            Command(ids::EXPORT_PDF_PAGE),
-            Ui(4),
-            Command(ids::EXPORT_PDF_COMPONENT),
-            Command(ids::EXPORT_PDF_PROFILE),
-            Command(ids::EXPORT_DOCX_PAGE),
-            Command(ids::EXPORT_DOCX_COMPONENT),
-            Command(ids::EXPORT_DOCX_PAGE_THEMED),
-            Command(ids::EXPORT_DOCX_COMPONENT_THEMED),
-            Command(ids::EXPORT_DOCX_PROFILE),
-            Command(ids::EXPORT_KINDLE_PAGE),
-            Command(ids::EXPORT_KINDLE_COMPONENT),
-            Command(ids::EXPORT_KINDLE_PROFILE),
-            Command(ids::EXPORT_EPUB_PAGE),
-            Command(ids::EXPORT_EPUB_COMPONENT),
-            Command(ids::EXPORT_EPUB_PROFILE),
-            Command(ids::EXPORT_DOCBOOK_PAGE),
-            Command(ids::EXPORT_DOCBOOK_COMPONENT),
-            Command(ids::EXPORT_DOCBOOK_PROFILE),
-            Command(ids::EXPORT_HTML_PAGE),
-            Command(ids::GRAPH_EXPORT),
-            Separator,
             Command(ids::DOCUMENT_KEEP_OPEN),
             Command(ids::DOCUMENT_CLOSE),
             Command(ids::DOCUMENT_CLOSE_OTHERS),
@@ -271,6 +250,37 @@ const MENUS: &[(&str, &[Entry])] = &[
             Separator,
             Command(ids::IMPACT_ANALYSE_CHANGES),
             Command(ids::IMPACT_COMPARE_REVISIONS),
+        ],
+    ),
+    (
+        "Export",
+        &[
+            Command(ids::EXPORT_PDF_PAGE),
+            Ui(4),
+            Command(ids::EXPORT_PDF_COMPONENT),
+            Command(ids::EXPORT_PDF_PROFILE),
+            Separator,
+            Command(ids::EXPORT_DOCX_PAGE),
+            Command(ids::EXPORT_DOCX_COMPONENT),
+            Command(ids::EXPORT_DOCX_PAGE_THEMED),
+            Command(ids::EXPORT_DOCX_COMPONENT_THEMED),
+            Command(ids::EXPORT_DOCX_PROFILE),
+            Separator,
+            Command(ids::EXPORT_KINDLE_PAGE),
+            Command(ids::EXPORT_KINDLE_COMPONENT),
+            Command(ids::EXPORT_KINDLE_PROFILE),
+            Separator,
+            Command(ids::EXPORT_EPUB_PAGE),
+            Command(ids::EXPORT_EPUB_COMPONENT),
+            Command(ids::EXPORT_EPUB_PROFILE),
+            Separator,
+            Command(ids::EXPORT_DOCBOOK_PAGE),
+            Command(ids::EXPORT_DOCBOOK_COMPONENT),
+            Command(ids::EXPORT_DOCBOOK_PROFILE),
+            Separator,
+            Command(ids::EXPORT_HTML_PAGE),
+            Separator,
+            Command(ids::GRAPH_EXPORT),
         ],
     ),
     (
@@ -632,7 +642,7 @@ mod tests {
         let names: Vec<&str> = menus.iter().map(|menu| menu.name).collect();
         assert_eq!(
             names,
-            ["File", "Edit", "Format", "View", "Go", "Git", "Help"]
+            ["File", "Edit", "Format", "View", "Go", "Git", "Export", "Help"]
         );
         let edit = labels(&menus[1]);
         assert_eq!(
@@ -646,6 +656,28 @@ mod tests {
             file[file.len() - 2..],
             ["-".to_owned(), quit_title().to_owned()]
         );
+    }
+
+    /// Every export is in the Export menu and none in another, File above all (#790).
+    #[test]
+    fn exports_are_in_the_export_menu() {
+        let menus = menus(&Engine::new(Settings::default()));
+        let mut found = false;
+        for menu in &menus {
+            for label in labels(menu) {
+                let export = menu.name == "Export";
+                if label != "-" {
+                    assert_eq!(
+                        label.starts_with("Export "),
+                        export,
+                        "{}: {label}",
+                        menu.name
+                    );
+                }
+                found |= export && label == "Export Page to HTML…";
+            }
+        }
+        assert!(found, "the Export menu offers Export Page to HTML…");
     }
 
     #[test]

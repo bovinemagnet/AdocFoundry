@@ -47,7 +47,7 @@ The reader owns fonts, page layout and page numbers, so a book has no running he
 
 === In the application
 
-Choose one of these from the File menu.
+Choose one of these from the Export menu.
 Each is also in the command palette.
 
 * Export Page to EPUB… (`export.epub_page`) exports the active page.

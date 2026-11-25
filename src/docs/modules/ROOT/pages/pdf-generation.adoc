@@ -48,7 +48,7 @@ include::example$pdf-entry-points.mmd[]
 
 == In the app
 
-Export Page to PDF… (`export.pdf_page`), Export Page to PDF with Theme…, Export Component to PDF… (`export.pdf_component`) and Export PDF Profile… are in the File menu and the command palette.
+Export Page to PDF… (`export.pdf_page`), Export Page to PDF with Theme…, Export Component to PDF… (`export.pdf_component`) and Export PDF Profile… are in the Export menu and the command palette.
 The export runs in the background, the status bar shows "Exporting PDF…", and a notification reports the pages and the first warning when it finishes.
 
 === The PDF preview

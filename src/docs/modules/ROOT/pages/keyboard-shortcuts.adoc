@@ -229,7 +229,7 @@ Four sidebar commands also have no default binding and are available from the pa
 Reveal in Files also has no default binding and is available from the palette and the View menu.
 In the Files view, kbd:[Space] opens the selected file.
 See xref:using-the-editor.adoc[Using the editor].
-Thirteen export commands also have no default binding and are available from the palette and the File menu: Export Page to PDF… (`export.pdf_page`), Export Page to PDF with Theme…, Export Component to PDF… (`export.pdf_component`), Export PDF Profile… (`export.pdf_profile`), Export Page to Word… (`export.docx_page`), Export Component to Word… (`export.docx_component`), Export Page to Word with Theme… (`export.docx_page_themed`), Export Component to Word with Theme… (`export.docx_component_themed`), Export DOCX Profile… (`export.docx_profile`), Export Page to Kindle… (`export.kindle_page`), Export Component to Kindle… (`export.kindle_component`), Export Kindle Profile… (`export.kindle_profile`) and Export Page to HTML… (`export.html_page`).
+Thirteen export commands also have no default binding and are available from the palette and the Export menu: Export Page to PDF… (`export.pdf_page`), Export Page to PDF with Theme…, Export Component to PDF… (`export.pdf_component`), Export PDF Profile… (`export.pdf_profile`), Export Page to Word… (`export.docx_page`), Export Component to Word… (`export.docx_component`), Export Page to Word with Theme… (`export.docx_page_themed`), Export Component to Word with Theme… (`export.docx_component_themed`), Export DOCX Profile… (`export.docx_profile`), Export Page to Kindle… (`export.kindle_page`), Export Component to Kindle… (`export.kindle_component`), Export Kindle Profile… (`export.kindle_profile`) and Export Page to HTML… (`export.html_page`).
 See xref:pdf-export.adoc[Exporting to PDF], xref:command-line.adoc#docx[the docx command] and xref:preview.adoc#exporting-html[Exporting to HTML].
 Three document commands also have no default binding and are available from the palette: Reload from Disk (`document.reload`), Save, Overwriting the File on Disk (`document.overwrite`) and Keep Open (`document.keep_open`).
 See xref:using-the-editor.adoc[Using the editor].
@@ -239,7 +239,7 @@ Six preview commands also have no default binding and are available from the pal
 Toggle Preview is a chord: hold the modifier for kbd:[K] only, release it, then press kbd:[V] on its own.
 See xref:preview.adoc[The preview].
 Reset Graph Layout (`graph.reset_layout`) has no default binding and is available from the palette and the View menu.
-Export Graph… (`graph.export`) has no default binding and is available from the palette and the File menu.
+Export Graph… (`graph.export`) has no default binding and is available from the palette and the Export menu.
 Show Graph and Show Local Graph are chords like Toggle Preview.
 See xref:graph-view.adoc[The link graph].
 Go to Location (`navigate.go_to`) and Reveal in Editor (`navigate.reveal`) take a position and are driven by clicks in the preview rather than bound to keys.

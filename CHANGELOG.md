@@ -14,6 +14,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 ### Changed
 
+- The ☰ menu has an Export menu, between Git and Help, which holds every export that was in the File menu: PDF, Word, Kindle, EPUB, DocBook, HTML and the graph (#790). Commands, titles and the palette are unchanged.
 - Clicking read-only text in the visual editor, or a block in the preview, shows its source after about a third of a second, so that a double click can select a word first.
 - A numbered list shown in the preview or the visual editor counts from its `start`, and down when it is reversed, as the exports do.
 

@@ -329,7 +329,7 @@ The project's fidelity harness compares the two over a corpus of pages; see xref
 == Exporting to HTML
 
 Export Page to HTML… (`export.html_page`) writes the active page as a standalone HTML file.
-It is in the File menu and the command palette, and has no default key binding.
+It is in the Export menu and the command palette, and has no default key binding.
 It opens a save dialog, suggesting the page's name with an `.html` extension, in the page's folder.
 
 The file is what `adocfoundry-cli render` writes for the page: the preview's view tree as Asciidoctor-shaped HTML.
