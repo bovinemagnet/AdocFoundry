@@ -324,7 +324,7 @@ See xref:settings.adoc[Settings].
 
 == Export the graph
 
-Export Graph… (`graph.export`, in the File menu and the command palette) saves the link graph as an image.
+Export Graph… (`graph.export`, in the Export menu and the command palette) saves the link graph as an image.
 It has no default key binding.
 It asks where to save.
 A file name ending in `.png` gets a PNG drawn at twice the graph's size.

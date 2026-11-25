@@ -33,7 +33,7 @@ Every picture carries alternative text.
 
 === In the application
 
-Choose one of these from the File menu.
+Choose one of these from the Export menu.
 Each is also in the command palette.
 
 * Export Page to Word… (`export.docx_page`) exports the active page.
@@ -76,7 +76,7 @@ With no theme the document uses the built-in styles and the `[docx]` settings.
 By default the look is the one `[docx] look` names, and a profile may name its own.
 See xref:settings.adoc#docx-settings[Word export settings] for `look`, `template` and `embed_fonts`, and xref:settings.adoc#docx-profiles[Word profiles] for a profile's `theme`, `template` and `look = "none"`.
 
-In the application, two further commands in the File menu and the command palette choose the look for one export.
+In the application, two further commands in the Export menu and the command palette choose the look for one export.
 They have no default key binding.
 
 * Export Page to Word with Theme… (`export.docx_page_themed`)

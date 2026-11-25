@@ -1739,7 +1739,7 @@ Deletions made by 0.9.0 can be restored too.
 The ☰ button at the left of the title bar, before the Back and Forward buttons, opens the application menu.
 It is shown on macOS, Linux and Windows.
 
-Clicking it opens the File menu and replaces the button with the name of every menu: File, Edit, Format, View, Go, Git and Help.
+Clicking it opens the File menu and replaces the button with the name of every menu: File, Edit, Format, View, Go, Git, Export and Help.
 With a menu open, pointing at another name opens that menu, and clicking the open menu's name closes it.
 Choosing an item, pressing kbd:[Escape] or clicking elsewhere closes the menu and folds the names back into the button.
 The arrow keys move through a menu's items and kbd:[Enter] chooses one.
@@ -1752,7 +1752,7 @@ An item whose command cannot run just now is greyed out instead of hidden, for e
 A command the build lacks, such as PDF export in a build without Typst, is left out.
 
 File::
-Open, New Page, save, reload, local history, recovering unsaved changes, export to PDF or HTML, close, delete or restore a file, settings and re-indexing.
+Open, New Page, save, reload, local history, recovering unsaved changes, close, delete or restore a file, settings and re-indexing.
 It ends with Quit, after a separator, named as the platform names it: "Quit AdocFoundry" on macOS, "Exit" on Windows and "Quit" on Linux.
 
 Edit::
@@ -1771,6 +1771,9 @@ Back and forward, definition, links, peeking an include, moving between changes 
 
 Git::
 Refreshing status, staging, committing, pushing and the remote links.
+
+Export::
+The PDF, Word, Kindle, EPUB, DocBook and HTML exports, the export profiles and Export Graph….
 
 Help::
 AdocFoundry Documentation, Check for Updates, Show Diagnostics and About AdocFoundry.

@@ -4419,6 +4419,7 @@ fn the_menu_button_opens_into_the_menus(cx: &mut TestAppContext) {
         "app-menu-View",
         "app-menu-Go",
         "app-menu-Git",
+        "app-menu-Export",
         "app-menu-Help",
     ] {
         assert!(

@@ -2,6 +2,12 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+
+- The ☰ menu has an Export menu, between Git and Help, which holds every export that was in the File menu: PDF, Word, Kindle, EPUB, DocBook, HTML and the graph (#790). Commands, titles and the palette are unchanged.
+
 ## 0.14.0 — 2026-11-23
 
 ### Added

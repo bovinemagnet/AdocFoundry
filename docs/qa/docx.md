@@ -93,7 +93,7 @@ ADOC_DOCX_OUT=/tmp/docx-samples cargo test -p adoc-docx --test package -- --igno
 11. **The PDF theme, side by side.** Open `manual-default.docx` beside `manual-default.pdf`. The fonts, colours, heading sizes, page size and margins, the title page and the headers and footers match, allowing for Word's own pagination. Every style is still a Word style: changing Heading 1 in the Styles pane changes every chapter.
 12. **Fonts travel.** On a machine without Noto Serif and M+ 1mn (or with them removed), `manual-default.docx` shows its text and code in them: they are embedded. Word may open a document whose font allows preview and print only as read-only; the export warned of it.
 13. **A corporate template.** `manual-corporate.docx` uses the template's styles, page, header with its logo and footer with its page number. Code blocks, admonitions and captions look right, though the template has no styles for them. Nothing of the template's own body text appears. Save, close and reopen: no repair prompt.
-14. **The picker.** In the app, File › Export Page to Word with Theme… lists the bundled themes, the workspace's themes, the templates beside them and No theme. Choosing each exports in it, and the notification names the look.
+14. **The picker.** In the app, Export › Export Page to Word with Theme… lists the bundled themes, the workspace's themes, the templates beside them and No theme. Choosing each exports in it, and the notification names the look.
 15. **No theme.** `manual-plain.docx` is the export's own look, as before the looks existed.
 
 ## Known differences and limitations
