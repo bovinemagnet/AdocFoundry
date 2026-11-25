@@ -69,7 +69,11 @@ Select text by:
 * shift-clicking;
 * double-clicking, which selects a word;
 * triple-clicking, which selects the whole paragraph (the text block);
-* holding kbd:[Shift] with the arrow keys, kbd:[Home] or kbd:[End].
+* holding kbd:[Shift] with the arrow keys, kbd:[Home] or kbd:[End];
+* Select All.
+
+All the text of the page can be selected, included text and other read-only text too, and a selection can start, end or pass through it.
+Double-clicking selects a word and triple-clicking selects the whole text, in read-only text as in the rest.
 
 kbd:[Home] and kbd:[End] go to the start and end of the line.
 kbd:[Option+Left] and kbd:[Option+Right] on macOS, or kbd:[Ctrl+Left] and kbd:[Ctrl+Right] on Linux and Windows, move the caret by word.
@@ -77,6 +81,7 @@ Adding kbd:[Shift] extends the selection by word.
 A word move never lands inside a formatting mark's delimiters.
 At the start or end of a block, it moves to the neighbouring block.
 Select All, Copy, Cut and Paste work on the selection.
+Selecting and copying change nothing in the page or its undo history.
 Input-method (IME) composition is shown underlined in place and written to the page as one edit when you commit it.
 
 NOTE: IME composition has been tested only on GPUI's test platform.
@@ -369,6 +374,56 @@ A paragraph with `[subs=none]` shows its asterisks (`Some *literal stars* here.`
 
 Clicking read-only content switches to Split mode and moves the source caret to that content, so you can edit it in the source.
 Clicking read-only text shows a message saying the same.
+The click acts after about a third of a second, so that a double click can come first, and a drag never does.
+
+=== Selecting and copying read-only text
+
+A selection with an end in read-only text can be copied but not edited.
+Cut, Delete, typing and Paste over it are refused with the message that the text can only be edited in the source, and the clipboard is left alone.
+
+Some text cannot be selected: the editor's own labels, such as "Included from" and collapsed conditionals, and the words in pictures and diagrams.
+
+=== Copying
+
+Copy puts plain text on the clipboard, with nothing left out, including text out of view.
+Its only layout is spaces, tabs, new lines and list markers.
+
+* Code keeps its line breaks and indentation.
+* A list item is copied with its marker, indented by its depth.
+A bullet is `*`, or `-` where the source writes it so, and a checklist item is `* [ ]` or `* [x]`.
+A numbered item has the number it has on the page, even when the selection starts part way through the list, so items 2 to 4 copy as `2.`, `3.` and `4.`.
+* A selection that takes an item from its start copies its marker, but part of one item copies without it.
+* A table row is a line, its cells separated by tabs.
+* Callouts are kept, in the code and in their explanations, as `<1>`.
+Code edited in place keeps them as they are written, such as `-- <1>`.
+* A picture gives its alt text.
+
+A code block has a Copy button, also on read-only and included code.
+It copies the whole block's code without its callouts, so that the code can be pasted and run.
+
+=== Copy As
+
+Copy As is in the right-click menu, the Edit menu and the command palette.
+It offers:
+
+Plain Text::
+The same as Copy.
+
+AsciiDoc::
+The source of the blocks the selection covers, with marks closed where the selection cuts them.
+Included text gives the included text itself, not the `include::` line, in a code block too.
+
+Markdown::
+GitHub-flavoured Markdown.
+What Markdown has no form for is copied as its text.
+
+Formatted Text::
+HTML with the plain text beside it, to paste into Word or Google Docs, on macOS and Windows only.
+Headings, marks, code, lists, tables and admonitions keep their look.
+A link is written only to a web address or a published page, and a picture held in a file is written as its alt text.
+
+The right-click menu shows any spelling suggestions first, then Cut, Copy, Copy As, Paste and Select All.
+Items that cannot be used are disabled.
 
 == Current limits
 

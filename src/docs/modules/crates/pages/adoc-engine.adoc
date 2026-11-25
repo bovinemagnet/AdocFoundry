@@ -203,6 +203,13 @@ Snapshots use `insta` and live in `tests/snapshots/`; review a changed snapshot 
 Tests that open a fixture in place turn Git off with `Settings::with_git_opt_in()`.
 Fixtures are under `tests/fixtures/`.
 
+== Copying
+
+`copy.rs` works out what a selection copies, below the app so that it is tested without a window.
+A `CopySource` names the selection, in the visual editor (two ``TextPlace``s, each a source offset or a leaf drawn from the view tree, ordered by `VisualFlow`) or in the preview.
+`Engine::copy_text(&CopySource, CopyFormat)` gives the text, and the HTML for `CopyFormat::Formatted`, and `Engine::visual_code` gives a code block's code without callouts.
+The commands `edit.copy_plain`, `edit.copy_asciidoc`, `edit.copy_markdown` and `edit.copy_formatted` take `CommandArgs::Copy` and return `CommandOutcome::Copied`; the front end writes the clipboard.
+
 == Related
 
 * xref:developer:engine.adoc[The engine (developer guide)]

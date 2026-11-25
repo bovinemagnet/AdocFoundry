@@ -19,6 +19,9 @@ impl VisualView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.refuse_reading(window, cx) {
+            return;
+        }
         if self.selection.is_empty() {
             self.marks = if self.marks.contains(mark) {
                 self.marks.without(mark)
@@ -48,9 +51,33 @@ impl VisualView {
         find(&block.pieces, self.selection.head)
     }
 
+    /// The text the selection covers in the blocks it is in, for a link's.
+    fn selected_text(&self) -> String {
+        let (start, end) = (self.selection.start(), self.selection.end());
+        let mut parts = Vec::new();
+        for (_, _, block) in self.text_blocks() {
+            if block.range.end < start || block.range.start > end {
+                continue;
+            }
+            let from = block
+                .display_offset(start.max(block.range.start))
+                .unwrap_or(0);
+            let to = block
+                .display_offset_towards(end.min(block.range.end), true)
+                .unwrap_or(block.display.len());
+            if from < to {
+                parts.push(block.display[from..to].to_owned());
+            }
+        }
+        parts.join("\n\n")
+    }
+
     /// Asks for a link's target and text, then links the selection (or changes the link the
     /// caret is in).
     pub(crate) fn edit_link(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.refuse_reading(window, cx) {
+            return;
+        }
         let (target, text) = match self.link_at_caret() {
             Some((target, text)) => (target, text.unwrap_or_default()),
             None => (String::new(), self.selected_text()),

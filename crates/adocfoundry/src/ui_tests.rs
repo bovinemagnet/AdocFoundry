@@ -1112,6 +1112,9 @@ fn click_block(workspace: &Entity<WorkspaceView>, trail: &[usize], cx: &mut Visu
         .update(|_, cx| workspace.read(cx).preview().read(cx).block_position(trail))
         .expect("the block is laid out");
     cx.simulate_click(position, gpui::Modifiers::none());
+    // A second click, which would select a word, has not come.
+    cx.executor()
+        .advance_clock(crate::preview::select::DOUBLE_CLICK);
     cx.run_until_parked();
 }
 
@@ -11850,7 +11853,7 @@ fn a_refused_cut_leaves_the_clipboard_alone(cx: &mut TestAppContext) {
     let start = text.find("para").unwrap();
     let end = text.rfind("para").unwrap();
     select_in_visual(&visual, start, end, &mut cx);
-    cx.dispatch_action(crate::visual::input::Cut);
+    cx.dispatch_action(crate::copying::Cut);
     cx.run_until_parked();
     assert_eq!(text_of(&app, id, &mut cx), text, "refused");
     let clipboard = cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
@@ -13455,4 +13458,646 @@ fn an_outdated_suggestion_keeps_the_comment_fill(cx: &mut TestAppContext) {
         adoc_engine::SuggestionState::Outdated
     );
     assert_eq!(marks(&mut cx), (vec![comments[0].range], 0));
+}
+
+// --- selecting and copying rendered text (#794) ------------------------------------------------
+
+/// A page shown visually beside the files given, drawn.
+fn copy_workspace(
+    text: &str,
+    files: &[(&str, &str)],
+    cx: &mut TestAppContext,
+) -> (
+    Entity<AppState>,
+    Entity<WorkspaceView>,
+    Entity<crate::visual::VisualView>,
+    adoc_engine::DocumentId,
+    VisualTestContext,
+) {
+    init(cx);
+    let directory = adoc_index::normalize_path(&tempfile::tempdir().unwrap().keep());
+    for (name, text) in files {
+        std::fs::write(directory.join(name), text).unwrap();
+    }
+    let page = directory.join("page.adoc");
+    std::fs::write(&page, text).unwrap();
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.simulate_keystrokes("secondary-k w");
+    cx.run_until_parked();
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let visual = cx
+        .update(|_, cx| workspace.read(cx).visual_for_test(id).cloned())
+        .unwrap();
+    draw_visual(&visual, &mut cx);
+    (app, workspace, visual, id, cx)
+}
+
+/// Where byte `offset` of the drawn text holding `needle` is on screen, in the visual editor.
+fn drawn_point(
+    visual: &Entity<crate::visual::VisualView>,
+    needle: &str,
+    end: bool,
+    cx: &mut VisualTestContext,
+) -> gpui::Point<gpui::Pixels> {
+    cx.update(|_, cx| visual.read(cx).drawn_point_for_test(needle, end))
+        .unwrap_or_else(|| panic!("{needle:?} is not drawn"))
+}
+
+/// Drags the pointer from `from` to `to`.
+fn drag_pointer(
+    from: gpui::Point<gpui::Pixels>,
+    to: gpui::Point<gpui::Pixels>,
+    cx: &mut VisualTestContext,
+) {
+    let button = gpui::MouseButton::Left;
+    cx.simulate_event(gpui::MouseDownEvent {
+        button,
+        position: from,
+        modifiers: gpui::Modifiers::none(),
+        click_count: 1,
+        first_mouse: false,
+    });
+    for position in [gpui::point((from.x + to.x) / 2., (from.y + to.y) / 2.), to] {
+        cx.simulate_event(gpui::MouseMoveEvent {
+            position,
+            pressed_button: Some(button),
+            modifiers: gpui::Modifiers::none(),
+        });
+    }
+    cx.simulate_event(gpui::MouseUpEvent {
+        button,
+        position: to,
+        modifiers: gpui::Modifiers::none(),
+        click_count: 1,
+    });
+    cx.run_until_parked();
+}
+
+fn press_pointer(position: gpui::Point<gpui::Pixels>, clicks: usize, cx: &mut VisualTestContext) {
+    let button = gpui::MouseButton::Left;
+    cx.simulate_event(gpui::MouseDownEvent {
+        button,
+        position,
+        modifiers: gpui::Modifiers::none(),
+        click_count: clicks,
+        first_mouse: false,
+    });
+    cx.simulate_event(gpui::MouseUpEvent {
+        button,
+        position,
+        modifiers: gpui::Modifiers::none(),
+        click_count: clicks,
+    });
+    cx.run_until_parked();
+}
+
+fn clipboard(cx: &mut VisualTestContext) -> Option<String> {
+    cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+}
+
+fn set_clipboard(text: &str, cx: &mut VisualTestContext) {
+    let item = gpui::ClipboardItem::new_string(text.to_owned());
+    cx.update(|_, cx| cx.write_to_clipboard(item));
+}
+
+const COPY_PAGE: &str = "= Page\n\nBefore.\n\n[source,sql]\n----\ninclude::query.sql[]\n----\n\n\
+                         include::part.adoc[]\n\n[source,sql]\n----\nSELECT a; -- <1>\n----\n\
+                         <1> The callout text.\n\nAfter.\n";
+const COPY_FILES: &[(&str, &str)] = &[
+    ("query.sql", "SELECT 1;\nSELECT 2;\nSELECT 3;\n"),
+    ("part.adoc", "Included words here.\n"),
+];
+
+#[gpui::test]
+fn read_only_text_is_selected_by_dragging_and_copied(cx: &mut TestAppContext) {
+    let (app, _, visual, id, mut cx) = copy_workspace(COPY_PAGE, COPY_FILES, cx);
+    // Lines of code from an include.
+    let from = drawn_point(&visual, "SELECT 2;", false, &mut cx);
+    let to = drawn_point(&visual, "SELECT 3;", true, &mut cx);
+    drag_pointer(from, to, &mut cx);
+    cx.simulate_keystrokes("secondary-c");
+    assert_eq!(clipboard(&mut cx).as_deref(), Some("SELECT 2;\nSELECT 3;"));
+    // Part of an included paragraph.
+    let from = drawn_point(&visual, "words", false, &mut cx);
+    let to = drawn_point(&visual, "words", true, &mut cx);
+    drag_pointer(from, to, &mut cx);
+    cx.simulate_keystrokes("secondary-c");
+    assert_eq!(clipboard(&mut cx).as_deref(), Some("words"));
+    // A callout's text, which is the whole of it, with its number.
+    let from = drawn_point(&visual, "The callout", false, &mut cx);
+    let to = drawn_point(&visual, "callout text.", true, &mut cx);
+    drag_pointer(from, to, &mut cx);
+    cx.simulate_keystrokes("secondary-c");
+    assert_eq!(clipboard(&mut cx).as_deref(), Some("<1> The callout text."));
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    let mode = cx.update(|_, cx| app.read(cx).engine.editor_mode(id));
+    assert_eq!(
+        mode,
+        adoc_engine::EditorMode::Visual,
+        "a drag is not a click"
+    );
+    assert_eq!(text_of(&app, id, &mut cx), COPY_PAGE);
+}
+
+#[gpui::test]
+fn a_drag_goes_from_editable_text_through_an_include(cx: &mut TestAppContext) {
+    let (_, _, visual, _, mut cx) = copy_workspace(COPY_PAGE, COPY_FILES, cx);
+    let from = drawn_point(&visual, "fore.", false, &mut cx);
+    let to = drawn_point(&visual, "Included", true, &mut cx);
+    drag_pointer(from, to, &mut cx);
+    assert!(cx.update(|_, cx| visual.read(cx).reading().is_some()));
+    cx.simulate_keystrokes("secondary-c");
+    let copied = "fore.\n\nSELECT 1;\nSELECT 2;\nSELECT 3;\n\nIncluded";
+    assert_eq!(clipboard(&mut cx).as_deref(), Some(copied));
+    // The other way round.
+    drag_pointer(to, from, &mut cx);
+    set_clipboard("", &mut cx);
+    cx.simulate_keystrokes("secondary-c");
+    assert_eq!(clipboard(&mut cx).as_deref(), Some(copied));
+    // Back into editable text, it is an ordinary selection again.
+    let to = drawn_point(&visual, "Before.", true, &mut cx);
+    drag_pointer(from, to, &mut cx);
+    assert!(cx.update(|_, cx| visual.read(cx).reading().is_none()));
+    cx.simulate_keystrokes("secondary-c");
+    assert_eq!(clipboard(&mut cx).as_deref(), Some("fore."));
+}
+
+#[gpui::test]
+fn an_edit_of_a_selection_in_read_only_text_is_refused(cx: &mut TestAppContext) {
+    let (app, _, visual, id, mut cx) = copy_workspace(COPY_PAGE, COPY_FILES, cx);
+    let from = drawn_point(&visual, "fore.", false, &mut cx);
+    let to = drawn_point(&visual, "SELECT 2;", true, &mut cx);
+    drag_pointer(from, to, &mut cx);
+    set_clipboard("kept", &mut cx);
+    let notifications = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| gpui_component::WindowExt::notifications(window, cx).len())
+    };
+    let before = notifications(&mut cx);
+    for keys in [
+        "secondary-x",
+        "backspace",
+        "delete",
+        "secondary-v",
+        "enter",
+        "secondary-b",
+    ] {
+        cx.simulate_keystrokes(keys);
+        cx.run_until_parked();
+    }
+    cx.simulate_input("typed");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), COPY_PAGE, "refused");
+    assert_eq!(clipboard(&mut cx).as_deref(), Some("kept"));
+    assert_eq!(notifications(&mut cx), before + 1, "said once");
+    assert!(
+        cx.update(|_, cx| visual.read(cx).reading().is_some()),
+        "still selected"
+    );
+}
+
+#[gpui::test]
+fn clicks_on_read_only_text_select_words_or_show_its_source(cx: &mut TestAppContext) {
+    let (app, _, visual, id, mut cx) = copy_workspace(COPY_PAGE, COPY_FILES, cx);
+    let at = drawn_point(&visual, "words", false, &mut cx);
+    let at = gpui::point(at.x + px(3.), at.y);
+    press_pointer(at, 1, &mut cx);
+    press_pointer(at, 2, &mut cx);
+    cx.simulate_keystrokes("secondary-c");
+    assert_eq!(clipboard(&mut cx).as_deref(), Some("words"));
+    press_pointer(at, 3, &mut cx);
+    cx.simulate_keystrokes("secondary-c");
+    assert_eq!(clipboard(&mut cx).as_deref(), Some("Included words here."));
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    let mode = |cx: &mut VisualTestContext| cx.update(|_, cx| app.read(cx).engine.editor_mode(id));
+    assert_eq!(mode(&mut cx), adoc_engine::EditorMode::Visual);
+    // One click alone shows its source.
+    press_pointer(at, 1, &mut cx);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    assert_eq!(mode(&mut cx), adoc_engine::EditorMode::Split);
+}
+
+#[gpui::test]
+fn select_all_copies_the_whole_page(cx: &mut TestAppContext) {
+    // Longer than the window, ending in an include.
+    let mut text = String::from("= Page\n");
+    for number in 1..=120 {
+        text.push_str(&format!("\nParagraph {number}.\n"));
+    }
+    text.push_str("\ninclude::part.adoc[]\n");
+    let (app, _, visual, id, mut cx) = copy_workspace(&text, COPY_FILES, cx);
+    place_caret(&visual, text.find("Paragraph 1.").unwrap(), &mut cx);
+    cx.simulate_keystrokes("secondary-a secondary-c");
+    let copied = clipboard(&mut cx).unwrap();
+    assert!(copied.starts_with("Page\n\nParagraph 1.\n\n"), "{copied}");
+    assert!(copied.contains("\n\nParagraph 60.\n\n"), "{copied}");
+    assert!(
+        copied.ends_with("Paragraph 120.\n\nIncluded words here."),
+        "{copied}"
+    );
+    assert_eq!(text_of(&app, id, &mut cx), text);
+    assert!(!cx.update(|_, cx| app.read(cx).engine.document(id).unwrap().dirty));
+}
+
+#[gpui::test]
+fn shift_and_the_arrow_keys_extend_into_read_only_text(cx: &mut TestAppContext) {
+    let (_, _, visual, _, mut cx) = copy_workspace(COPY_PAGE, COPY_FILES, cx);
+    let end = COPY_PAGE.find("Before.").unwrap() + "Before".len();
+    place_caret(&visual, end, &mut cx);
+    // The full stop, into the code, and its first two letters.
+    cx.simulate_keystrokes("shift-right shift-right shift-right shift-right secondary-c");
+    assert_eq!(clipboard(&mut cx).as_deref(), Some(".\n\nSE"));
+    cx.simulate_keystrokes("shift-end secondary-c");
+    assert_eq!(clipboard(&mut cx).as_deref(), Some(".\n\nSELECT 1;"));
+    cx.simulate_keystrokes("shift-down secondary-c");
+    assert_eq!(
+        clipboard(&mut cx).as_deref(),
+        Some(".\n\nSELECT 1;\nSELECT 2;")
+    );
+    cx.simulate_keystrokes("shift-up shift-home shift-left secondary-c");
+    assert_eq!(clipboard(&mut cx).as_deref(), Some("."));
+    assert!(cx.update(|_, cx| visual.read(cx).reading().is_none()));
+}
+
+#[gpui::test]
+fn the_copy_button_copies_code_without_its_callouts(cx: &mut TestAppContext) {
+    let (app, _, _, id, mut cx) = copy_workspace(COPY_PAGE, COPY_FILES, cx);
+    click_selector("copy-code-3", gpui::MouseButton::Left, &mut cx);
+    assert_eq!(clipboard(&mut cx).as_deref(), Some("SELECT a;"));
+    click_selector("copy-code-1", gpui::MouseButton::Left, &mut cx);
+    assert_eq!(
+        clipboard(&mut cx).as_deref(),
+        Some("SELECT 1;\nSELECT 2;\nSELECT 3;")
+    );
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    let mode = cx.update(|_, cx| app.read(cx).engine.editor_mode(id));
+    assert_eq!(
+        mode,
+        adoc_engine::EditorMode::Visual,
+        "not a click on the block"
+    );
+}
+
+#[gpui::test]
+fn the_copy_as_actions_copy_the_selection(cx: &mut TestAppContext) {
+    let (_, _, visual, _, mut cx) = copy_workspace(COPY_PAGE, COPY_FILES, cx);
+    let from = drawn_point(&visual, "Before.", false, &mut cx);
+    let to = drawn_point(&visual, "here.", true, &mut cx);
+    drag_pointer(from, to, &mut cx);
+    cx.dispatch_action(crate::copying::CopyAsMarkdown);
+    assert_eq!(
+        clipboard(&mut cx).as_deref(),
+        Some("Before.\n\n```sql\nSELECT 1;\nSELECT 2;\nSELECT 3;\n```\n\nIncluded words here.")
+    );
+    cx.dispatch_action(crate::copying::CopyAsAsciiDoc);
+    assert_eq!(
+        clipboard(&mut cx).as_deref(),
+        Some(
+            "Before.\n\n[source,sql]\n----\nSELECT 1;\nSELECT 2;\nSELECT 3;\n----\n\n\
+             Included words here."
+        )
+    );
+}
+
+#[gpui::test]
+fn formatted_text_is_html_with_plain_text_beside_it(cx: &mut TestAppContext) {
+    let (_, _, visual, _, mut cx) = copy_workspace("Some *bold* words.\n\n* one\n* two\n", &[], cx);
+    let from = drawn_point(&visual, "Some", false, &mut cx);
+    let to = drawn_point(&visual, "two", true, &mut cx);
+    drag_pointer(from, to, &mut cx);
+    cx.dispatch_action(crate::copying::CopyAsFormatted);
+    let written = crate::rich_clipboard::WRITTEN.with(|written| written.borrow_mut().take());
+    assert_eq!(
+        written,
+        Some((
+            "<p>Some <strong>bold</strong> words.</p><ul><li>one</li><li>two</li></ul>".to_owned(),
+            "Some bold words.\n\n* one\n* two".to_owned()
+        ))
+    );
+}
+
+#[gpui::test]
+fn right_click_offers_the_copy_commands_everywhere(cx: &mut TestAppContext) {
+    let (_, _, visual, _, mut cx) = copy_workspace(COPY_PAGE, COPY_FILES, cx);
+    let from = drawn_point(&visual, "Included", false, &mut cx);
+    let to = drawn_point(&visual, "words", true, &mut cx);
+    drag_pointer(from, to, &mut cx);
+    cx.simulate_event(gpui::MouseDownEvent {
+        button: gpui::MouseButton::Right,
+        position: from,
+        modifiers: gpui::Modifiers::none(),
+        click_count: 1,
+        first_mouse: false,
+    });
+    cx.run_until_parked();
+    assert!(cx.update(|_, cx| visual.read(cx).menu_open_for_test()));
+    assert!(
+        cx.update(|_, cx| visual.read(cx).reading().is_some()),
+        "the selection stays"
+    );
+    // Cut is disabled, so the first item chosen is Copy.
+    cx.simulate_keystrokes("down enter");
+    cx.run_until_parked();
+    assert_eq!(clipboard(&mut cx).as_deref(), Some("Included words"));
+    assert!(!cx.update(|_, cx| visual.read(cx).menu_open_for_test()));
+}
+
+#[gpui::test]
+fn a_selection_is_let_go_when_its_read_only_text_changes(cx: &mut TestAppContext) {
+    let (app, _, visual, id, mut cx) = copy_workspace(COPY_PAGE, COPY_FILES, cx);
+    let from = drawn_point(&visual, "callout", false, &mut cx);
+    let to = drawn_point(&visual, "callout", true, &mut cx);
+    drag_pointer(from, to, &mut cx);
+    let change = |needle: &str, text: &str, cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            app.update(cx, |app, cx| {
+                let at = app
+                    .engine
+                    .document(id)
+                    .unwrap()
+                    .text_string()
+                    .find(needle)
+                    .unwrap();
+                app.invoke(
+                    ids::EDIT_REPLACE_RANGE,
+                    CommandArgs::Text {
+                        id,
+                        range: SourceRange::new(at, at + needle.len()),
+                        text: text.to_owned(),
+                    },
+                    cx,
+                )
+                .unwrap();
+                app.engine.refresh_visual(id);
+                app.drain(cx);
+            });
+        });
+        cx.run_until_parked();
+    };
+    // A change elsewhere leaves it.
+    change("After.", "Afterwards.", &mut cx);
+    assert!(cx.update(|_, cx| visual.read(cx).reading().is_some()));
+    cx.simulate_keystrokes("secondary-c");
+    assert_eq!(clipboard(&mut cx).as_deref(), Some("callout"));
+    // A change to the text it is in lets it go.
+    change("The callout", "Another", &mut cx);
+    assert!(cx.update(|_, cx| visual.read(cx).reading().is_none()));
+}
+
+/// A press of the right button at `position`.
+fn right_click(position: gpui::Point<gpui::Pixels>, cx: &mut VisualTestContext) {
+    cx.simulate_event(gpui::MouseDownEvent {
+        button: gpui::MouseButton::Right,
+        position,
+        modifiers: gpui::Modifiers::none(),
+        click_count: 1,
+        first_mouse: false,
+    });
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn right_click_on_editable_text_offers_the_editing_commands(cx: &mut TestAppContext) {
+    let (app, _, visual, id, mut cx) = copy_workspace("One two three.\n", &[], cx);
+    let from = drawn_point(&visual, "two ", false, &mut cx);
+    let to = drawn_point(&visual, "two ", true, &mut cx);
+    drag_pointer(from, to, &mut cx);
+    right_click(from, &mut cx);
+    cx.simulate_keystrokes("down enter");
+    cx.run_until_parked();
+    assert_eq!(clipboard(&mut cx).as_deref(), Some("two "), "Cut");
+    assert_eq!(text_of(&app, id, &mut cx), "One three.\n");
+    // With nothing selected, the caret goes where the click was, and Paste is the first item.
+    let at = drawn_point(&visual, "One ", true, &mut cx);
+    right_click(at, &mut cx);
+    cx.simulate_keystrokes("down enter");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), "One two three.\n");
+}
+
+/// The preview of a page, docked, and drawn.
+fn copy_preview(
+    text: &str,
+    files: &[(&str, &str)],
+    cx: &mut TestAppContext,
+) -> (
+    Entity<AppState>,
+    Entity<crate::preview::PreviewView>,
+    adoc_engine::DocumentId,
+    VisualTestContext,
+) {
+    init(cx);
+    let directory = adoc_index::normalize_path(&tempfile::tempdir().unwrap().keep());
+    for (name, text) in files {
+        std::fs::write(directory.join(name), text).unwrap();
+    }
+    let page = directory.join("page.adoc");
+    std::fs::write(&page, text).unwrap();
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(ids::VIEW_TOGGLE_PREVIEW, CommandArgs::None, cx)
+        })
+        .unwrap();
+    });
+    let preview = cx.update(|_, cx| workspace.read(cx).preview().clone());
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|_, cx| preview.read(cx).shown().is_some())
+    }));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.run_until_parked();
+    (app, preview, id, cx)
+}
+
+fn preview_point(
+    preview: &Entity<crate::preview::PreviewView>,
+    needle: &str,
+    end: bool,
+    cx: &mut VisualTestContext,
+) -> gpui::Point<gpui::Pixels> {
+    cx.update(|_, cx| preview.update(cx, |preview, _| preview.drawn_point_for_test(needle, end)))
+        .unwrap_or_else(|| panic!("{needle:?} is not drawn"))
+}
+
+#[gpui::test]
+fn the_preview_s_text_is_selected_and_copied(cx: &mut TestAppContext) {
+    let (app, preview, id, mut cx) = copy_preview(COPY_PAGE, COPY_FILES, cx);
+    let caret = cx.update(|_, cx| app.read(cx).engine.active());
+    let from = preview_point(&preview, "fore.", false, &mut cx);
+    let to = preview_point(&preview, "SELECT 2;", true, &mut cx);
+    drag_pointer(from, to, &mut cx);
+    cx.simulate_keystrokes("secondary-c");
+    assert_eq!(
+        clipboard(&mut cx).as_deref(),
+        Some("fore.\n\nSELECT 1;\nSELECT 2;")
+    );
+    cx.dispatch_action(crate::copying::CopyAsMarkdown);
+    assert_eq!(
+        clipboard(&mut cx).as_deref(),
+        Some("fore.\n\n```sql\nSELECT 1;\nSELECT 2;\n```")
+    );
+    cx.simulate_keystrokes("secondary-a secondary-c");
+    assert_eq!(
+        clipboard(&mut cx).as_deref(),
+        Some(
+            "Page\n\nBefore.\n\nSELECT 1;\nSELECT 2;\nSELECT 3;\n\nIncluded words here.\n\n\
+             SELECT a; <1>\n\n<1> The callout text.\n\nAfter."
+        )
+    );
+    // Shift and a click extend it, and a double click takes a word.
+    let at = preview_point(&preview, "words", false, &mut cx);
+    let at = gpui::point(at.x + px(3.), at.y);
+    press_pointer(at, 1, &mut cx);
+    press_pointer(at, 2, &mut cx);
+    cx.simulate_keystrokes("secondary-c");
+    assert_eq!(clipboard(&mut cx).as_deref(), Some("words"));
+    // Right click, then Copy.
+    set_clipboard("", &mut cx);
+    let at = preview_point(&preview, "words", false, &mut cx);
+    right_click(at, &mut cx);
+    cx.simulate_keystrokes("down enter");
+    cx.run_until_parked();
+    assert_eq!(clipboard(&mut cx).as_deref(), Some("words"));
+    // Nothing was edited or opened.
+    assert_eq!(cx.update(|_, cx| app.read(cx).engine.active()), caret);
+    assert_eq!(text_of(&app, id, &mut cx), COPY_PAGE);
+}
+
+#[gpui::test]
+fn a_drag_over_a_link_in_the_preview_does_not_follow_it(cx: &mut TestAppContext) {
+    let (app, preview, _, mut cx) = copy_preview(
+        "See xref:part.adoc[the other page] now.\n",
+        &[("part.adoc", "= Part\n")],
+        cx,
+    );
+    let active = cx.update(|_, cx| app.read(cx).engine.active());
+    let from = preview_point(&preview, "the other", false, &mut cx);
+    let to = preview_point(&preview, "the other", true, &mut cx);
+    drag_pointer(from, to, &mut cx);
+    assert_eq!(cx.update(|_, cx| app.read(cx).engine.active()), active);
+    cx.simulate_keystrokes("secondary-c");
+    assert_eq!(clipboard(&mut cx).as_deref(), Some("the other"));
+    // A click does.
+    press_pointer(from, 1, &mut cx);
+    assert_ne!(cx.update(|_, cx| app.read(cx).engine.active()), active);
+}
+
+#[gpui::test]
+fn copy_as_says_when_nothing_is_selected(cx: &mut TestAppContext) {
+    let (_, workspace, visual, _, mut cx) = copy_workspace("Some words.\n", &[], cx);
+    let notifications = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| gpui_component::WindowExt::notifications(window, cx).len())
+    };
+    set_clipboard("kept", &mut cx);
+    let before = notifications(&mut cx);
+    place_caret(&visual, 2, &mut cx);
+    cx.dispatch_action(crate::copying::CopyAsMarkdown);
+    assert_eq!(notifications(&mut cx), before + 1);
+    // In the source editor, whose text Copy copies as it is.
+    cx.simulate_keystrokes("secondary-k s");
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        let focus = workspace.read(cx).active_editor_for_test().unwrap().clone();
+        let focus = gpui::Focusable::focus_handle(focus.read(cx), cx);
+        window.focus(&focus, cx);
+    });
+    cx.run_until_parked();
+    cx.dispatch_action(crate::copying::CopyAsMarkdown);
+    assert_eq!(notifications(&mut cx), before + 2);
+    assert_eq!(clipboard(&mut cx).as_deref(), Some("kept"));
+}
+
+#[gpui::test]
+fn an_empty_cell_neither_stops_a_selection_nor_a_copy(cx: &mut TestAppContext) {
+    let text = "One.\n\n|===\n|a |\n\n| |d\n|===\n\nTwo.\n";
+    let (_, _, visual, _, mut cx) = copy_workspace(text, &[], cx);
+    // The empty cell beside `a`.
+    let empty = cx.update(|_, cx| {
+        let shown = visual.read(cx).shown().cloned().unwrap();
+        let found = shown
+            .model
+            .text_blocks()
+            .find(|(_, _, text)| text.display.is_empty())
+            .map(|(_, _, text)| text.range.start);
+        found.expect("an empty cell")
+    });
+    place_caret(&visual, empty, &mut cx);
+    cx.simulate_keystrokes("shift-right secondary-c");
+    let after = cx.update(|_, cx| visual.read(cx).has_selection());
+    assert!(after, "the selection leaves the cell");
+    // Through the next empty cell, to the text after it.
+    cx.simulate_keystrokes("shift-right shift-right secondary-c");
+    assert_eq!(clipboard(&mut cx).as_deref(), Some("d"));
+    // A selection that starts in it.
+    select_in_visual(&visual, empty, text.find("Two.").unwrap() + 3, &mut cx);
+    cx.simulate_keystrokes("secondary-c");
+    assert_eq!(clipboard(&mut cx).as_deref(), Some("d\n\nTwo"));
+}
+
+const EVERY_KIND: &str =
+    "= Page\n:toc: macro\n\ntoc::[]\n\n== Section\n\n.Block title\nParagraph.\n\n\
+                [source,sql]\n----\nSELECT a; -- <1>\n----\n<1> Callout.\n\n\
+                [source,sql]\n----\ninclude::query.sql[]\n----\n\ninclude::part.adoc[]\n\n\
+                [source,subs=attributes]\n----\nsubs {doctitle}\n----\n\n\
+                [source]\nundelimited\n\n```sql\nSELECT fenced;\n```\n\n\
+                ....\nliteral\n....\n\n indented\n\n\
+                [verse,Poet,Work]\n____\nVerse.\n____\n\n[quote,Someone]\n____\nQuoted.\n____\n\n\
+                NOTE: Noted.\n\n====\nExample.\n====\n\n****\nSidebar.\n****\n\n\
+                . one\n. two\n\n* [x] done\n\nterm:: description\n\n\
+                |===\n|cell |other\n|===\n\n[cols=\"1,1a\"]\n|===\n|plain\n|* inside\n|===\n\n\
+                ,===\ng,h\n,===\n\n++++\n<b>raw</b>\n++++\n\n\
+                [subs=none]\nSome *stars*.\n\n[discrete]\n=== Discrete\n";
+
+/// Every text the page shows, whatever kind of block it is in, can be found by the pointer, in
+/// both the visual editor and the preview.
+#[gpui::test]
+fn every_kind_of_text_can_be_selected(cx: &mut TestAppContext) {
+    let (_, _, visual, _, mut cx) = copy_workspace(EVERY_KIND, COPY_FILES, cx);
+    let texts = cx.update(|_, cx| visual.read(cx).texts_for_test());
+    assert!(texts.len() > 35, "{}", texts.len());
+    for (leaf, text) in texts.iter().enumerate() {
+        // The preview alone draws who a quotation is from.
+        if text.key.part == adoc_render::fragment::Part::Attribution
+            && text.text.contains("Someone")
+        {
+            continue;
+        }
+        let shown = cx.update(|window, cx| {
+            visual.update(cx, |visual, cx| visual.reveal_leaf_for_test(leaf, cx));
+            window.draw(cx).clear(cx);
+            window.draw(cx).clear(cx);
+            visual.read(cx).leaf_drawn_for_test(leaf)
+        });
+        assert!(shown, "{text:?} in the visual editor");
+    }
+}
+
+#[gpui::test]
+fn every_kind_of_text_can_be_selected_in_the_preview(cx: &mut TestAppContext) {
+    let (_, preview, _, mut cx) = copy_preview(EVERY_KIND, COPY_FILES, cx);
+    let count = cx.update(|_, cx| preview.update(cx, |preview, _| preview.texts_for_test().len()));
+    assert!(count > 35, "{count}");
+    for leaf in 0..count {
+        let missing = cx.update(|window, cx| {
+            preview.update(cx, |preview, cx| preview.reveal_leaf_for_test(leaf, cx));
+            window.draw(cx).clear(cx);
+            window.draw(cx).clear(cx);
+            preview.update(cx, |preview, _| {
+                let text = preview.texts_for_test()[leaf].clone();
+                (!preview.leaf_drawn_for_test(leaf)).then_some(text)
+            })
+        });
+        assert!(missing.is_none(), "{missing:?} in the preview");
+    }
 }

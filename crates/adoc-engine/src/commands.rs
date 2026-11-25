@@ -148,6 +148,10 @@ pub mod ids {
     pub const EDIT_INSERT_TABLE_COLUMN: CommandId = CommandId::new("edit.insert_table_column");
     pub const EDIT_DELETE_TABLE_COLUMN: CommandId = CommandId::new("edit.delete_table_column");
     pub const EDIT_FORMAT_TABLE: CommandId = CommandId::new("edit.format_table");
+    pub const EDIT_COPY_PLAIN: CommandId = CommandId::new("edit.copy_plain");
+    pub const EDIT_COPY_ASCIIDOC: CommandId = CommandId::new("edit.copy_asciidoc");
+    pub const EDIT_COPY_MARKDOWN: CommandId = CommandId::new("edit.copy_markdown");
+    pub const EDIT_COPY_FORMATTED: CommandId = CommandId::new("edit.copy_formatted");
     pub const EDIT_TOGGLE_LINE_COMMENT: CommandId = CommandId::new("edit.toggle_line_comment");
     pub const EDIT_INSERT_IMAGE: CommandId = CommandId::new("edit.insert_image");
     pub const EDIT_EDIT_IMAGE: CommandId = CommandId::new("edit.edit_image");
@@ -627,6 +631,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
         register(registry, spec, run);
     }
     crate::visual::register_visual(registry);
+    crate::copy::register_copy(registry);
     crate::tabs::register_tabs(registry);
     crate::images::register_images(registry);
     crate::place_images::register_place_images(registry);

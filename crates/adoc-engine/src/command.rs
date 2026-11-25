@@ -116,6 +116,8 @@ pub enum CommandArgs {
         range: SourceRange,
         images: Vec<crate::ImageSource>,
     },
+    /// A selection in the visual editor or the preview, for the `edit.copy_*` commands.
+    Copy(crate::CopySource),
     /// A visual editor command: a selection in a document's visual model.
     Visual(crate::VisualArgs),
     /// A PDF export: what to export and where to write it.
@@ -198,6 +200,8 @@ pub enum CommandOutcome {
     Symbols(Vec<crate::SymbolMatch>),
     /// The selection after a visual command, as source offsets.
     Selection(SourceRange),
+    /// Text for the front end to put on the clipboard.
+    Copied(crate::CopiedText),
     /// A web address for the front end to open or copy.
     Url(String),
     /// The front end is to read the releases feed at this address and hand it to

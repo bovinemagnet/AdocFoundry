@@ -377,6 +377,10 @@ See xref:visual-editing.adoc[Visual editing].
 |UI only
 |===
 
+In the rendered preview, Copy is kbd:[Cmd+C] or kbd:[Ctrl+C] and Select All is kbd:[Cmd+A] or kbd:[Ctrl+A].
+
+Four copy commands have no default binding and are available from the palette, the Edit menu and the right-click menu: Copy as Plain Text (`edit.copy_plain`), Copy as AsciiDoc (`edit.copy_asciidoc`), Copy as Markdown (`edit.copy_markdown`) and Copy as Formatted Text (`edit.copy_formatted`).
+
 Some visual commands have no default binding and are available from the palette or the toolbar: Highlight (`edit.toggle_highlight`), Set Block Type (`edit.set_block_type`), Remove Link (`edit.remove_link`), Check or Uncheck (`edit.toggle_checked`), Insert Image (`edit.insert_image`, also in the source editor), Edit Image (`edit.edit_image`), Insert Table (`edit.insert_table`), Insert Table Row, Delete Table Row, Insert Table Column and Delete Table Column (`edit.insert_table_row`, `edit.delete_table_row`, `edit.insert_table_column`, `edit.delete_table_column`), Insert Code Block (`edit.insert_code_block`) and Insert Admonition (`edit.insert_admonition`).
 Type (`visual.insert_text`) and Insert Block (`visual.insert_block`) are driven by typing and by Enter rather than bound to keys.
 Highlight has no binding because Cmd-Shift-H and Ctrl-Shift-H are Replace in Workspace.

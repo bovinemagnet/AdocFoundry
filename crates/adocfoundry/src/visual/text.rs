@@ -597,7 +597,8 @@ pub fn element(
                     }
                     layouts.borrow_mut().insert(path.clone(), layout.clone());
                     if let Some(selection) = &overlay.selection {
-                        for rect in selection_rects(&layout, selection.clone(), &text) {
+                        for rect in crate::preview::select::rects(&layout, selection.clone(), &text)
+                        {
                             window.paint_quad(fill(rect, overlay.selection_colour));
                         }
                     }
@@ -635,42 +636,6 @@ fn scroll_into_view(list: &ListState, caret: Bounds<Pixels>) {
     } else if caret.bottom() > visible.bottom() - margin {
         list.scroll_by(caret.bottom() - (visible.bottom() - margin));
     }
-}
-
-/// The rectangles covering `range` of the laid-out text, one per line.
-fn selection_rects(layout: &TextLayout, range: Range<usize>, text: &str) -> Vec<Bounds<Pixels>> {
-    let line_height = layout.line_height();
-    let mut rects: Vec<Bounds<Pixels>> = Vec::new();
-    let mut boundaries: Vec<usize> = text
-        .char_indices()
-        .map(|(index, _)| index)
-        .filter(|index| range.contains(index))
-        .collect();
-    boundaries.push(range.end.min(text.len()));
-    for pair in boundaries.windows(2) {
-        let (Some(from), Some(to)) = (
-            layout.position_for_index(pair[0]),
-            layout.position_for_index(pair[1]),
-        ) else {
-            continue;
-        };
-        // A character that ends a wrapped line is given a nominal width.
-        let right = if to.y == from.y {
-            to.x
-        } else {
-            from.x + line_height / 3.
-        };
-        let rect = Bounds::new(from, size(right - from.x, line_height));
-        match rects.last_mut() {
-            Some(last)
-                if last.origin.y == rect.origin.y && last.right() >= rect.left() - px(1.) =>
-            {
-                last.size.width = rect.right() - last.left();
-            }
-            _ => rects.push(rect),
-        }
-    }
-    rects
 }
 
 /// The display offset under `position` in the block at `path`, if it was drawn.

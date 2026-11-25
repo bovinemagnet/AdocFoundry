@@ -306,6 +306,15 @@ The mode buttons beside the tabs are in `workspace_view.rs` and invoke the `view
 In split mode the visual editor reveals the block holding the source editor's caret (`reveal_offset`) without moving its own selection, and the source editor scrolls to the visual caret.
 Edits in either editor reach the other through the engine: the source editor applies `DocumentChanged` edits to its widget, and the visual editor redraws from the model once it is rebuilt.
 
+== Selecting and copying text
+
+The preview and the visual editor share their selection of drawn text.
+`preview/select.rs` is a layer over the drawn text that records its pieces (a leaf's key, its laid-out text and its bounds) so a point maps to a place and the selection can be drawn.
+`preview/selection.rs` is the preview's selection, its keys and its menu, and `visual/reading.rs` is the visual editor's *reading* selection, kept apart from the source offsets edits use, so that every edit is refused while it holds read-only text.
+What is copied comes from the engine (`Engine::copy_text`), never from what is laid out.
+`copying.rs` holds the actions and the right-click menu and writes the result to the clipboard.
+`rich_clipboard.rs` writes HTML with plain text beside it through `arboard`, on macOS and Windows only; under test it records what it was given instead of touching the clipboard.
+
 == Tabs and the sidebar
 
 Opening a tab follows the engine's active document.

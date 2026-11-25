@@ -4,6 +4,8 @@
 pub(crate) mod blocks;
 pub(crate) mod inlines;
 pub(crate) mod pdf;
+pub(crate) mod select;
+mod selection;
 pub(crate) mod sync;
 
 use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc};
@@ -26,6 +28,7 @@ use gpui_component::{
 use crate::app::AppState;
 
 pub use inlines::Link;
+pub use selection::bind;
 
 /// How far beyond the view rows are laid out.
 const LIST_OVERDRAW: Pixels = px(400.);
@@ -68,7 +71,13 @@ pub struct PreviewView {
     blocks: Option<adoc_render::BlockIndex>,
     /// The target's PDF pages, while the preview shows them.
     pdf: pdf::PdfPages,
-    /// Focused by a click on the PDF pages, so the zoom keys reach them.
+    /// The text drawn, and what of it is selected.
+    layer: select::Layer,
+    selection: selection::Selection,
+    /// What is selected, worked out for this frame's rows.
+    shown_selection: Option<select::Selected>,
+    /// Focused by a click on the PDF pages, so the zoom keys reach them, and once text is
+    /// selected, so the keys that copy it do.
     focus_handle: gpui::FocusHandle,
     _subscription: Subscription,
     _release: Subscription,
@@ -109,6 +118,9 @@ impl PreviewView {
             inline_for: None,
             blocks: None,
             pdf: pdf::PdfPages::default(),
+            layer: select::Layer::default(),
+            selection: selection::Selection::default(),
+            shown_selection: None,
             focus_handle: cx.focus_handle(),
             _subscription: subscription,
             // The GPU keeps the PDF pages drawn until told to let them go.
@@ -170,7 +182,10 @@ impl PreviewView {
             }
             self.rows = Rc::from(rows);
         }
-        self.shown = latest;
+        let previous = std::mem::replace(&mut self.shown, latest);
+        if changed {
+            self.keep_selection(previous.as_ref());
+        }
         let pdf = {
             let engine = &self.app.read(cx).engine;
             engine
@@ -488,18 +503,20 @@ impl PreviewView {
         &self,
         highlight: blocks::Highlighter<'a>,
         window: &Window,
-        cx: &App,
+        cx: &Context<Self>,
     ) -> blocks::BlockContext<'a> {
-        let app = self.app.clone();
-        let on_block: blocks::BlockHandler = Rc::new(move |span, _, cx| {
+        let view = cx.entity().downgrade();
+        let layer = self.layer.clone();
+        let on_block: blocks::BlockHandler = Rc::new(move |span, window, cx| {
+            // Not the end of a drag over the text.
+            if layer.dragged() {
+                return;
+            }
             let position = NavigationPosition {
                 path: span.path.clone(),
                 offset: span.range.start,
             };
-            // A failure is reported by the window.
-            let _ = app.update(cx, |app, cx| {
-                app.invoke(ids::NAVIGATE_REVEAL, CommandArgs::Position(position), cx)
-            });
+            let _ = view.update(cx, |view, cx| view.show_source_later(position, window, cx));
         });
         let mut context = block_context(
             &self.app,
@@ -511,6 +528,18 @@ impl PreviewView {
             cx,
         );
         context.inline_cache = Some(self.inline_cache.clone());
+        context.select = Some(select::Select {
+            layer: self.layer.clone(),
+            selected: self.shown_selection.clone(),
+            colour: cx.theme().primary.opacity(0.25),
+        });
+        let layer = self.layer.clone();
+        let on_link = context.on_link.clone();
+        context.on_link = Rc::new(move |link, window, cx| {
+            if !layer.dragged() {
+                on_link(link, window, cx);
+            }
+        });
         context
     }
 }
@@ -587,6 +616,7 @@ pub(crate) fn block_context<'a>(
         on_block,
         highlight,
         inline_cache: None,
+        select: None,
     }
 }
 
@@ -671,6 +701,8 @@ impl Render for PreviewView {
         self.finish_revealing(window, cx);
         // Repopulated as this frame's blocks are painted.
         self.extents.borrow_mut().clear();
+        self.layer.clear();
+        self.shown_selection = self.selected();
         let header = self.header(cx);
         let waiting = self.shown.is_none() && self.app.read(cx).engine.preview_target().is_some();
         if let Some(shown) = &self.shown {
@@ -753,8 +785,11 @@ impl Render for PreviewView {
             .text_color(cx.theme().foreground)
             .children(window_title)
             .child(header)
+            .children(self.menu_element())
             .child(
-                crate::fonts::reading(div().id("preview-scroll"), cx)
+                Self::selecting(crate::fonts::reading(div().id("preview-scroll"), cx), cx)
+                    .key_context(selection::PREVIEW_CONTEXT)
+                    .track_focus(&self.focus_handle)
                     .flex_1()
                     .min_h_0()
                     .on_scroll(cx.listener(|_, _, window, cx| {

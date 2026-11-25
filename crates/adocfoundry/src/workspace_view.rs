@@ -3988,6 +3988,8 @@ impl WorkspaceView {
         let editor = self.active_editor()?.read(cx);
         let id = editor.document();
         let offset = match self.caret_visual(id, window, cx) {
+            // Read-only text is selected, and no caret shows.
+            Some(visual) if visual.read(cx).reading().is_some() => return None,
             Some(visual) => visual.read(cx).selection().head,
             None => editor.cursor(cx),
         };
@@ -6411,6 +6413,26 @@ impl Render for WorkspaceView {
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(crate::image_paste::drags_from_outside_use_the_mouse())
+            .on_action(
+                cx.listener(|_, _: &crate::copying::CopyAsPlain, window, cx| {
+                    crate::copying::nothing_selected(window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|_, _: &crate::copying::CopyAsAsciiDoc, window, cx| {
+                    crate::copying::nothing_selected(window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|_, _: &crate::copying::CopyAsMarkdown, window, cx| {
+                    crate::copying::nothing_selected(window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|_, _: &crate::copying::CopyAsFormatted, window, cx| {
+                    crate::copying::nothing_selected(window, cx);
+                }),
+            )
             .on_action(cx.listener(Self::on_open_folder))
             .on_action(cx.listener(Self::on_open_file))
             .on_action(cx.listener(Self::on_quick_open))

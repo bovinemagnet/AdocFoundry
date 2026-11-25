@@ -4,17 +4,24 @@
 use std::{ops::Range, rc::Rc};
 
 use adoc_render::{
+    fragment::{list_number, LeafKey, Part},
     DiagramView, ListKind, MediaKind, SourceSpan, ViewBlock, ViewImage, ViewInline, ViewKind,
     ViewTable, ViewTree,
 };
 use gpui::{
-    div, img, prelude::FluentBuilder as _, px, relative, AnyElement, App, ElementId, FontWeight,
-    HighlightStyle, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
-    SharedString, StatefulInteractiveElement as _, Styled as _, StyledText, Window,
+    div, img, prelude::FluentBuilder as _, px, relative, AnyElement, App, ClipboardItem, ElementId,
+    FontWeight, HighlightStyle, Hsla, InteractiveElement as _, IntoElement, ParentElement as _,
+    Pixels, SharedString, StatefulInteractiveElement as _, Styled as _, StyledText, Window,
 };
-use gpui_component::{h_flex, v_flex};
+use gpui_component::{
+    button::{Button, ButtonVariants as _},
+    h_flex, v_flex, IconName, Sizable as _,
+};
 
-use super::inlines::{self, InlineStyle, LinkHandler};
+use super::{
+    inlines::{self, InlineStyle, LinkHandler},
+    select::{self, Select},
+};
 
 pub type BlockHandler = Rc<dyn Fn(&SourceSpan, &mut Window, &mut App)>;
 pub type Highlighter<'a> = &'a dyn Fn(&str, &str) -> super::Highlights;
@@ -45,6 +52,8 @@ pub struct BlockContext<'a> {
     pub highlight: Highlighter<'a>,
     /// Inline text as laid out in earlier frames, when the view keeps it.
     pub inline_cache: Option<Rc<inlines::InlineCache>>,
+    /// How the text drawn is selected, when the view lets it be.
+    pub select: Option<Select>,
 }
 
 /// The element id of the block at `trail`, as [`adoc_render::BlockIndex::block_at`] returns it.
@@ -54,12 +63,35 @@ pub fn block_id(trail: &[usize]) -> ElementId {
     ElementId::Name(SharedString::from(format!("block-{}", path.join("-"))))
 }
 
-fn text_id(trail: &[usize], part: &str) -> ElementId {
+fn text_id(trail: &[usize], part: Part) -> ElementId {
     let path: Vec<String> = trail.iter().map(usize::to_string).collect();
+    let part = match part {
+        Part::DocumentTitle => "document-title".to_owned(),
+        Part::Contents => "contents".to_owned(),
+        Part::Label => "label".to_owned(),
+        Part::Title => "title".to_owned(),
+        Part::Heading => "heading".to_owned(),
+        Part::Body => "body".to_owned(),
+        Part::Item(index) => format!("item{index}"),
+        Part::Term(index) => format!("term{index}"),
+        Part::Description(index) => format!("dd{index}"),
+        Part::Callout(index) => format!("co{index}"),
+        Part::Attribution => "attribution".to_owned(),
+    };
     ElementId::Name(SharedString::from(format!(
         "text-{}-{part}",
         path.join("-")
     )))
+}
+
+/// Text alone, the whole of a leaf.
+pub(crate) fn plain(
+    text: impl Into<SharedString>,
+    trail: &[usize],
+    part: Part,
+    context: &BlockContext<'_>,
+) -> AnyElement {
+    select::plain(text, LeafKey::new(trail, part), 0, context.select.as_ref())
 }
 
 /// A row of the list the preview draws: the title, the contents, a block, or a section's
@@ -129,12 +161,12 @@ pub fn row(view: &ViewTree, rows: &[Row], index: usize, context: &BlockContext<'
             div()
                 .text_3xl()
                 .pb_2()
-                .child(inline_text("document-title".into(), context, || {
+                .child(inline_text(&[], Part::DocumentTitle, context, || {
                     inlines::layout_bold(title, &context.inline)
                 }))
                 .into_any_element()
         }),
-        Row::Contents => Some(toc_element(view, context)),
+        Row::Contents => Some(toc_element(view, &[], context)),
         Row::Block { trail, heading } => adoc_render::block_by_trail(view, trail).map(|block| {
             match section_heading(block, trail, context) {
                 Some(title) if *heading => framed(block, trail, title, context),
@@ -198,10 +230,10 @@ fn children(
 fn text(
     content: &[ViewInline],
     trail: &[usize],
-    part: &str,
+    part: Part,
     context: &BlockContext<'_>,
 ) -> AnyElement {
-    inline_text(text_id(trail, part), context, || {
+    inline_text(trail, part, context, || {
         inlines::layout(content, &context.inline)
     })
 }
@@ -209,10 +241,12 @@ fn text(
 /// The element for inline text laid out by `lay_out`, or as it was laid out for the element
 /// `id` while the preview shows the same view tree in the same style.
 fn inline_text(
-    id: ElementId,
+    trail: &[usize],
+    part: Part,
     context: &BlockContext<'_>,
     lay_out: impl FnOnce() -> inlines::InlineText,
 ) -> AnyElement {
+    let id = text_id(trail, part);
     let text = match &context.inline_cache {
         Some(cache) => {
             let kept = cache.borrow().get(&id).cloned();
@@ -224,7 +258,13 @@ fn inline_text(
         }
         None => lay_out(),
     };
-    inlines::element(id, text, &context.on_link)
+    inlines::element(
+        id,
+        text,
+        LeafKey::new(trail, part),
+        &context.on_link,
+        context.select.as_ref(),
+    )
 }
 
 pub(crate) fn title(
@@ -244,7 +284,7 @@ pub(crate) fn title(
         div()
             .text_sm()
             .pb_1()
-            .child(inline_text(text_id(trail, "title"), context, || {
+            .child(inline_text(trail, Part::Title, context, || {
                 inlines::layout_italic(&content, &context.inline)
             }))
             .into_any_element(),
@@ -271,7 +311,7 @@ fn block_element(
         } => heading_element(*level, heading, trail, context),
         ViewKind::Paragraph(content) => v_flex()
             .children(title(block, trail, context))
-            .child(text(content, trail, "body", context))
+            .child(text(content, trail, Part::Body, context))
             .into_any_element(),
         ViewKind::List { kind, items } => {
             let mut nested = 0;
@@ -282,7 +322,9 @@ fn block_element(
                     let marker = match (kind, item.checked) {
                         (_, Some(true)) => "☑".to_owned(),
                         (_, Some(false)) => "☐".to_owned(),
-                        (ListKind::Ordered, None) => format!("{}.", index + 1),
+                        (ListKind::Ordered, None) => {
+                            format!("{}.", list_number(block, items.len(), index))
+                        }
                         _ => "•".to_owned(),
                     };
                     let item_children: Vec<&ViewBlock> = item.blocks.iter().collect();
@@ -296,7 +338,7 @@ fn block_element(
                             v_flex()
                                 .flex_1()
                                 .gap_1()
-                                .child(text(&item.content, trail, &format!("item{index}"), context))
+                                .child(text(&item.content, trail, Part::Item(index), context))
                                 .children(offset_children(
                                     &item_children,
                                     first,
@@ -318,16 +360,19 @@ fn block_element(
                     let first = nested;
                     nested += item_children.len();
                     v_flex()
-                        .child(inline_text(
-                            text_id(trail, &format!("term{index}")),
-                            context,
-                            || inlines::layout_bold(&item.term, &context.inline),
-                        ))
+                        .child(inline_text(trail, Part::Term(index), context, || {
+                            inlines::layout_bold(&item.term, &context.inline)
+                        }))
                         .child(
                             v_flex()
                                 .pl_4()
                                 .gap_1()
-                                .child(text(&item.content, trail, &format!("dd{index}"), context))
+                                .child(text(
+                                    &item.content,
+                                    trail,
+                                    Part::Description(index),
+                                    context,
+                                ))
                                 .children(offset_children(
                                     &item_children,
                                     first,
@@ -354,7 +399,7 @@ fn block_element(
                         .child(
                             v_flex()
                                 .flex_1()
-                                .child(text(&item.content, trail, &format!("co{index}"), context))
+                                .child(text(&item.content, trail, Part::Callout(index), context))
                                 .children(offset_children(
                                     &item_children,
                                     first,
@@ -388,7 +433,7 @@ fn block_element(
                         .text_sm()
                         .font_weight(FontWeight::BOLD)
                         .text_color(colour)
-                        .child(kind.label()),
+                        .child(plain(kind.label(), trail, Part::Label, context)),
                 )
                 .child(
                     v_flex()
@@ -419,14 +464,19 @@ fn block_element(
                         .border_color(palette.border)
                         .rounded(context.radius)
                         .font_family(context.inline.mono_family.clone())
+                        .relative()
                         .text_sm()
-                        .children(code_lines(code, &styles, callouts, context)),
+                        .children(code_lines(code, &styles, callouts, trail, context))
+                        .child(copy_code(trail, {
+                            let code = adoc_render::fragment::runnable_code(code, callouts);
+                            move |_: &mut Window, _: &mut App| Some(code.clone())
+                        })),
                 )
                 .into_any_element()
         }
         ViewKind::Literal(literal) => v_flex()
             .children(title(block, trail, context))
-            .child(preformatted(literal, context))
+            .child(preformatted(literal, trail, context))
             .into_any_element(),
         ViewKind::Quote {
             attribution,
@@ -446,7 +496,8 @@ fn block_element(
             .children(attribution_line(
                 attribution.as_deref(),
                 citation.as_deref(),
-                palette,
+                trail,
+                context,
             ))
             .into_any_element(),
         ViewKind::Verse {
@@ -462,12 +513,13 @@ fn block_element(
                     .border_color(palette.border)
                     .italic()
                     .whitespace_normal()
-                    .child(verse.clone()),
+                    .child(plain(verse.clone(), trail, Part::Body, context)),
             )
             .children(attribution_line(
                 attribution.as_deref(),
                 citation.as_deref(),
-                palette,
+                trail,
+                context,
             ))
             .into_any_element(),
         ViewKind::Sidebar(_) => container(block, trail, view, context, palette.surface, true),
@@ -514,7 +566,7 @@ fn block_element(
                             .text_color(palette.muted)
                             .child(format!("Rendering {kind} diagram…")),
                     )
-                    .child(preformatted(source, context))
+                    .child(preformatted(source, trail, context))
                     .into_any_element(),
                 DiagramView::Failed {
                     message, source, ..
@@ -526,7 +578,7 @@ fn block_element(
                             .text_color(palette.danger)
                             .child(message.clone()),
                     )
-                    .child(preformatted(source, context))
+                    .child(preformatted(source, trail, context))
                     .into_any_element(),
             })
             .children(title(block, trail, context))
@@ -557,12 +609,12 @@ fn block_element(
                             .text_color(palette.muted)
                             .child(message.clone()),
                     )
-                    .child(preformatted(source, context))
+                    .child(preformatted(source, trail, context))
                     .into_any_element(),
-                DiagramView::Pending { .. } => preformatted(source, context),
+                DiagramView::Pending { .. } => preformatted(source, trail, context),
             })
             .into_any_element(),
-        ViewKind::Passthrough(content) => preformatted(content, context),
+        ViewKind::Passthrough(content) => preformatted(content, trail, context),
         ViewKind::ThematicBreak => div().h(px(1.)).my_2().bg(palette.border).into_any_element(),
         ViewKind::PageBreak => div()
             .my_2()
@@ -571,7 +623,7 @@ fn block_element(
             .border_color(palette.border)
             .into_any_element(),
         // Shown here only when the page places its contents here, as Asciidoctor shows them.
-        ViewKind::Toc if view.toc_at_macro() => toc_element(view, context),
+        ViewKind::Toc if view.toc_at_macro() => toc_element(view, trail, context),
         ViewKind::Toc => gpui::Empty.into_any_element(),
         ViewKind::Unsupported { name, source } => v_flex()
             .gap_1()
@@ -586,7 +638,7 @@ fn block_element(
                     .text_color(palette.warning)
                     .child(format!("Not rendered: {name}")),
             )
-            .child(preformatted(source, context))
+            .child(preformatted(source, trail, context))
             .into_any_element(),
     };
     framed(block, trail, body, context)
@@ -638,7 +690,7 @@ pub(crate) fn parsed_text(
             let trail = origin?;
             let block = at(trail)?;
             let body = match &block.kind {
-                ViewKind::Paragraph(content) => text(content, trail, "body", context),
+                ViewKind::Paragraph(content) => text(content, trail, Part::Body, context),
                 _ => block_element(block, &mut trail.to_vec(), view, context),
             };
             (block.span.clone(), body)
@@ -660,7 +712,7 @@ pub(crate) fn parsed_text(
                 return None;
             };
             let item = items.get(*index)?;
-            let body = text(&item.content, list, &format!("item{index}"), context);
+            let body = text(&item.content, list, Part::Item(*index), context);
             (item.span.clone(), body)
         }
         ViewText::Term { list, index } | ViewText::Description { list, index } => {
@@ -669,11 +721,11 @@ pub(crate) fn parsed_text(
             };
             let item = items.get(*index)?;
             let body = if matches!(place, ViewText::Term { .. }) {
-                inline_text(text_id(list, &format!("term{index}")), context, || {
+                inline_text(list, Part::Term(*index), context, || {
                     inlines::layout_bold(&item.term, &context.inline)
                 })
             } else {
-                text(&item.content, list, &format!("dd{index}"), context)
+                text(&item.content, list, Part::Description(*index), context)
             };
             (item.span.clone(), body)
         }
@@ -745,7 +797,7 @@ fn heading_element(
 ) -> AnyElement {
     let element = div()
         .pt_2()
-        .child(inline_text(text_id(trail, "heading"), context, || {
+        .child(inline_text(trail, Part::Heading, context, || {
             inlines::layout_bold(content, &context.inline)
         }));
     match level {
@@ -757,7 +809,32 @@ fn heading_element(
     .into_any_element()
 }
 
-fn toc_element(view: &ViewTree, context: &BlockContext<'_>) -> AnyElement {
+fn toc_element(view: &ViewTree, trail: &[usize], context: &BlockContext<'_>) -> AnyElement {
+    let mut start = 0;
+    let mut line = |text: String| {
+        let at = start;
+        start += text.len() + 1;
+        select::plain(
+            text,
+            LeafKey::new(trail, Part::Contents),
+            at,
+            context.select.as_ref(),
+        )
+    };
+    let title = line(view.toc_title().to_owned());
+    let entries: Vec<AnyElement> = view
+        .toc
+        .iter()
+        .map(|entry| {
+            div()
+                .pl(px(12. * f32::from(entry.level.saturating_sub(1))))
+                .child(line(match &entry.number {
+                    Some(number) => format!("{number} {}", entry.title),
+                    None => entry.title.clone(),
+                }))
+                .into_any_element()
+        })
+        .collect();
     v_flex()
         .gap_1()
         .p_3()
@@ -765,19 +842,8 @@ fn toc_element(view: &ViewTree, context: &BlockContext<'_>) -> AnyElement {
         .border_color(context.palette.border)
         .rounded(context.radius)
         .text_sm()
-        .child(
-            div()
-                .font_weight(FontWeight::BOLD)
-                .child(view.toc_title().to_owned()),
-        )
-        .children(view.toc.iter().map(|entry| {
-            div()
-                .pl(px(12. * f32::from(entry.level.saturating_sub(1))))
-                .child(match &entry.number {
-                    Some(number) => format!("{number} {}", entry.title),
-                    None => entry.title.clone(),
-                })
-        }))
+        .child(div().font_weight(FontWeight::BOLD).child(title))
+        .children(entries)
         .into_any_element()
 }
 
@@ -804,14 +870,14 @@ fn container(
         .into_any_element()
 }
 
-fn preformatted(source: &str, context: &BlockContext<'_>) -> AnyElement {
+fn preformatted(source: &str, trail: &[usize], context: &BlockContext<'_>) -> AnyElement {
     div()
         .p_2()
         .bg(context.palette.surface)
         .rounded(context.radius)
         .font_family(context.inline.mono_family.clone())
         .text_sm()
-        .child(source.to_owned())
+        .child(plain(source.to_owned(), trail, Part::Body, context))
         .into_any_element()
 }
 
@@ -859,7 +925,8 @@ fn pixels(value: &str) -> Option<Pixels> {
 fn attribution_line(
     attribution: Option<&str>,
     citation: Option<&str>,
-    palette: &Palette,
+    trail: &[usize],
+    context: &BlockContext<'_>,
 ) -> Option<AnyElement> {
     let line = match (attribution, citation) {
         (None, None) => return None,
@@ -870,10 +937,40 @@ fn attribution_line(
     Some(
         div()
             .text_sm()
-            .text_color(palette.muted)
-            .child(line)
+            .text_color(context.palette.muted)
+            .child(plain(line, trail, Part::Attribution, context))
             .into_any_element(),
     )
+}
+
+/// The button that copies a block's code without its callouts, so it can be run: `code` gives
+/// it when the button is pressed.
+pub(crate) fn copy_code(
+    trail: &[usize],
+    code: impl Fn(&mut Window, &mut App) -> Option<String> + 'static,
+) -> AnyElement {
+    let path: Vec<String> = trail.iter().map(usize::to_string).collect();
+    let selector = format!("copy-code-{}", path.join("-"));
+    div()
+        .absolute()
+        .top_1()
+        .right_1()
+        .child(
+            Button::new(SharedString::from(selector.clone()))
+                .debug_selector(move || selector)
+                .ghost()
+                .xsmall()
+                .icon(IconName::Copy)
+                .tooltip("Copy Code")
+                .on_click(move |_, window, cx| {
+                    // Not a click on the block, which would show its source.
+                    cx.stop_propagation();
+                    if let Some(code) = code(window, cx) {
+                        cx.write_to_clipboard(ClipboardItem::new_string(code));
+                    }
+                }),
+        )
+        .into_any_element()
 }
 
 fn callout_badge(number: usize, context: &BlockContext<'_>) -> AnyElement {
@@ -922,18 +1019,29 @@ fn code_lines(
     code: &str,
     styles: &[(Range<usize>, HighlightStyle)],
     callouts: &[adoc_render::Callout],
+    trail: &[usize],
     context: &BlockContext<'_>,
 ) -> Vec<AnyElement> {
+    let mut start = 0;
     code.split('\n')
         .zip(styles_by_line(code, styles))
         .enumerate()
         .map(|(line_number, (line, line_styles))| {
+            let text = SharedString::from(line.to_owned());
             let content = if line.is_empty() {
                 // An empty line still takes a line's height.
                 StyledText::new(" ")
             } else {
-                StyledText::new(line.to_owned()).with_highlights(line_styles)
+                StyledText::new(text.clone()).with_highlights(line_styles)
             };
+            let content = select::styled(
+                content,
+                text,
+                LeafKey::new(trail, Part::Body),
+                start,
+                context.select.as_ref(),
+            );
+            start += line.len() + 1;
             // Without the shrinkable wrapper a row keeps its text's whole width, so a wide line
             // would run out of the frame instead of wrapping.
             h_flex()
