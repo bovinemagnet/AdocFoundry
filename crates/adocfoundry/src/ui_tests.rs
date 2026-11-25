@@ -14167,7 +14167,7 @@ const EVERY_KIND: &str =
                 [source,subs=attributes]\n----\nsubs {doctitle}\n----\n\n\
                 [source]\nundelimited\n\n```sql\nSELECT fenced;\n```\n\n\
                 ....\nliteral\n....\n\n indented\n\n\
-                [verse,Poet,Work]\n____\nVerse.\n____\n\n[quote,Someone]\n____\nQuoted.\n____\n\n\
+                [verse,Poet,Work]\n____\nVerse.\n____\n\n[quote,Someone,Somewhere]\n____\nQuoted.\n____\n\n\
                 NOTE: Noted.\n\n====\nExample.\n====\n\n****\nSidebar.\n****\n\n\
                 . one\n. two\n\n* [x] done\n\nterm:: description\n\n\
                 |===\n|cell |other\n|===\n\n[cols=\"1,1a\"]\n|===\n|plain\n|* inside\n|===\n\n\
@@ -14182,12 +14182,6 @@ fn every_kind_of_text_can_be_selected(cx: &mut TestAppContext) {
     let texts = cx.update(|_, cx| visual.read(cx).texts_for_test());
     assert!(texts.len() > 35, "{}", texts.len());
     for (leaf, text) in texts.iter().enumerate() {
-        // The preview alone draws who a quotation is from.
-        if text.key.part == adoc_render::fragment::Part::Attribution
-            && text.text.contains("Someone")
-        {
-            continue;
-        }
         let shown = cx.update(|window, cx| {
             visual.update(cx, |visual, cx| visual.reveal_leaf_for_test(leaf, cx));
             window.draw(cx).clear(cx);

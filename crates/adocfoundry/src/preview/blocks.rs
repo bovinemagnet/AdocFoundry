@@ -922,7 +922,8 @@ fn pixels(value: &str) -> Option<Pixels> {
     value.trim_end_matches("px").parse::<f32>().ok().map(px)
 }
 
-fn attribution_line(
+/// Who a quotation is from, as it is drawn under it.
+pub(crate) fn attribution_line(
     attribution: Option<&str>,
     citation: Option<&str>,
     trail: &[usize],
