@@ -501,14 +501,38 @@ impl VisualView {
                         }),
                 )
                 .into_any_element(),
-            NodeKind::Quote => v_flex()
-                .pl_4()
-                .border_l_4()
-                .border_color(palette.border)
-                .italic()
-                .gap_2()
-                .children(self.children(path, &node.children, draw, cx))
-                .into_any_element(),
+            NodeKind::Quote => {
+                // Who it is from is written in the block's attributes, so it is read-only here.
+                let from = node.origin.as_deref().and_then(|origin| {
+                    let block = adoc_render::block_by_trail(&draw.document.view, origin)?;
+                    let ViewKind::Quote {
+                        attribution,
+                        citation,
+                        ..
+                    } = &block.kind
+                    else {
+                        return None;
+                    };
+                    preview::blocks::attribution_line(
+                        attribution.as_deref(),
+                        citation.as_deref(),
+                        origin,
+                        &draw.context,
+                    )
+                });
+                v_flex()
+                    .child(
+                        v_flex()
+                            .pl_4()
+                            .border_l_4()
+                            .border_color(palette.border)
+                            .italic()
+                            .gap_2()
+                            .children(self.children(path, &node.children, draw, cx)),
+                    )
+                    .children(from)
+                    .into_any_element()
+            }
             NodeKind::Sidebar | NodeKind::Example | NodeKind::Open => {
                 let bordered = !matches!(node.kind, NodeKind::Open);
                 v_flex()

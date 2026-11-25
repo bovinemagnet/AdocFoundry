@@ -25,6 +25,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 ### Fixed
 
 - Copying in the visual editor no longer leaves out read-only text without saying so, or copies text otherwise than it is shown (`[subs=none]`).
+- The visual editor shows who a quotation is from, as the preview does.
 - The Navigation panel follows a navigation file whenever its text changes (#795): on disk, as a page is added to it in the app, and as it is typed in, once typing pauses. It needed Re-index Workspace before.
 - A settings file with something to warn about, such as a key it does not know, no longer stops the app as its window opens.
 
