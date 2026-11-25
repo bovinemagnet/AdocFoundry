@@ -304,6 +304,7 @@ const STANDARD_TEXTS: &[(&str, &str)] = &[
     ("0BSD", include_str!("../licences/0BSD.txt")),
     ("Apache-2.0", include_str!("../licences/Apache-2.0.txt")),
     ("BSD-3-Clause", include_str!("../licences/BSD-3-Clause.txt")),
+    ("BSL-1.0", include_str!("../licences/BSL-1.0.txt")),
     ("CC0-1.0", include_str!("../licences/CC0-1.0.txt")),
     ("MIT", include_str!("../licences/MIT.txt")),
     ("MPL-2.0", include_str!("../licences/MPL-2.0.txt")),

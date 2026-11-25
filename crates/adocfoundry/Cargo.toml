@@ -31,6 +31,10 @@ tree-sitter-asciidoc-inline.workspace = true
 tree-sitter-containerfile.workspace = true
 tree-sitter-xml.workspace = true
 
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+# Formatted text on the clipboard.
+arboard.workspace = true
+
 [target.'cfg(unix)'.dependencies]
 # The typing benchmark reads the front end's thread's CPU time beside the clock's.
 rustix = { workspace = true, features = ["time"] }

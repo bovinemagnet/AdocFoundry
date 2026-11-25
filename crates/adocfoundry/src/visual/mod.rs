@@ -9,6 +9,7 @@
 mod blocks;
 mod format;
 pub(crate) mod input;
+mod reading;
 mod text;
 mod toolbar;
 
@@ -21,8 +22,8 @@ use std::{
 use adoc_core::SourceRange;
 use adoc_engine::{
     commands::ids, Assoc, BlockPath, CommandArgs, CommandId, CommandOutcome, DocumentId,
-    EngineEvent, ImageSource, Mapping, MarkSet, SourceEdit, TextBlock, VisualArgs, VisualDocument,
-    VisualValue,
+    EngineEvent, ImageSource, Mapping, MarkSet, SourceEdit, TextBlock, TextPlace, VisualArgs,
+    VisualDocument, VisualValue,
 };
 use gpui::{
     canvas, div, prelude::FluentBuilder as _, px, App, Context, ElementInputHandler, Entity,
@@ -99,6 +100,16 @@ pub struct VisualView {
     focus: FocusHandle,
     shown: Option<Arc<VisualDocument>>,
     selection: Selection,
+    /// The selection instead, while an end of it is in text drawn from the view tree.
+    reading: Option<reading::Reading>,
+    /// The page's text in order, of the model it is of.
+    flow: RefCell<Option<(Arc<VisualDocument>, Rc<adoc_engine::VisualFlow>)>>,
+    /// The text drawn from the view tree.
+    layer: crate::preview::select::Layer,
+    /// Where the pointer was pressed, while it is down.
+    pressed: Option<TextPlace>,
+    /// A click on read-only text about to show its source.
+    showing_source: Option<gpui::Task<()>>,
     /// The document version the selection is in.
     version: u64,
     /// The marks typed text carries.
@@ -130,12 +141,8 @@ pub struct VisualView {
     formula_gaps: text::FormulaGaps,
     /// What `formula_gaps` was measured for: the model, the font and its sizes.
     measured: Option<Measured>,
-    /// The spelling menu open on a misspelt word: where it was opened, and the menu.
-    spelling_menu: Option<(
-        gpui::Point<gpui::Pixels>,
-        Entity<gpui_component::menu::PopupMenu>,
-        Subscription,
-    )>,
+    /// The menu of a right click.
+    menu: Option<crate::copying::Menu>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -167,6 +174,11 @@ impl VisualView {
             focus: cx.focus_handle(),
             shown,
             selection: Selection::default(),
+            reading: None,
+            flow: RefCell::default(),
+            layer: crate::preview::select::Layer::default(),
+            pressed: None,
+            showing_source: None,
             version,
             marks: MarkSet::EMPTY,
             composing: None,
@@ -183,7 +195,7 @@ impl VisualView {
             highlights: Rc::default(),
             formula_gaps: text::FormulaGaps::new(),
             measured: None,
-            spelling_menu: None,
+            menu: None,
             _subscriptions: vec![subscription],
         };
         view.select_first_block(cx);
@@ -247,6 +259,14 @@ impl VisualView {
                     anchor: mapping.map(self.selection.anchor, Assoc::After),
                     head: mapping.map(self.selection.head, Assoc::After),
                 };
+                if let Some(reading) = &mut self.reading {
+                    for place in [&mut reading.anchor, &mut reading.head] {
+                        if let TextPlace::Source(offset) = place {
+                            *offset = mapping.map(*offset, Assoc::After);
+                        }
+                    }
+                }
+                self.pressed = None;
                 self.version = *version;
                 self.composing = None;
                 cx.notify();
@@ -258,7 +278,9 @@ impl VisualView {
     /// Shows the engine's latest model, keeping the selection inside the text.
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let first = self.shown.is_none();
+        let before = self.shown.take();
         self.shown = self.app.read(cx).engine.visual(self.document);
+        self.keep_reading(before.as_ref());
         if let Some(shown) = &self.shown {
             let length = shown.model.source.len();
             self.selection.anchor = self.selection.anchor.min(length);
@@ -298,6 +320,7 @@ impl VisualView {
     /// Moves the selection, taking the marks of the text before the caret for typing.
     fn set_selection(&mut self, selection: Selection, cx: &mut Context<Self>) {
         self.selection = selection;
+        self.reading = None;
         self.composing = None;
         self.pending = None;
         if let Some((_, text)) = self.block_at(selection.head) {
@@ -387,9 +410,12 @@ impl VisualView {
         &mut self,
         command: CommandId,
         value: VisualValue,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.refuse_reading(window, cx) {
+            return false;
+        }
         let args = VisualArgs {
             id: self.document,
             version: self.version,
@@ -466,6 +492,9 @@ impl VisualView {
     /// Enter: a new line in code, a split in the middle of a block, and at either end of one a
     /// pending block (a second Enter on a pending list item after the caret's leaves the list).
     fn enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.refuse_reading(window, cx) {
+            return;
+        }
         if let Some(pending) = &mut self.pending {
             if !pending.before {
                 pending.list_item = false;
@@ -811,52 +840,6 @@ impl VisualView {
         Some((shown, index))
     }
 
-    /// Opens the spelling menu for the misspelt word under `position` in the text block at
-    /// `path`, if there is one.
-    fn spelling_menu(
-        &mut self,
-        path: &[usize],
-        position: gpui::Point<gpui::Pixels>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(offset) = self.offset_at(path, position) else {
-            return;
-        };
-        let choices = crate::spelling::choices(&self.app.read(cx).engine, self.document, offset);
-        if choices.is_empty() {
-            return;
-        }
-        let app = self.app.clone();
-        let document = self.document;
-        let menu = gpui_component::menu::PopupMenu::build(window, cx, move |mut menu, _, _| {
-            let mut suggested = false;
-            for (label, choice) in choices {
-                let replace = matches!(choice, crate::spelling::Choice::Replace { .. });
-                if !replace && suggested {
-                    menu = menu.separator();
-                    suggested = false;
-                }
-                suggested |= replace;
-                let app = app.clone();
-                menu = menu.item(gpui_component::menu::PopupMenuItem::new(label).on_click(
-                    move |_, _, cx| {
-                        // A failure is reported by the window.
-                        let _ = crate::spelling::apply(&app, document, &choice, cx);
-                    },
-                ));
-            }
-            menu
-        });
-        let closed = cx.subscribe_in(&menu, window, |this, _, _: &gpui::DismissEvent, _, cx| {
-            this.spelling_menu = None;
-            cx.notify();
-        });
-        menu.read(cx).focus_handle(cx).focus(window, cx);
-        self.spelling_menu = Some((position, menu, closed));
-        cx.notify();
-    }
-
     /// The source offset under `position` in the text block at `path`.
     fn offset_at(&self, path: &[usize], position: gpui::Point<gpui::Pixels>) -> Option<usize> {
         let shown_document = self.shown.as_ref()?;
@@ -890,17 +873,13 @@ impl VisualView {
             .as_ref()
             .and_then(|shown| shown.model.node(path))
             .is_some_and(adoc_engine::Node::is_editable);
+        self.layer.set_dragged(false);
+        self.showing_source = None;
         if !editable {
-            // One notice however often it is clicked.
-            window.push_notification(
-                gpui_component::notification::Notification::new()
-                    .message(
-                        "This text can only be edited in the source: Show Source and Visual \
-                         Editor (Cmd/Ctrl-K D).",
-                    )
-                    .id::<ReadOnlyNotice>(),
-                cx,
-            );
+            self.notice(window, cx);
+            // It can be selected from here, without the caret moving into it.
+            self.pressed = self.offset_at(path, position).map(TextPlace::Source);
+            self.dragging = true;
             return;
         }
         let Some(offset) = self.offset_at(path, position) else {
@@ -939,23 +918,17 @@ impl VisualView {
             }
             _ => {
                 self.dragging = true;
-                self.move_to(Some(offset), extend, cx);
-            }
-        }
-    }
-
-    fn mouse_drag(
-        &mut self,
-        path: &[usize],
-        position: gpui::Point<gpui::Pixels>,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.dragging {
-            return;
-        }
-        if let Some(offset) = self.offset_at(path, position) {
-            if offset != self.selection.head {
-                self.move_to(Some(offset), true, cx);
+                if extend {
+                    let (anchor, _) = match &self.reading {
+                        Some(reading) => (reading.anchor.clone(), ()),
+                        None => (TextPlace::Source(self.selection.anchor), ()),
+                    };
+                    self.pressed = Some(anchor.clone());
+                    self.select_between(anchor, TextPlace::Source(offset), cx);
+                } else {
+                    self.pressed = Some(TextPlace::Source(offset));
+                    self.move_to(Some(offset), false, cx);
+                }
             }
         }
     }
@@ -1073,29 +1046,6 @@ impl VisualView {
             }
         }
     }
-
-    // --- reading the selection ---------------------------------------------------------------
-
-    /// The text the selection shows, blocks separated by blank lines.
-    fn selected_text(&self) -> String {
-        let (start, end) = (self.selection.start(), self.selection.end());
-        let mut parts = Vec::new();
-        for (_, _, block) in self.text_blocks() {
-            if block.range.end < start || block.range.start > end {
-                continue;
-            }
-            let from = block
-                .display_offset(start.max(block.range.start))
-                .unwrap_or(0);
-            let to = block
-                .display_offset_towards(end.min(block.range.end), true)
-                .unwrap_or(block.display.len());
-            if from < to {
-                parts.push(block.display[from..to].to_owned());
-            }
-        }
-        parts.join("\n\n")
-    }
 }
 
 impl VisualView {
@@ -1212,6 +1162,7 @@ impl Render for VisualView {
         let _timed = crate::typing_bench::timed("render.visual");
         // Repopulated as this frame's text blocks are drawn.
         self.layouts.borrow_mut().clear();
+        self.layer.clear();
         // As the rows below are drawn, so that a formula's gap fits the text around it.
         window.with_text_style(Some(crate::fonts::reading_style(cx)), |window| {
             self.measure_formulas(window)
@@ -1234,11 +1185,17 @@ impl Render for VisualView {
             .cursor_text()
             .on_mouse_up(
                 gpui::MouseButton::Left,
-                cx.listener(|this, _, _, _| this.dragging = false),
+                cx.listener(|this, _, _, _| {
+                    this.dragging = false;
+                    this.pressed = None;
+                }),
             )
             .on_mouse_up_out(
                 gpui::MouseButton::Left,
-                cx.listener(|this, _, _, _| this.dragging = false),
+                cx.listener(|this, _, _, _| {
+                    this.dragging = false;
+                    this.pressed = None;
+                }),
             )
             .on_drop(
                 cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
@@ -1258,36 +1215,42 @@ impl Render for VisualView {
                 .size_full(),
             )
             .child(self.toolbar(cx))
-            .when_some(
-                self.spelling_menu
-                    .as_ref()
-                    .map(|(position, menu, _)| (*position, menu.clone())),
-                |view, (position, menu)| {
-                    view.child(gpui::deferred(
-                        gpui::anchored()
-                            .position(position)
-                            .snap_to_window_with_margin(px(8.))
-                            .child(div().occlude().child(menu)),
-                    ))
-                },
-            )
+            .children(self.menu.as_ref().map(crate::copying::Menu::element))
             .when(self.shown.is_some(), |view| {
                 let rows = self.rows.clone();
                 view.child(
-                    crate::fonts::reading(div(), cx).flex_1().min_h_0().child(
-                        gpui::list(
-                            self.list.clone(),
-                            cx.processor(move |this, index: usize, window, cx| {
-                                let (Some(frame), Some(row)) =
-                                    (this.frame.clone(), rows.get(index))
-                                else {
-                                    return gpui::Empty.into_any_element();
-                                };
-                                blocks::row(this, &frame, row, index, rows.len(), window, cx)
+                    crate::fonts::reading(div().id("visual-page"), cx)
+                        .flex_1()
+                        .min_h_0()
+                        .on_mouse_down(
+                            gpui::MouseButton::Left,
+                            cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                                this.press_drawn(event, window, cx);
                             }),
                         )
-                        .size_full(),
-                    ),
+                        .on_mouse_down(
+                            gpui::MouseButton::Right,
+                            cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                                this.open_menu(None, event.position, window, cx);
+                            }),
+                        )
+                        .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
+                            this.drag(event, cx);
+                        }))
+                        .child(
+                            gpui::list(
+                                self.list.clone(),
+                                cx.processor(move |this, index: usize, window, cx| {
+                                    let (Some(frame), Some(row)) =
+                                        (this.frame.clone(), rows.get(index))
+                                    else {
+                                        return gpui::Empty.into_any_element();
+                                    };
+                                    blocks::row(this, &frame, row, index, rows.len(), window, cx)
+                                }),
+                            )
+                            .size_full(),
+                        ),
                 )
             })
             .when(self.shown.is_none(), |view| {

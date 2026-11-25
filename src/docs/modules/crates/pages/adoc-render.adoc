@@ -37,6 +37,12 @@ The optional external renderer.
 `Renderer` is a trait over `RenderRequest` (a source file or text, attributes, a `RenderSafeMode`, a stylesheet and a safe-mode base directory), giving a `RenderOutput` (HTML and warnings) or a `RenderError`.
 `SystemAsciidoctor` runs the `asciidoctor` executable and stops it after `ASCIIDOCTOR_TIMEOUT`, and `MockRenderer` serves tests.
 
+`fragment/`::
+`adoc_render::fragment` takes part of a page for copying.
+`Flow::new(view)` lists the page's text as leaves, each named by a `LeafKey` (the block's trail and a `Part`), and a `Place` is a leaf and an offset in it.
+`Flow::cut` takes what lies between two places as a `Fragment`, which `to_plain`, `to_markdown`, `to_asciidoc` and `to_html` write.
+`runnable_code` gives a code block's code without its callouts.
+
 The crate re-exports the DOM value types the view shares (`ListKind`, `Align`, `AdmonitionKind` and others), so renderers need not depend on `adoc-dom`.
 
 == How to use it

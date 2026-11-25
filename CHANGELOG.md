@@ -4,9 +4,23 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 ## Unreleased
 
+### Added
+
+- Select and copy all text in the visual editor and the rendered preview (#794), included files and other read-only text too: callout explanations, code from an include, verse, fenced code, AsciiDoc table cells and block titles. Drag, double-click, triple-click, Shift-click, Shift with the arrow keys and Select All all reach it, and text out of view is copied too. A selection holding read-only text can be copied; every edit of it is refused, and Cut leaves the clipboard alone.
+  - **Copy** gives plain text with nothing left out: spaces, tabs, new lines and list markers only. Numbers are those on the page, and table cells are separated by tabs.
+  - **Copy As** (right-click, the Edit menu or the palette): Plain Text, AsciiDoc, Markdown, or Formatted Text for Word and Google Docs (macOS and Windows). AsciiDoc over an include gives the included text, never the `include::` line.
+  - **Copy button** on code blocks: the code without its callouts, so it can be run.
+  - **Right-click** in either shows Cut, Copy, Copy As, Paste and Select All, with any spelling suggestions first.
+
 ### Changed
 
 - The ☰ menu has an Export menu, between Git and Help, which holds every export that was in the File menu: PDF, Word, Kindle, EPUB, DocBook, HTML and the graph (#790). Commands, titles and the palette are unchanged.
+- Clicking read-only text in the visual editor, or a block in the preview, shows its source after about a third of a second, so that a double click can select a word first.
+- A numbered list shown in the preview or the visual editor counts from its `start`, and down when it is reversed, as the exports do.
+
+### Fixed
+
+- Copying in the visual editor no longer leaves out read-only text without saying so, or copies text otherwise than it is shown (`[subs=none]`).
 
 ## 0.14.0 — 2026-11-23
 

@@ -6,7 +6,7 @@
 
 use std::{ops::Range, path::PathBuf, rc::Rc};
 
-use adoc_render::{FormulaImage, ResolvedLink, ViewInline};
+use adoc_render::{fragment::LeafKey, FormulaImage, ResolvedLink, ViewInline};
 use gpui::{
     div, img, point, prelude::FluentBuilder as _, px, size, AnyElement, App, AvailableSpace,
     Bounds, Element, ElementId, Font, FontStyle, FontWeight, GlobalElementId, Hsla,
@@ -15,6 +15,8 @@ use gpui::{
     UnderlineStyle, Window,
 };
 use gpui_component::tooltip::Tooltip;
+
+use super::select::{selectable, LaidOut, Select};
 
 /// What a click on a stretch of inline text does.
 #[derive(Clone, Debug, PartialEq)]
@@ -369,14 +371,24 @@ fn layout_with(inlines: &[ViewInline], style: &InlineStyle, state: State) -> Inl
 
 /// The element for laid-out text; link ranges call `on_link`, and typeset formulas are drawn
 /// in the line, their source in a tooltip.
-pub fn element(id: ElementId, text: InlineText, on_link: &LinkHandler) -> AnyElement {
+pub fn element(
+    id: ElementId,
+    text: InlineText,
+    key: LeafKey,
+    on_link: &LinkHandler,
+    select: Option<&Select>,
+) -> AnyElement {
     if text.text.is_empty() && text.formulas.is_empty() {
         return gpui::Empty.into_any_element();
     }
+    let laid_out = LaidOut::default();
     if text.formulas.is_empty() {
-        return interactive(id, text, Vec::new(), on_link).0;
+        let shown = SharedString::from(text.text.clone());
+        let (element, layout) = interactive(id, text, Vec::new(), on_link);
+        *laid_out.borrow_mut() = Some((layout, shown, Vec::new()));
+        return selectable(element, laid_out, key, 0, select);
     }
-    FormulaText {
+    let element = FormulaText {
         id,
         text: Some(text),
         on_link: on_link.clone(),
@@ -384,8 +396,10 @@ pub fn element(id: ElementId, text: InlineText, on_link: &LinkHandler) -> AnyEle
         layout: None,
         placed: Vec::new(),
         images: Vec::new(),
+        laid_out: laid_out.clone(),
     }
-    .into_any_element()
+    .into_any_element();
+    selectable(element, laid_out, key, 0, select)
 }
 
 /// `text` as an element, with its links and the tooltips of `formulas` (each a range of the
@@ -689,6 +703,8 @@ pub struct FormulaText {
     layout: Option<TextLayout>,
     placed: Vec<Placed>,
     images: Vec<AnyElement>,
+    /// Filled in with the layout, for the text to be selected by.
+    laid_out: LaidOut,
 }
 
 impl IntoElement for FormulaText {
@@ -728,6 +744,8 @@ impl Element for FormulaText {
             .zip(&formulas)
             .map(|(range, formula)| (range.clone(), formula.source.clone()))
             .collect();
+        let shown = SharedString::from(spliced.text.clone());
+        let gap_ranges = ranges.clone();
         self.placed = formulas
             .into_iter()
             .zip(ranges)
@@ -741,6 +759,7 @@ impl Element for FormulaText {
             .collect();
         let (mut inner, layout) = interactive(self.id.clone(), spliced, tooltips, &self.on_link);
         let layout_id = inner.request_layout(window, cx);
+        *self.laid_out.borrow_mut() = Some((layout.clone(), shown, gap_ranges));
         self.inner = Some(inner);
         self.layout = Some(layout);
         (layout_id, ())

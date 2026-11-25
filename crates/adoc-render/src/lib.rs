@@ -1,5 +1,6 @@
 mod asciidoctor;
 mod formula;
+pub mod fragment;
 mod html;
 mod request;
 mod result;

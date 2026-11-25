@@ -13,8 +13,8 @@ use adoc_render::{
 };
 use gpui::{
     div, prelude::FluentBuilder as _, px, relative, AnyElement, App, Context, FontWeight, Hsla,
-    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
-    ParentElement as _, Styled as _, Window,
+    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, ParentElement as _,
+    Styled as _, Window,
 };
 use gpui_component::{
     button::{Button, ButtonVariants as _},
@@ -59,6 +59,8 @@ pub struct Frame {
     /// `suggestion`, the source offset and text of what it would insert, shown there, and
     /// whether text typed there goes before it.
     suggested: Vec<(adoc_core::SourceRange, usize, String, bool)>,
+    /// What is selected.
+    highlight: Option<super::reading::Highlight>,
 }
 
 impl Frame {
@@ -183,6 +185,7 @@ pub fn frame(view: &VisualView, document: Arc<VisualDocument>, window: &Window, 
         misspelt,
         commented,
         suggested,
+        highlight: view.highlight(),
     }
 }
 
@@ -202,21 +205,22 @@ pub fn row(
     let theme = cx.theme().highlight_theme.clone();
     let highlight =
         move |language: &str, code: &str| preview::highlight(&cache, dark, &theme, language, code);
-    let app = view.app.clone();
+    let layer = view.layer.clone();
+    let clicked = cx.weak_entity();
     // A click on read-only content shows its source beside the visual editor.
-    let on_block: preview::blocks::BlockHandler = Rc::new(move |span, _, cx| {
+    let on_block: preview::blocks::BlockHandler = Rc::new(move |span, window, cx| {
+        // Not the end of a drag over the text.
+        if layer.dragged() {
+            return;
+        }
         let position = adoc_engine::NavigationPosition {
             path: span.path.clone(),
             offset: span.range.start,
         };
-        // A failure is reported by the window.
-        let _ = app.update(cx, |app, cx| {
-            app.invoke(ids::VIEW_SHOW_SPLIT, CommandArgs::None, cx)?;
-            app.invoke(ids::NAVIGATE_REVEAL, CommandArgs::Position(position), cx)
-        });
+        let _ = clicked.update(cx, |view, cx| view.show_source_later(position, window, cx));
     });
     // The visual editor records no extents: its scrolling is its own list's.
-    let context = preview::block_context(
+    let mut context = preview::block_context(
         &view.app,
         preview::sync::Extents::default(),
         None,
@@ -225,13 +229,29 @@ pub fn row(
         window,
         cx,
     );
+    let selection = cx.theme().primary.opacity(0.25);
+    context.select = Some(preview::select::Select {
+        layer: view.layer.clone(),
+        selected: frame
+            .highlight
+            .as_ref()
+            .map(super::reading::Highlight::drawn),
+        colour: selection,
+    });
+    let layer = view.layer.clone();
+    let on_link = context.on_link.clone();
+    context.on_link = Rc::new(move |link, window, cx| {
+        if !layer.dragged() {
+            on_link(link, window, cx);
+        }
+    });
     let draw = Draw {
         document,
         frame,
         inline: context.inline.clone(),
         context,
         caret: cx.theme().primary,
-        selection: cx.theme().primary.opacity(0.25),
+        selection,
         marks: crate::editor::changes::MarkColours {
             added: cx.theme().success,
             modified: cx.theme().info,
@@ -388,15 +408,23 @@ impl VisualView {
             NodeKind::List { kind } => {
                 let kind = *kind;
                 let mut items = Vec::new();
+                // As the page counts them.
+                let block = node
+                    .origin
+                    .as_deref()
+                    .and_then(|origin| adoc_render::block_by_trail(&draw.document.view, origin));
                 for (index, item) in node.children.iter().enumerate() {
+                    let number = block.map_or(index as i64 + 1, |block| {
+                        adoc_render::fragment::list_number(block, node.children.len(), index)
+                    });
                     path.push(index);
-                    items.push(self.list_item(path, item, kind, index, draw, cx));
+                    items.push(self.list_item(path, item, kind, number, draw, cx));
                     path.pop();
                 }
                 v_flex().gap_1().children(items).into_any_element()
             }
             NodeKind::ListItem { .. } => {
-                self.list_item(path, node, ListKind::Unordered, 0, draw, cx)
+                self.list_item(path, node, ListKind::Unordered, 1, draw, cx)
             }
             NodeKind::DescriptionList => v_flex()
                 .gap_2()
@@ -431,7 +459,15 @@ impl VisualView {
                             .text_sm()
                             .font_weight(FontWeight::BOLD)
                             .text_color(colour)
-                            .child(kind.label()),
+                            .child(match node.origin.as_deref() {
+                                Some(origin) => preview::blocks::plain(
+                                    kind.label(),
+                                    origin,
+                                    adoc_render::fragment::Part::Label,
+                                    &draw.context,
+                                ),
+                                None => kind.label().into_any_element(),
+                            }),
                     )
                     .child(v_flex().flex_1().min_w_0().gap_2().children(self.children(
                         path,
@@ -443,6 +479,7 @@ impl VisualView {
             }
             NodeKind::Code { .. } | NodeKind::Literal => div()
                 .debug_selector(|| "visual-code-frame".to_owned())
+                .relative()
                 .p_2()
                 .bg(palette.surface)
                 .border_1()
@@ -451,6 +488,18 @@ impl VisualView {
                 .font_family(draw.inline.mono_family.clone())
                 .text_sm()
                 .child(self.text(path, node, draw, cx))
+                .children(
+                    node.origin
+                        .clone()
+                        .filter(|_| matches!(node.kind, NodeKind::Code { .. }))
+                        .map(|origin| {
+                            let (app, document) = (self.app.clone(), self.document);
+                            let trail = origin.clone();
+                            preview::blocks::copy_code(&trail, move |_, cx| {
+                                app.update(cx, |app, _| app.engine.visual_code(document, &origin))
+                            })
+                        }),
+                )
                 .into_any_element(),
             NodeKind::Quote => v_flex()
                 .pl_4()
@@ -505,7 +554,7 @@ impl VisualView {
         path: &mut Vec<usize>,
         item: &Node,
         kind: ListKind,
-        index: usize,
+        number: i64,
         draw: &Draw<'_>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -515,7 +564,7 @@ impl VisualView {
         let marker = match (kind, checked) {
             (_, Some(true)) => "☑".to_owned(),
             (_, Some(false)) => "☐".to_owned(),
-            (ListKind::Ordered, None) => format!("{}.", index + 1),
+            (ListKind::Ordered, None) => format!("{number}."),
             _ => "•".to_owned(),
         };
         let checkbox = checked
@@ -915,10 +964,15 @@ impl VisualView {
         runs = text::with_suggestions(runs, &struck, &inserted, draw.suggestion);
         let pending = self.pending.filter(|_| caret_here);
         let caret = caret_display
-            .filter(|_| draw.frame.focused && self.selection.is_empty() && pending.is_none())
+            .filter(|_| draw.frame.focused && !self.has_selection() && pending.is_none())
             .map(|display| shown.index(display));
-        let selection = selected_range(block, self.selection.start(), self.selection.end())
-            .map(|range| shown.span(range));
+        // A selection with an end in read-only text covers what lies between in the page's text.
+        let selection = match (self.reading(), &draw.frame.highlight) {
+            (Some(_), Some(highlight)) => highlight.block(path),
+            (Some(_), None) => None,
+            (None, _) => selected_range(block, self.selection.start(), self.selection.end()),
+        }
+        .map(|range| shown.span(range));
         let overlay = text::Overlay {
             caret,
             selection,
@@ -930,7 +984,6 @@ impl VisualView {
         let element = text::element(path.to_vec(), &shown, runs, &self.layouts, overlay);
         let read_only = !node.is_editable();
         let down_path = path.to_vec();
-        let move_path = path.to_vec();
         let drop_path = path.to_vec();
         let files_path = path.to_vec();
         let menu_path = path.to_vec();
@@ -968,12 +1021,9 @@ impl VisualView {
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                     cx.stop_propagation();
-                    this.spelling_menu(&menu_path, event.position, window, cx);
+                    this.open_menu(Some(&menu_path), event.position, window, cx);
                 }),
             )
-            .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
-                this.mouse_drag(&move_path, event.position, cx);
-            }))
             .on_drop(cx.listener(move |this, link: &DraggedLink, window, cx| {
                 this.drop_link(&drop_path, link, window, cx);
             }))

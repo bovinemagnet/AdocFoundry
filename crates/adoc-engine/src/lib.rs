@@ -18,6 +18,7 @@ pub mod commands;
 mod comments;
 #[cfg(feature = "git")]
 mod commit;
+mod copy;
 mod deletion;
 mod discovery;
 mod docbook_settings;
@@ -243,6 +244,7 @@ pub enum PdfStandard {
     /// PDF/UA-1: accessible.
     Ua1,
 }
+pub use copy::{CopiedText, CopyFormat, CopySource, TextPlace, VisualFlow};
 pub use launch::{file_url_path, launch_targets, workspace_for_file, LaunchTargets};
 pub use undo::{UndoEntry, UndoGroup, UndoStack, COALESCE_WINDOW};
 pub use visual::{EditorMode, VisualArgs, VisualDocument, VisualValue, MODEL_SETTLE};

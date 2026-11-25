@@ -5,12 +5,18 @@ use std::ops::Range;
 
 use adoc_engine::{commands::ids, VisualValue};
 use gpui::{
-    actions, App, Bounds, ClipboardItem, Context, EntityInputHandler, InteractiveElement as _,
-    KeyBinding, Pixels, Point, Stateful, UTF16Selection, Window,
+    actions, App, Bounds, Context, EntityInputHandler, InteractiveElement as _, KeyBinding, Pixels,
+    Point, Stateful, UTF16Selection, Window,
 };
 
+use super::reading::Step;
 use super::{text, Selection, VisualView, VISUAL_CONTEXT};
-use crate::editor::bindings::key_binding;
+use crate::{
+    copying::{
+        Copy, CopyAsAsciiDoc, CopyAsFormatted, CopyAsMarkdown, CopyAsPlain, Cut, Paste, SelectAll,
+    },
+    editor::bindings::key_binding,
+};
 
 actions!(
     visual,
@@ -29,14 +35,10 @@ actions!(
         End,
         SelectHome,
         SelectEnd,
-        SelectAll,
         WordLeft,
         WordRight,
         SelectWordLeft,
         SelectWordRight,
-        Copy,
-        Cut,
-        Paste,
     ]
 );
 
@@ -202,16 +204,8 @@ pub fn actions(view: Stateful<gpui::Div>, cx: &mut Context<VisualView>) -> State
         this.goal_x = None;
         this.move_to(target, false, cx);
     }))
-    .on_action(cx.listener(|this, _: &SelectLeft, _, cx| {
-        let target = this.step(false);
-        this.goal_x = None;
-        this.move_to(target, true, cx);
-    }))
-    .on_action(cx.listener(|this, _: &SelectRight, _, cx| {
-        let target = this.step(true);
-        this.goal_x = None;
-        this.move_to(target, true, cx);
-    }))
+    .on_action(cx.listener(|this, _: &SelectLeft, _, cx| this.extend(Step::Left, cx)))
+    .on_action(cx.listener(|this, _: &SelectRight, _, cx| this.extend(Step::Right, cx)))
     .on_action(cx.listener(|this, _: &WordLeft, _, cx| {
         let target = this.word_step(false);
         this.goal_x = None;
@@ -222,16 +216,8 @@ pub fn actions(view: Stateful<gpui::Div>, cx: &mut Context<VisualView>) -> State
         this.goal_x = None;
         this.move_to(target, false, cx);
     }))
-    .on_action(cx.listener(|this, _: &SelectWordLeft, _, cx| {
-        let target = this.word_step(false);
-        this.goal_x = None;
-        this.move_to(target, true, cx);
-    }))
-    .on_action(cx.listener(|this, _: &SelectWordRight, _, cx| {
-        let target = this.word_step(true);
-        this.goal_x = None;
-        this.move_to(target, true, cx);
-    }))
+    .on_action(cx.listener(|this, _: &SelectWordLeft, _, cx| this.extend(Step::WordLeft, cx)))
+    .on_action(cx.listener(|this, _: &SelectWordRight, _, cx| this.extend(Step::WordRight, cx)))
     .on_action(cx.listener(|this, _: &Up, _, cx| {
         let target = this.vertical(false);
         let goal = this.goal_x;
@@ -244,18 +230,8 @@ pub fn actions(view: Stateful<gpui::Div>, cx: &mut Context<VisualView>) -> State
         this.move_to(target, false, cx);
         this.goal_x = goal;
     }))
-    .on_action(cx.listener(|this, _: &SelectUp, _, cx| {
-        let target = this.vertical(false);
-        let goal = this.goal_x;
-        this.move_to(target, true, cx);
-        this.goal_x = goal;
-    }))
-    .on_action(cx.listener(|this, _: &SelectDown, _, cx| {
-        let target = this.vertical(true);
-        let goal = this.goal_x;
-        this.move_to(target, true, cx);
-        this.goal_x = goal;
-    }))
+    .on_action(cx.listener(|this, _: &SelectUp, _, cx| this.extend(Step::Up, cx)))
+    .on_action(cx.listener(|this, _: &SelectDown, _, cx| this.extend(Step::Down, cx)))
     .on_action(cx.listener(|this, _: &Home, _, cx| {
         let target = this.edge(false);
         this.goal_x = None;
@@ -266,39 +242,27 @@ pub fn actions(view: Stateful<gpui::Div>, cx: &mut Context<VisualView>) -> State
         this.goal_x = None;
         this.move_to(target, false, cx);
     }))
-    .on_action(cx.listener(|this, _: &SelectHome, _, cx| {
-        let target = this.edge(false);
-        this.move_to(target, true, cx);
+    .on_action(cx.listener(|this, _: &SelectHome, _, cx| this.extend(Step::Home, cx)))
+    .on_action(cx.listener(|this, _: &SelectEnd, _, cx| this.extend(Step::End, cx)))
+    .on_action(cx.listener(|this, _: &SelectAll, _, cx| this.select_page(cx)))
+    .on_action(cx.listener(|this, _: &Copy, _, cx| this.copy(ids::EDIT_COPY_PLAIN, cx)))
+    .on_action(cx.listener(|this, _: &CopyAsPlain, window, cx| {
+        this.copy_as(ids::EDIT_COPY_PLAIN, window, cx);
     }))
-    .on_action(cx.listener(|this, _: &SelectEnd, _, cx| {
-        let target = this.edge(true);
-        this.move_to(target, true, cx);
+    .on_action(cx.listener(|this, _: &CopyAsAsciiDoc, window, cx| {
+        this.copy_as(ids::EDIT_COPY_ASCIIDOC, window, cx);
     }))
-    .on_action(cx.listener(|this, _: &SelectAll, _, cx| {
-        let blocks = this.text_blocks();
-        if let (Some(first), Some(last)) = (blocks.first(), blocks.last()) {
-            let selection = Selection {
-                anchor: first.2.range.start,
-                head: last.2.range.end,
-            };
-            this.set_selection(selection, cx);
-        }
+    .on_action(cx.listener(|this, _: &CopyAsMarkdown, window, cx| {
+        this.copy_as(ids::EDIT_COPY_MARKDOWN, window, cx);
     }))
-    .on_action(cx.listener(|this, _: &Copy, _, cx| {
-        if !this.selection.is_empty() {
-            cx.write_to_clipboard(ClipboardItem::new_string(this.selected_text()));
-        }
+    .on_action(cx.listener(|this, _: &CopyAsFormatted, window, cx| {
+        this.copy_as(ids::EDIT_COPY_FORMATTED, window, cx);
     }))
-    .on_action(cx.listener(|this, _: &Cut, window, cx| {
-        if !this.selection.is_empty() {
-            // Only what was cut goes to the clipboard: the engine may refuse the delete.
-            let text = this.selected_text();
-            if this.run(ids::VISUAL_DELETE_BACKWARD, VisualValue::None, window, cx) {
-                cx.write_to_clipboard(ClipboardItem::new_string(text));
-            }
-        }
-    }))
+    .on_action(cx.listener(|this, _: &Cut, window, cx| this.cut(window, cx)))
     .on_action(cx.listener(|this, _: &Paste, window, cx| {
+        if this.refuse_reading(window, cx) {
+            return;
+        }
         let Some(item) = cx.read_from_clipboard() else {
             return;
         };
@@ -316,6 +280,10 @@ impl VisualView {
     /// composition, and the caret's display offset in it. What suggestions would insert is
     /// left out: the page does not hold it, so an input method must never read or convert it.
     fn input_text(&self) -> Option<(text::Shown, usize)> {
+        // Nothing is typed over text that is not edited here.
+        if self.reading().is_some() {
+            return None;
+        }
         let (_, block) = self.block_at(self.selection.head)?;
         let display = block.display_offset(self.selection.head)?;
         let composing = self.composing.as_deref().map(|text| (display, text));
@@ -432,6 +400,9 @@ impl EntityInputHandler for VisualView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.refuse_reading(window, cx) {
+            return;
+        }
         if self.composing.take().is_none() {
             if let (Some(range), Some((shown, _))) = (range, self.input_text()) {
                 let start = shown.display(from_utf16(&shown.text, range.start));
@@ -448,9 +419,12 @@ impl EntityInputHandler for VisualView {
         range: Option<Range<usize>>,
         text: &str,
         _: Option<Range<usize>>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !text.is_empty() && self.refuse_reading(window, cx) {
+            return;
+        }
         if self.composing.is_none() {
             if let (Some(range), Some((shown, _))) = (range, self.input_text()) {
                 let start = shown.display(from_utf16(&shown.text, range.start));

@@ -434,6 +434,12 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::GIT_REVERT_HUNK => Box::new(RevertChange),
         ids::EDIT_FORMAT_TABLE => Box::new(FormatTable),
         ids::EDIT_TOGGLE_LINE_COMMENT => Box::new(ToggleLineComment),
+        ids::EDIT_COPY_PLAIN => Box::new(crate::copying::CopyAsPlain),
+        ids::EDIT_COPY_ASCIIDOC => Box::new(crate::copying::CopyAsAsciiDoc),
+        ids::EDIT_COPY_MARKDOWN => Box::new(crate::copying::CopyAsMarkdown),
+        ids::EDIT_COPY_FORMATTED if crate::rich_clipboard::AVAILABLE => {
+            Box::new(crate::copying::CopyAsFormatted)
+        }
         ids::GIT_NEXT_CHANGE => Box::new(NextChange),
         ids::GIT_PREVIOUS_CHANGE => Box::new(PreviousChange),
         ids::GIT_SHOW_CHANGES => Box::new(ShowChanges),
@@ -606,6 +612,7 @@ pub fn bind(engine: &Engine, cx: &mut App) {
     }
     cx.bind_keys(bindings);
     crate::visual::bind(cx);
+    crate::preview::bind(cx);
     crate::files_view::bind(cx);
     crate::image_view::bind(cx);
     crate::graph_view::bind(cx);

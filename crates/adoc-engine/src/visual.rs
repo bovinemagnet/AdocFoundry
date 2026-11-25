@@ -174,6 +174,19 @@ impl Engine {
         }
     }
 
+    /// Builds the visual model of `id` again if any change is not yet in it, so that its model
+    /// and its view tree are of the text as it is.
+    pub(crate) fn settle_visual(&mut self, id: DocumentId) {
+        let settled = self
+            .visual
+            .sessions
+            .get(&id)
+            .is_some_and(|session| !session.stale && session.due.is_none());
+        if !settled && self.visual.modes.contains_key(&id) {
+            self.build_visual(id);
+        }
+    }
+
     pub(crate) fn set_editor_mode(&mut self, id: DocumentId, mode: EditorMode) {
         if self.editor_mode(id) == mode {
             return;

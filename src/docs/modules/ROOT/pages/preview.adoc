@@ -155,6 +155,16 @@ Toggle Preview Scroll Sync (`view.toggle_scroll_sync`) turns both directions off
 Clicking a block in the preview places the caret at that block's source.
 When the content came from a partial, the partial opens in a tab at the right line, so you edit the file that holds the text.
 
+== Selecting and copying
+
+Text in the rendered preview can be selected by dragging, double-clicking (a word), triple-clicking and Shift-clicking, and copied with kbd:[Cmd+C] or kbd:[Ctrl+C].
+kbd:[Cmd+A] or kbd:[Ctrl+A] selects all of the page when the preview has focus.
+Right-clicking shows the same menu as the visual editor, with Cut and Paste disabled.
+What Copy and Copy As give is described in xref:visual-editing.adoc[Visual editing].
+A click on a block shows its source after about a third of a second, so that a double click can come first, and a drag does not.
+
+The PDF preview's pages are pictures, so their text cannot be selected.
+
 == Links
 
 Clicking a link in the preview does the following.
