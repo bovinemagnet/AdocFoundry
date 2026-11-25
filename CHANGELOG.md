@@ -21,6 +21,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 ### Fixed
 
 - Copying in the visual editor no longer leaves out read-only text without saying so, or copies text otherwise than it is shown (`[subs=none]`).
+- The Navigation panel follows a navigation file whenever its text changes (#795): on disk, as a page is added to it in the app, and as it is typed in, once typing pauses. It needed Re-index Workspace before.
 
 ## 0.14.0 — 2026-11-23
 

@@ -1070,3 +1070,238 @@ fn page_aliases_changed_on_disk_reach_the_catalog() {
         .any(|message| message.contains("former.adoc"))));
     no_whole_index(&events);
 }
+
+/// A component whose navigation lists `index.adoc`, with `guide.adoc` yet to be listed. Opened
+/// and settled on a clock of its own, so typing pauses only when the test says.
+struct Navigated {
+    _directory: tempfile::TempDir,
+    engine: Engine,
+    clock: adoc_engine::ManualClock,
+    events: std::sync::mpsc::Receiver<EngineEvent>,
+    nav: PathBuf,
+    guide: PathBuf,
+}
+
+const NAV: &str = "* xref:index.adoc[Home]\n";
+
+fn navigated() -> Navigated {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let module = root.join("modules/ROOT");
+    fs::create_dir_all(module.join("pages")).unwrap();
+    fs::write(
+        root.join("antora.yml"),
+        "name: demo\nversion: '1.0'\nnav:\n- modules/ROOT/nav.adoc\n",
+    )
+    .unwrap();
+    let nav = module.join("nav.adoc");
+    fs::write(&nav, NAV).unwrap();
+    fs::write(module.join("pages/index.adoc"), "= Index\n").unwrap();
+    let guide = module.join("pages/guide.adoc");
+    fs::write(&guide, "= Guide\n").unwrap();
+    let clock = adoc_engine::ManualClock::new();
+    let mut engine = Engine::with_clock(
+        Settings::load(None, None).unwrap().with_git_opt_in(),
+        std::sync::Arc::new(clock.clone()),
+    );
+    let events = engine.subscribe();
+    engine.open_workspace(vec![root]).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    settle(&mut engine);
+    let _ = events.try_iter().count();
+    Navigated {
+        _directory: directory,
+        engine,
+        clock,
+        events,
+        nav,
+        guide,
+    }
+}
+
+impl Navigated {
+    /// The titles in the component's navigation, in order.
+    fn titles(&self) -> Vec<String> {
+        self.engine
+            .nav_trees("demo", Some("1.0"))
+            .unwrap()
+            .iter()
+            .flat_map(|tree| tree.items.iter().map(|item| item.title.clone()))
+            .collect()
+    }
+
+    /// How often a navigation file was announced as changed since this was last asked, nothing
+    /// having indexed the whole workspace.
+    fn announced(&self) -> usize {
+        no_whole_index(&self.events)
+            .iter()
+            .filter(|event| matches!(event, EngineEvent::NavFilesChanged))
+            .count()
+    }
+
+    /// Pumps until a navigation file is announced as changed.
+    fn announces(&mut self) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            self.engine.pump();
+            if self.announced() > 0 {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        false
+    }
+
+    /// Opens the navigation file and forgets what that announced.
+    fn open_nav(&mut self) -> adoc_engine::DocumentId {
+        let id = self.engine.open(&self.nav.clone()).unwrap();
+        settle(&mut self.engine);
+        let _ = self.events.try_iter().count();
+        id
+    }
+}
+
+#[test]
+fn a_navigation_file_changed_on_disk_is_announced() {
+    let mut setup = navigated();
+    fs::write(&setup.nav, format!("{NAV}* xref:guide.adoc[Guide]\n")).unwrap();
+    assert!(setup.announces());
+    assert_eq!(setup.titles(), ["Home", "Guide"]);
+}
+
+#[test]
+fn an_open_navigation_file_changed_on_disk_is_announced() {
+    let mut setup = navigated();
+    setup.open_nav();
+    fs::write(&setup.nav, format!("{NAV}* xref:guide.adoc[Guide]\n")).unwrap();
+    assert!(setup.announces());
+    assert_eq!(setup.titles(), ["Home", "Guide"]);
+}
+
+#[test]
+fn a_navigation_file_gone_and_back_is_announced() {
+    let mut setup = navigated();
+    for step in ["removed", "made again"] {
+        if step == "removed" {
+            fs::remove_file(&setup.nav).unwrap();
+        } else {
+            fs::write(&setup.nav, NAV).unwrap();
+        }
+        assert!(setup.announces(), "{step}");
+    }
+    assert_eq!(setup.titles(), ["Home"]);
+}
+
+#[test]
+fn a_page_added_to_the_navigation_is_announced() {
+    let mut setup = navigated();
+    setup.engine.add_to_nav(&setup.guide.clone()).unwrap();
+    setup.engine.pump();
+    assert_eq!(setup.announced(), 1);
+    assert_eq!(setup.titles().len(), 2);
+    settle(&mut setup.engine);
+    assert_eq!(setup.announced(), 0, "once");
+}
+
+#[test]
+fn typing_in_a_navigation_file_is_announced_once_it_pauses() {
+    let mut setup = navigated();
+    let id = setup.open_nav();
+    for (at, letter) in "* More\n".char_indices() {
+        setup
+            .engine
+            .invoke(
+                adoc_engine::commands::ids::EDIT_INSERT_TEXT,
+                adoc_engine::CommandArgs::Text {
+                    id,
+                    range: adoc_core::SourceRange::new(NAV.len() + at, NAV.len() + at),
+                    text: letter.to_string(),
+                },
+            )
+            .unwrap();
+        setup.engine.pump();
+    }
+    assert_eq!(setup.announced(), 0, "still typing");
+
+    setup.clock.advance(adoc_engine::INDEX_SETTLE);
+    setup.engine.pump();
+    assert!(setup.engine.wait_for_workers(Duration::from_secs(10)));
+    setup.engine.pump();
+    assert_eq!(setup.announced(), 1);
+    assert_eq!(setup.titles(), ["Home", "More"]);
+}
+
+#[test]
+fn closing_a_navigation_file_unsaved_is_announced() {
+    let mut setup = navigated();
+    setup.engine.add_to_nav(&setup.guide.clone()).unwrap();
+    setup.engine.pump();
+    assert_eq!(setup.announced(), 1);
+    let id = setup.engine.document_for_path(&setup.nav).unwrap();
+    setup.engine.close(id).unwrap();
+    setup.engine.pump();
+    assert_eq!(setup.announced(), 1);
+    assert_eq!(setup.titles(), ["Home"]);
+}
+
+#[test]
+fn a_page_that_is_not_navigation_announces_none() {
+    let mut setup = navigated();
+    fs::write(&setup.guide, "= Guide\n\nMore.\n").unwrap();
+    let mut changed = false;
+    let mut announced = false;
+    assert!(pump_until(&mut setup.engine, |_| {
+        for event in no_whole_index(&setup.events) {
+            changed |= matches!(event, EngineEvent::DiagnosticsUpdated { .. });
+            announced |= matches!(event, EngineEvent::NavFilesChanged);
+        }
+        changed
+    }));
+    settle(&mut setup.engine);
+    assert!(!announced && setup.announced() == 0);
+}
+
+/// Navigation files that change together are announced together.
+#[test]
+fn navigation_files_changed_together_are_announced_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let navs: Vec<PathBuf> = ["ROOT", "guide"]
+        .iter()
+        .map(|module| root.join("modules").join(module).join("nav.adoc"))
+        .collect();
+    for nav in &navs {
+        fs::create_dir_all(nav.parent().unwrap()).unwrap();
+        fs::write(nav, "* Entry\n").unwrap();
+    }
+    fs::write(
+        root.join("antora.yml"),
+        "name: demo\nversion: '1.0'\nnav:\n- modules/ROOT/nav.adoc\n- modules/guide/nav.adoc\n",
+    )
+    .unwrap();
+    let mut engine = engine_without_user_settings();
+    let events = engine.subscribe();
+    engine.open_workspace(vec![root]).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let ids: Vec<_> = navs.iter().map(|nav| engine.open(nav).unwrap()).collect();
+    settle(&mut engine);
+    let _ = events.try_iter().count();
+    for id in ids {
+        engine
+            .invoke(
+                adoc_engine::commands::ids::EDIT_REPLACE_RANGE,
+                adoc_engine::CommandArgs::Text {
+                    id,
+                    range: adoc_core::SourceRange::new(0, 0),
+                    text: "* Another entry, long enough to be indexed at once\n".to_owned(),
+                },
+            )
+            .unwrap();
+    }
+    engine.pump();
+    let announced = events
+        .try_iter()
+        .filter(|event| matches!(event, EngineEvent::NavFilesChanged))
+        .count();
+    assert_eq!(announced, 1);
+}

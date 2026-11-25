@@ -900,6 +900,7 @@ impl WorkspaceView {
                 self.show_playbook_notice(window, cx);
             }
             EngineEvent::CatalogChanged { .. } => self.rebuild_catalog_trees(cx),
+            EngineEvent::NavFilesChanged => self.rebuild_tree(SidebarPanel::Navigation, cx),
             EngineEvent::ProblemsChanged => self.show_problems(cx),
             EngineEvent::AuditChanged => self.show_quality(cx),
             EngineEvent::NavigationChanged => self.follow_active(window, cx),
@@ -1233,25 +1234,29 @@ impl WorkspaceView {
     }
 
     fn rebuild_catalog_trees(&mut self, cx: &mut Context<Self>) {
-        let (navigation, families) = {
-            let engine = &self.app.read(cx).engine;
-            (sidebar::navigation(engine), sidebar::families(engine))
+        self.rebuild_tree(SidebarPanel::Navigation, cx);
+        self.rebuild_tree(SidebarPanel::Modules, cx);
+    }
+
+    /// Reads a panel's tree again, its branches open or closed as they were.
+    fn rebuild_tree(&mut self, panel: SidebarPanel, cx: &mut Context<Self>) {
+        let engine = &self.app.read(cx).engine;
+        let nodes = match panel {
+            SidebarPanel::Navigation => sidebar::navigation(engine),
+            SidebarPanel::Modules => sidebar::families(engine),
         };
         self.app.update(cx, |app, _| {
             app.engine
-                .resolve_expansion(SidebarPanel::Navigation, &sidebar::branches(&navigation));
-            app.engine
-                .resolve_expansion(SidebarPanel::Modules, &sidebar::branches(&families));
+                .resolve_expansion(panel, &sidebar::branches(&nodes));
         });
-        self.nav_nodes = navigation;
-        self.family_nodes = families;
-        self.show_tree(SidebarPanel::Navigation, cx);
-        self.show_tree(SidebarPanel::Modules, cx);
-        for panel in [SidebarPanel::Navigation, SidebarPanel::Modules] {
-            if let Some(file) = self.pending_follow(panel).clone() {
-                if self.reveal_in_tree(panel, &file, cx) {
-                    *self.pending_follow(panel) = None;
-                }
+        match panel {
+            SidebarPanel::Navigation => self.nav_nodes = nodes,
+            SidebarPanel::Modules => self.family_nodes = nodes,
+        }
+        self.show_tree(panel, cx);
+        if let Some(file) = self.pending_follow(panel).clone() {
+            if self.reveal_in_tree(panel, &file, cx) {
+                *self.pending_follow(panel) = None;
             }
         }
     }

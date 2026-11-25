@@ -823,9 +823,10 @@ impl Engine {
 
     // --- keeping the graph current -----------------------------------------------------------
 
-    /// The index entry of `path` was replaced, added or removed: its links are resolved again
-    /// at the next pump.
+    /// The index entry of `path` was replaced, added or removed: at the next pump its links are
+    /// resolved again, and a navigation file's change is announced.
     pub(crate) fn graph_file_changed(&mut self, path: &Path) {
+        self.nav_files_changed |= self.workspace.antora.is_nav_file(path);
         self.graph.dirty.insert(normalize_path(path));
     }
 

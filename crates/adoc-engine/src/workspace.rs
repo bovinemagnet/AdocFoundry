@@ -552,6 +552,7 @@ impl Engine {
             self.due_problems(),
             self.due_audit(),
             self.due_graph(),
+            self.nav_files_changed.then(|| self.clock.now()),
             self.comments_due(),
             self.due_collaboration(),
         ]
@@ -620,8 +621,18 @@ impl Engine {
             + self.update_due_problems()
             + self.update_due_audit()
             + self.update_due_graph()
+            + self.announce_nav_files()
             + self.update_due_comments()
             + self.pump_collaboration()
+    }
+
+    /// Announces the navigation files changed since the last pump, once for them all.
+    fn announce_nav_files(&mut self) -> usize {
+        if !std::mem::take(&mut self.nav_files_changed) {
+            return 0;
+        }
+        self.emit(EngineEvent::NavFilesChanged);
+        1
     }
 
     /// When the collaboration session next needs a pump: at once while events wait or local

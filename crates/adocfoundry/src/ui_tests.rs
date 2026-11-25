@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use adoc_core::SourceRange;
-use adoc_engine::{commands::ids, CommandArgs, Engine, Settings, TabItem};
+use adoc_engine::{commands::ids, CommandArgs, Engine, EngineEvent, Settings, TabItem};
 use gpui::{px, size, AppContext as _, Entity, TestAppContext, VisualTestContext, WindowHandle};
 use gpui_component::Root;
 
@@ -5221,6 +5221,120 @@ fn a_collapsed_branch_survives_a_rebuild(cx: &mut TestAppContext) {
     assert!(
         rows.contains(&"  Home +".to_owned()),
         "2.0's Home is its own: {rows:#?}"
+    );
+}
+
+/// Drains until the engine has had nothing to do for 400 ms, so that what the watcher saw of the
+/// test's own setup is applied, then gives what the engine announces from here on.
+fn quiet_events(
+    app: &Entity<AppState>,
+    cx: &mut VisualTestContext,
+) -> std::sync::mpsc::Receiver<EngineEvent> {
+    let mut quiet = std::time::Instant::now();
+    assert!(drain_until(app, cx, |cx| {
+        if cx.update(|_, cx| app.read(cx).engine.has_pending()) {
+            quiet = std::time::Instant::now();
+        }
+        quiet.elapsed() > std::time::Duration::from_millis(400)
+    }));
+    cx.update(|_, cx| app.update(cx, |app, _| app.engine.subscribe()))
+}
+
+/// Navigation follows a navigation file as it changes, with no whole index and no page added
+/// (#795): on disk, closed and open, as a page is added to it, and as it is typed in. Branches
+/// stay as they were left.
+#[gpui::test]
+fn navigation_follows_its_files(cx: &mut TestAppContext) {
+    use adoc_engine::SidebarPanel::Navigation;
+    let (directory, app, workspace, mut cx) = expansion_workspace(Settings::default(), cx);
+    let module = adoc_index::normalize_path(directory.path()).join("guide-2.0/modules/ROOT");
+    let nav = module.join("nav.adoc");
+    // Row 1 is version 2.0's Home, closed here.
+    click("nav-row-1", &mut cx);
+    let events = quiet_events(&app, &mut cx);
+    let mut want = [
+        "Guide 2.0 +",
+        "  Home -",
+        "  FAQ",
+        "Guide 1.0 +",
+        "  Home +",
+        "    Install -",
+        "    Install",
+        "  FAQ",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    assert_eq!(rows(&workspace, Navigation, &mut cx), want);
+
+    // Closed, changed on disk.
+    let text = std::fs::read_to_string(&nav).unwrap();
+    let text = format!("{}\n* xref:linux.adoc[On disk]\n", text.trim_end());
+    std::fs::write(&nav, &text).unwrap();
+    want.insert(3, "  On disk".to_owned());
+    drain_until(&app, &mut cx, |cx| rows(&workspace, Navigation, cx) == want);
+    assert_eq!(rows(&workspace, Navigation, &mut cx), want, "closed");
+
+    // Open with no unsaved edits, changed on disk.
+    open_path(
+        &workspace,
+        &nav,
+        adoc_engine::OpenDisposition::Persistent,
+        &mut cx,
+    );
+    let _ = quiet_events(&app, &mut cx);
+    std::fs::write(&nav, format!("{text}* xref:linux.adoc[Open]\n")).unwrap();
+    want.insert(4, "  Open".to_owned());
+    drain_until(&app, &mut cx, |cx| rows(&workspace, Navigation, cx) == want);
+    assert_eq!(rows(&workspace, Navigation, &mut cx), want, "open");
+
+    // Typed in.
+    let (id, end) = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        let id = engine.document_for_path(&nav).unwrap();
+        (id, engine.document(id).unwrap().text.len())
+    });
+    for (at, letter) in "* Typed\n".char_indices() {
+        cx.update(|_, cx| {
+            app.update(cx, |app, cx| {
+                app.invoke(
+                    ids::EDIT_INSERT_TEXT,
+                    CommandArgs::Text {
+                        id,
+                        range: adoc_core::SourceRange::new(end + at, end + at),
+                        text: letter.to_string(),
+                    },
+                    cx,
+                )
+                .unwrap()
+            })
+        });
+    }
+    want.insert(5, "  Typed".to_owned());
+    drain_until(&app, &mut cx, |cx| rows(&workspace, Navigation, cx) == want);
+    assert_eq!(rows(&workspace, Navigation, &mut cx), want, "typed");
+
+    // A page that is there already, added to the navigation.
+    let page = module.join("pages/unlisted.adoc");
+    std::fs::write(&page, "= Unlisted\n").unwrap();
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| app.read(cx).engine.can_add_to_nav(&page))
+    }));
+    let _ = quiet_events(&app, &mut cx);
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.engine.add_to_nav(&page).unwrap();
+            cx.notify();
+        })
+    });
+    want.insert(6, "  unlisted.adoc".to_owned());
+    drain_until(&app, &mut cx, |cx| rows(&workspace, Navigation, cx) == want);
+    assert_eq!(rows(&workspace, Navigation, &mut cx), want, "added");
+
+    assert!(
+        !events
+            .try_iter()
+            .any(|event| matches!(event, EngineEvent::WorkspaceIndexed { .. })),
+        "the whole workspace was indexed again"
     );
 }
 

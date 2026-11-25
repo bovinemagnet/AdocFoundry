@@ -436,6 +436,9 @@ The engine publishes `EngineEvent` values to subscribers through `std::sync::mps
 |`CatalogChanged`
 |An `antora.yml` was reloaded.
 
+|`NavFilesChanged`
+|The text of a navigation file changed; the Navigation tree is built again.
+
 |`NavigationChanged`
 |The active document or back and forward availability changed.
 
@@ -1518,6 +1521,7 @@ A rename is a removal and a creation.
 When the catalog changed, the engine emits `CatalogChanged` with the component's `antora.yml` path, which rebuilds the Modules panel, and it re-renders the previews, marks the visual models stale and diagnoses the open pages again.
 An open page keeps its index entry and catalog entry while its buffer is open.
 The open pages are diagnosed again once, after all of them, not once per file.
+Wherever the index changes a navigation file's entry (`graph_file_changed`), whether from disk, an edit in the app or typing once it pauses, the next `pump` emits `NavFilesChanged` once for all that changed (`announce_nav_files`), so the Navigation panel follows its navigation files without a new index.
 
 When more than `FILE_BURST` (50) pages that are not open change at once, as on a branch switch or a pull, they are not read one by one.
 The workspace is indexed again on a worker, as for a changed folder, and the open pages are diagnosed when that finishes.
