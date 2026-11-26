@@ -9,6 +9,10 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 - Attribute values beside their references (#87). With `[editor] attribute_values = true` (Settings › Editor › Attribute values), the source editor shows, faded, at the end of each line, the value of every attribute reference on it (`product = AdocFoundry`), resolved as hover resolves it: the playbook's, `antora.yml`'s and the page's own declarations, in order. Nothing is shown for an attribute that is unset, never set or set empty, for built-ins such as `{nbsp}`, or where Asciidoctor replaces nothing: escaped references, passthroughs, comments, and listing, literal and source blocks. Values follow typing once it pauses, and only the lines in view are worked out.
 - Authoring profiles (#102). `[authoring.profiles.<name>]` in the workspace's or the user's settings names a set of attributes (`attributes = { cloud = true, edition = "Cloud" }`), and View › Select Authoring Profile… reads pages with one: the preview, the PDF preview and the visual editor show the conditional content and values it gives, and every export from the app writes the same, without editing any file. The status bar says `Profile: cloud` while one is chosen, and a click on it changes it. `adocfoundry-cli render`, `pdf`, `docx`, `kindle`, `epub` and `docbook` take `--authoring <profile>`. Not yet: hover, diagnostics and Inspect Attribute give the pages' own values, and content a profile leaves out is not shown faded in the source editor.
 
+### Changed
+
+- **`adocfoundry-cli check --format json` prints an object, not an array** (#807), so build tools can rely on its shape across versions: `schema_version` (1), `tool` (the CLI's name and version), `root` (the workspace root as an absolute path), `summary` (how many errors, warnings and information notes) and `diagnostics`, which holds the entries the array held, unchanged. A field added keeps `schema_version`; a field removed or changed raises it. A script that read the array reads `.diagnostics` now; nothing gives the bare array any more. The exit codes are as they were.
+
 ## 0.15.0 — 2026-11-25
 
 ### Added
