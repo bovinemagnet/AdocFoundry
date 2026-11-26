@@ -2883,3 +2883,273 @@ fn line_of(output: &Output, start: &str) -> String {
         .unwrap_or_default()
         .to_owned()
 }
+
+/// An export's `--format json` object (#808), with what differs between machines and releases
+/// put in brackets once checked: the CLI's version, and every path beneath `places`, each
+/// `(path, name)`, as `[name]`, its separators `/`. Standard output holds the object alone.
+fn export_json_of(output: &Output, places: &[(&Path, &str)]) -> String {
+    fn redact(value: &mut serde_json::Value, places: &[(String, &str)]) {
+        match value {
+            serde_json::Value::String(text) => {
+                // Anywhere in the text, as a message names files too.
+                if let Some((place, name)) = places
+                    .iter()
+                    .find(|(place, _)| text.contains(place.as_str()))
+                {
+                    *text = text
+                        .replace(place.as_str(), &format!("[{name}]"))
+                        .replace('\\', "/");
+                }
+            }
+            serde_json::Value::Array(items) => {
+                items.iter_mut().for_each(|item| redact(item, places));
+            }
+            serde_json::Value::Object(fields) => {
+                fields.values_mut().for_each(|item| redact(item, places));
+            }
+            _ => {}
+        }
+    }
+    let mut json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+            panic!(
+                "{error}: {}\n{}",
+                stdout(output),
+                String::from_utf8_lossy(&output.stderr)
+            )
+        });
+    assert_eq!(json["tool"]["name"], "adocfoundry-cli");
+    assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
+    json["tool"]["version"] = "[version]".into();
+    assert!(Path::new(json["root"].as_str().unwrap()).is_absolute());
+    for written in json["outputs"].as_array().unwrap() {
+        let path = Path::new(written["path"].as_str().unwrap());
+        assert!(path.is_absolute(), "{path:?}");
+        match written["kind"].as_str().unwrap() {
+            "file" => assert!(path.is_file(), "{path:?}"),
+            "folder" => assert!(path.is_dir(), "{path:?}"),
+            other => panic!("kind {other}"),
+        }
+    }
+    // Each place as written and as the system resolves it (macOS's temporary folder is a link
+    // to `/private/var`), the longest first, so a place inside another is found first.
+    let mut places: Vec<(String, &str)> = places
+        .iter()
+        .flat_map(|(path, name)| {
+            [
+                std::path::absolute(path).unwrap(),
+                std::fs::canonicalize(path).unwrap(),
+            ]
+            .map(|path| (path.to_str().unwrap().to_owned(), *name))
+        })
+        .collect();
+    places.sort_by_key(|(place, _)| std::cmp::Reverse(place.len()));
+    redact(&mut json, &places);
+    serde_json::to_string_pretty(&json).unwrap()
+}
+
+/// `pdf --format json`: one object naming the file written, its pages and sources, the look
+/// and what chose it, and the outcome; the text lines are not printed (#808).
+#[test]
+fn export_json_pdf_article() {
+    let directory = tempfile::tempdir().unwrap();
+    let pdf = directory.path().join("article.pdf");
+    let output = cli(&[
+        "pdf",
+        "tests/fixtures/pdf/reference/article.adoc",
+        "--output",
+        pdf.to_str().unwrap(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let root = repository_root().join("tests/fixtures/pdf/reference");
+    insta::assert_snapshot!(export_json_of(
+        &output,
+        &[(&root, "root"), (directory.path(), "tmp")]
+    ));
+}
+
+/// A component version's book: its sources in the navigation's order, and a diagnostic with
+/// its page and line.
+#[test]
+fn export_json_pdf_component_book() {
+    let directory = tempfile::tempdir().unwrap();
+    let book = directory.path().join("book");
+    copy_tree(&repository_root().join("tests/fixtures/pdf/book"), &book);
+    let output = cli_env(
+        directory.path(),
+        &["pdf", "book/guide", "--format", "json"],
+        &[],
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    insta::assert_snapshot!(export_json_of(
+        &output,
+        &[(&book, "root"), (directory.path(), "tmp")]
+    ));
+}
+
+/// A read-only page to PDF is refused: the object says so and why, names nothing written,
+/// and the command exits with 1 as it does in text.
+#[test]
+fn export_json_refusal() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("ws");
+    let pages = root.join("docs/modules/ROOT/pages");
+    std::fs::create_dir_all(&pages).unwrap();
+    std::fs::write(root.join("docs/antora.yml"), "name: docs\nversion: '1.0'\n").unwrap();
+    std::fs::write(
+        pages.join("a.adoc"),
+        "= A\n:export-read-only: true\n\nText.\n",
+    )
+    .unwrap();
+    let output = cli_env(
+        &root,
+        &[
+            "pdf",
+            "docs/modules/ROOT/pages/a.adoc",
+            "--output",
+            "a.pdf",
+            "--format",
+            "json",
+        ],
+        &[],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(!root.join("a.pdf").exists());
+    insta::assert_snapshot!(export_json_of(
+        &output,
+        &[(&root, "root"), (directory.path(), "tmp")]
+    ));
+}
+
+/// DocBook names the document and the folder of pictures beside it as outputs.
+#[test]
+fn export_json_docbook_with_assets() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("reference");
+    copy_tree(
+        &repository_root().join("tests/fixtures/docx/reference"),
+        &root,
+    );
+    let output = cli_env(
+        &root,
+        &[
+            "docbook",
+            "manual/modules/ROOT/pages/media.adoc",
+            "--format",
+            "json",
+        ],
+        &[],
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    insta::assert_snapshot!(export_json_of(
+        &output,
+        &[(&root, "root"), (directory.path(), "tmp")]
+    ));
+}
+
+/// Word, EPUB and Kindle print the object too; Kindle's `--format` takes the book's format and
+/// the report's side by side, in either order, and `--fail-on` fails a written export.
+#[test]
+fn export_json_every_format() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("reference");
+    copy_tree(
+        &repository_root().join("tests/fixtures/docx/reference"),
+        &root,
+    );
+    let page = "manual/modules/ROOT/pages/media.adoc";
+    let json = |arguments: &[&str]| {
+        let output = cli_env(&root, arguments, &[]);
+        let json: serde_json::Value =
+            serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+                panic!(
+                    "{arguments:?}: {error}: {}\n{}",
+                    stdout(&output),
+                    String::from_utf8_lossy(&output.stderr)
+                )
+            });
+        (output.status.code(), json)
+    };
+    for (arguments, format, extension) in [
+        (vec!["docx", page, "--format", "json"], "docx", "docx"),
+        (vec!["epub", page, "--format", "json"], "epub", "epub"),
+        (
+            vec!["kindle", page, "--format", "json", "--format", "kfx"],
+            "kfx",
+            "kfx",
+        ),
+        (
+            vec!["kindle", page, "--format", "azw3", "--format", "json"],
+            "azw3",
+            "azw3",
+        ),
+    ] {
+        let (code, json) = json(&arguments);
+        assert_eq!(code, Some(0), "{arguments:?}: {json}");
+        assert_eq!(json["format"], format, "{json}");
+        assert_eq!(json["outcome"], "written", "{json}");
+        let written = json["outputs"][0]["path"].as_str().unwrap();
+        assert!(
+            written.ends_with(&format!("media.{extension}")),
+            "{written}"
+        );
+        assert_eq!(json["sources"][0], page, "{json}");
+    }
+    // Word names its look.
+    let (_, word) = json(&["docx", page, "--format", "json", "--no-theme"]);
+    assert_eq!(word["look"]["kind"], "none", "{word}");
+    // Two report formats, or two book formats, are refused.
+    for arguments in [
+        vec!["kindle", page, "--format", "json", "--format", "text"],
+        vec!["kindle", page, "--format", "kfx", "--format", "azw3"],
+        vec!["pdf", page, "--format", "yaml"],
+    ] {
+        let output = cli_env(&root, &arguments, &[]);
+        assert_eq!(output.status.code(), Some(2), "{arguments:?}");
+    }
+    // `--fail-on`: written, and failed.
+    std::fs::write(
+        root.join("manual/modules/ROOT/pages/broken.adoc"),
+        "= Broken\n\nSee xref:missing.adoc[nowhere].\n",
+    )
+    .unwrap();
+    let (code, broken) = json(&[
+        "epub",
+        "manual/modules/ROOT/pages/broken.adoc",
+        "--format",
+        "json",
+        "--fail-on",
+        "warning",
+    ]);
+    assert_eq!(code, Some(1), "{broken}");
+    assert_eq!(broken["outcome"], "written", "{broken}");
+    let warning = &broken["diagnostics"][0];
+    assert_eq!(warning["severity"], "warning", "{broken}");
+    assert_eq!(
+        warning["path"], "manual/modules/ROOT/pages/broken.adoc",
+        "{broken}"
+    );
+    assert_eq!(warning["line"], 3, "{broken}");
+    // `--format text` is the default.
+    let text = cli_env(&root, &["epub", page, "--format", "text"], &[]);
+    let default = cli_env(&root, &["epub", page], &[]);
+    assert_eq!(text.status.code(), Some(0));
+    assert_eq!(stdout(&text), stdout(&default));
+}
