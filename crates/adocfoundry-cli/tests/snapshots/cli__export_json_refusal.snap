@@ -1,0 +1,21 @@
+---
+source: crates/adocfoundry-cli/tests/cli.rs
+assertion_line: 3029
+expression: "export_json_of(&output, &[(&root, \"root\"), (directory.path(), \"tmp\")])"
+---
+{
+  "schema_version": 1,
+  "tool": {
+    "name": "adocfoundry-cli",
+    "version": "[version]"
+  },
+  "format": "pdf",
+  "root": "[root]",
+  "outcome": "refused",
+  "outputs": [],
+  "pages": 0,
+  "sources": [],
+  "protected": false,
+  "diagnostics": [],
+  "error": "the pages ask for a read-only export (`:export-read-only:` at [root]/docs/modules/ROOT/pages/a.adoc:2), which a PDF export cannot carry yet; nothing was written"
+}

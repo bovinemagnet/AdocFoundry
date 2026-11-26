@@ -1,0 +1,38 @@
+---
+source: crates/adocfoundry-cli/tests/cli.rs
+assertion_line: 3060
+expression: "export_json_of(&output, &[(&root, \"root\"), (directory.path(), \"tmp\")])"
+---
+{
+  "schema_version": 1,
+  "tool": {
+    "name": "adocfoundry-cli",
+    "version": "[version]"
+  },
+  "format": "docbook",
+  "root": "[root]",
+  "outcome": "written",
+  "outputs": [
+    {
+      "path": "[root]/manual/modules/ROOT/pages/media.xml",
+      "kind": "file"
+    },
+    {
+      "path": "[root]/manual/modules/ROOT/pages/media_assets",
+      "kind": "folder"
+    }
+  ],
+  "pages": 1,
+  "sources": [
+    "manual/modules/ROOT/pages/media.adoc"
+  ],
+  "protected": false,
+  "diagnostics": [
+    {
+      "severity": "warning",
+      "message": "2 formulas are written as their source and, where drawn, a picture, not as MathML",
+      "path": "manual/modules/ROOT/pages/media.adoc",
+      "line": 1
+    }
+  ]
+}

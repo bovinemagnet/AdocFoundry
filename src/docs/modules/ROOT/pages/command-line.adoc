@@ -19,27 +19,29 @@ adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--link-imag
 adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
     [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
     [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
-    [--fail-on none|warning|error]
+    [--fail-on none|warning|error] [--format text|json]
 adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
-    [--fail-on none|warning|error]
+    [--fail-on none|warning|error] [--format text|json]
 adocfoundry-cli docx <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
     [--theme <name|file.yml> | --template <name|file.dotx> | --no-theme]
-    [--output <file.docx>] [--fail-on none|warning|error]
+    [--output <file.docx>] [--fail-on none|warning|error] [--format text|json]
 adocfoundry-cli docx --profile <name> [<root>]
     [--theme <name|file.yml> | --template <name|file.dotx> | --no-theme]
-    [--output <file.docx>] [--fail-on none|warning|error]
+    [--output <file.docx>] [--fail-on none|warning|error] [--format text|json]
 adocfoundry-cli kindle <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
     [--format azw3|kfx] [--output <file.azw3|file.kfx>] [--fail-on none|warning|error]
+    [--format text|json]
 adocfoundry-cli kindle --profile <name> [<root>] [--format azw3|kfx]
-    [--output <file.azw3|file.kfx>] [--fail-on none|warning|error]
+    [--output <file.azw3|file.kfx>] [--fail-on none|warning|error] [--format text|json]
 adocfoundry-cli epub <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
-    [--output <file.epub>] [--fail-on none|warning|error]
+    [--output <file.epub>] [--fail-on none|warning|error] [--format text|json]
 adocfoundry-cli epub --profile <name> [<root>] [--output <file.epub>]
-    [--fail-on none|warning|error]
+    [--fail-on none|warning|error] [--format text|json]
 adocfoundry-cli docbook <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
     [--output <file.xml>] [--assets copy|reference] [--fail-on none|warning|error]
+    [--format text|json]
 adocfoundry-cli docbook --profile <name> [<root>] [--output <file.xml>]
-    [--assets copy|reference] [--fail-on none|warning|error]
+    [--assets copy|reference] [--fail-on none|warning|error] [--format text|json]
 adocfoundry-cli git-status <root> [--format text|json]
 adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--format json|dot|svg]
     [--no-partials] [--no-nav] [--unresolved] [--ages] [--dark]
@@ -523,6 +525,9 @@ Without a version, `--component` uses the latest version of the component.
 |`--authoring <profile>`
 |Read the pages with the attributes of `[authoring.profiles.<profile>]`, as xref:preview.adoc#authoring-profiles[Authoring profiles] describes. It works with `--profile` as well as without. An unknown name is an error.
 
+|`--format text\|json`
+|`text`, the default, prints what is described below. `json` prints one JSON object instead; see <<export-json>>.
+
 |`--fail-on none\|warning\|error`
 |Exit with 1 when the export reports a diagnostic at least this severe, so CI can refuse a PDF with, for example, a diagram left as its source. The PDF is written all the same. The default, `none`, never fails for a diagnostic. An information note never fails an export, whatever the threshold.
 |===
@@ -633,6 +638,9 @@ Without a version, `--component` uses the latest version of the component.
 |`--authoring <profile>`
 |Read the pages with the attributes of `[authoring.profiles.<profile>]`, as xref:preview.adoc#authoring-profiles[Authoring profiles] describes. It works with `--profile` as well as without. An unknown name is an error.
 
+|`--format text\|json`
+|`text`, the default, prints what is described below. `json` prints one JSON object instead; see <<export-json>>.
+
 |`--fail-on none\|warning\|error`
 |Exit with 1 when the export reports a diagnostic at least this severe, so CI can refuse a document with, for example, a diagram left as its source. The document is written all the same. The default, `none`, never fails for a diagnostic. An information note never fails an export, whatever the threshold.
 |===
@@ -675,6 +683,8 @@ adocfoundry-cli kindle --profile admin-guide .
 Targets are chosen as `docx` chooses them.
 The format comes from `--format`, else the output's extension, else `[kindle] format`, which is AZW3 by default.
 A format and an output that disagree are refused.
+`--format` is taken twice, once for the book's format (`azw3` or `kfx`) and once for the report (`text` or `json`, see <<export-json>>), in either order, as in `kindle docs --format kfx --format json`.
+Each may be given only once.
 A file argument exports that page as an article, and by default the book is written beside the page.
 A directory that holds an `antora.yml`, or `--component`, exports the component version as a book in navigation order, by default in the current directory and named after the component.
 
@@ -692,13 +702,16 @@ A directory that holds an `antora.yml`, or `--component`, exports the component 
 |Export the Kindle profile `[kindle.profiles.<name>]` from the settings. The workspace root is the argument, `--root <dir>`, or else the current directory. `--format` and `--output` win over the profile's.
 
 |`--format azw3\|kfx`
-|The format to write.
+|The book's format to write.
 
 |`--output <file.azw3\|file.kfx>`
 |Where to write the book. Its extension must be the format's; any other output is refused.
 
 |`--authoring <profile>`
 |Read the pages with the attributes of `[authoring.profiles.<profile>]`, as xref:preview.adoc#authoring-profiles[Authoring profiles] describes. It works with `--profile` as well as without. An unknown name is an error.
+
+|`--format text\|json`
+|The second `--format`, which chooses the report: `text`, the default, or `json`; see <<export-json>>. It may be given together with the book's `--format`, in either order.
 
 |`--fail-on none\|warning\|error`
 |Exit with 1 when the export reports a diagnostic at least this severe. The book is written all the same. The default, `none`, never fails for a diagnostic. An information note never fails an export, whatever the threshold.
@@ -747,6 +760,9 @@ A directory that holds an `antora.yml`, or `--component`, exports the component 
 
 |`--authoring <profile>`
 |Read the pages with the attributes of `[authoring.profiles.<profile>]`, as xref:preview.adoc#authoring-profiles[Authoring profiles] describes. It works with `--profile` as well as without. An unknown name is an error.
+
+|`--format text\|json`
+|`text`, the default, prints what is described below. `json` prints one JSON object instead; see <<export-json>>.
 
 |`--fail-on none\|warning\|error`
 |Exit with 1 when the export reports a diagnostic at least this severe. The book is written all the same. The default, `none`, never fails for a diagnostic. An information note never fails an export, whatever the threshold.
@@ -807,6 +823,9 @@ A directory that holds an `antora.yml`, or `--component`, exports the component 
 |`--authoring <profile>`
 |Read the pages with the attributes of `[authoring.profiles.<profile>]`, as xref:preview.adoc#authoring-profiles[Authoring profiles] describes. It works with `--profile` as well as without. An unknown name is an error.
 
+|`--format text\|json`
+|`text`, the default, prints what is described below. `json` prints one JSON object instead; see <<export-json>>.
+
 |`--fail-on none\|warning\|error`
 |Exit with 1 when the export reports a diagnostic at least this severe. The document is written all the same. The default, `none`, never fails for a diagnostic.
 |===
@@ -816,6 +835,76 @@ Warnings print on standard error as `path:line: warning: message`.
 An export that fails always exits with 1, a warning fails only under `--fail-on warning`, and a usage error exits with 2.
 A page that asks for a read-only export (`:export-read-only:`) is refused, since DocBook carries no restriction; the command exits with 1 and writes nothing.
 See xref:read-only-exports.adoc[Read-only exports].
+
+[#export-json]
+== Export reports in JSON
+
+`pdf`, `docx`, `kindle`, `epub` and `docbook` take `--format text|json`.
+`text` is the default and prints what it always did.
+With `json`, standard output holds one JSON object and nothing else.
+The diagnostics are in the object, not on standard error.
+The one exception is the information note about user settings that `pdf` can print, which still goes to standard error; see <<user-settings-note>>.
+
+[source,sh]
+----
+adocfoundry-cli pdf docs --component guide --output guide.pdf --format json
+adocfoundry-cli kindle docs --format kfx --format json
+----
+
+This is the report of a PDF export of a component book.
+
+[source,json]
+----
+{
+  "schema_version": 1,
+  "tool": { "name": "adocfoundry-cli", "version": "0.16.0" },
+  "format": "pdf",
+  "root": "/home/me/docs",
+  "outcome": "written",
+  "outputs": [ { "path": "/home/me/guide.pdf", "kind": "file" } ],
+  "pages": 11,
+  "sources": [ "guide/modules/ROOT/pages/index.adoc", "guide/modules/ROOT/pages/install.adoc" ],
+  "protected": false,
+  "theme": { "name": "default", "file": null, "chosen_by": null },
+  "fonts": { "folders": [], "chosen_by": null },
+  "diagnostics": [
+    { "severity": "warning", "message": "the cross reference missing.adoc leads to nothing", "path": "guide/modules/ROOT/pages/use.adoc", "line": 3 }
+  ]
+}
+----
+
+`schema_version`:: The version of this shape.
+A field added keeps the version.
+A field removed, renamed or given another meaning raises it.
+`tool`:: The name of the program and its version.
+`format`:: What was written: `pdf`, `docx`, `epub`, `azw3`, `kfx` or `docbook`.
+`root`:: The workspace root, as an absolute path.
+`outcome`:: `written`; `refused`, when the pages ask for a read-only export (`:export-read-only:`) that the format cannot carry, see xref:read-only-exports.adoc[Read-only exports]; or `failed`, for anything else that stopped the export.
+`outputs`:: Every file and folder written, each with an absolute `path` and a `kind` of `file` or `folder`.
+An output need not be inside the workspace.
+`docbook` lists its pictures folder (`<name>_assets`) as a `folder` when it wrote one.
+The list is empty when nothing was written.
+`pages`:: For a PDF, the PDF's own pages.
+For the other formats, the AsciiDoc pages exported, as the text output counts them.
+`sources`:: The AsciiDoc pages exported, in order, relative to `root` and written with `/`.
+`protected`:: Whether the output carries a read-only restriction that the pages asked for.
+`look`:: Word only.
+Its `kind` is `pdf-theme`, `template` or `none`, and it has a `name` and a `path`, either of which may be null.
+`theme` and `fonts`:: PDF only.
+`theme` gives the theme's `name`, its `file` (null for a bundled theme) and `chosen_by`.
+`fonts` gives the `folders` searched before the bundled fonts and `chosen_by`.
+`chosen_by` uses the words the text output gives after "from", such as `--theme`, `pdf-theme in guide/antora.yml` or `[pdf] theme in .adocfoundry.toml`, and is null for the default.
+See <<pdf>> for the `theme:` and `fonts:` lines.
+`diagnostics`:: The export's diagnostics.
+Each has a `severity` (`error`, `warning` or `info`) and a `message`, and a `path` (relative to `root`) and a one-based `line`, both null when the diagnostic has no place.
+A diagnostic has no code, since export diagnostics have none yet.
+`error`:: Present only when `outcome` is `failed` or `refused`: why nothing was written.
+
+The exit codes are those of the text format.
+0 means the output was written.
+1 means the export failed or was refused, or `--fail-on` met a diagnostic.
+The object is printed in all of those cases, so `outcome` can be `written` with an exit code of 1 under `--fail-on`.
+2 means a usage error or a timeout (see <<timeout>>), and no object is printed, as with `check`.
 
 [[git-status]]
 == git-status
@@ -1349,6 +1438,8 @@ See xref:using-the-editor.adoc#reporting-a-problem[Reporting a problem].
 
 Strict mode (`--require-complete`) is recommended in CI, so that a partial audit fails instead of passing.
 SARIF locations are relative to the audited root, so for code scanning audit from the repository root, to match the repository's paths.
+
+A build task can read `outputs` and `diagnostics` from an export's `--format json` report, rather than parsing its text; see <<export-json>>.
 
 A long book export in a build can take more time than the default allows, and should not write its diagram cache into the documentation folder.
 `--timeout` raises the limit and `--cache-dir` moves the cache into the build directory.

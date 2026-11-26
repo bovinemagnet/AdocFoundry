@@ -1,0 +1,43 @@
+---
+source: crates/adocfoundry-cli/tests/cli.rs
+assertion_line: 2995
+expression: "export_json_of(&output, &[(&book, \"root\"), (directory.path(), \"tmp\")])"
+---
+{
+  "schema_version": 1,
+  "tool": {
+    "name": "adocfoundry-cli",
+    "version": "[version]"
+  },
+  "format": "pdf",
+  "root": "[root]",
+  "outcome": "written",
+  "outputs": [
+    {
+      "path": "[tmp]/guide.pdf",
+      "kind": "file"
+    }
+  ],
+  "pages": 11,
+  "sources": [
+    "guide/modules/ROOT/pages/index.adoc",
+    "guide/modules/ROOT/pages/install.adoc",
+    "guide/modules/ROOT/pages/configure.adoc",
+    "guide/modules/ROOT/pages/use.adoc",
+    "guide/modules/admin/pages/index.adoc",
+    "guide/modules/admin/pages/backup.adoc",
+    "guide/modules/admin/pages/restore.adoc",
+    "guide/modules/admin/pages/empty.adoc"
+  ],
+  "protected": false,
+  "theme": {
+    "name": "default",
+    "file": null,
+    "chosen_by": null
+  },
+  "fonts": {
+    "folders": [],
+    "chosen_by": null
+  },
+  "diagnostics": []
+}

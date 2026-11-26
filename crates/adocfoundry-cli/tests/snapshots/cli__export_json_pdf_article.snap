@@ -1,0 +1,36 @@
+---
+source: crates/adocfoundry-cli/tests/cli.rs
+assertion_line: 2971
+expression: "export_json_of(&output, &[(&root, \"root\"), (directory.path(), \"tmp\")])"
+---
+{
+  "schema_version": 1,
+  "tool": {
+    "name": "adocfoundry-cli",
+    "version": "[version]"
+  },
+  "format": "pdf",
+  "root": "[root]",
+  "outcome": "written",
+  "outputs": [
+    {
+      "path": "[tmp]/article.pdf",
+      "kind": "file"
+    }
+  ],
+  "pages": 4,
+  "sources": [
+    "article.adoc"
+  ],
+  "protected": false,
+  "theme": {
+    "name": "default",
+    "file": null,
+    "chosen_by": null
+  },
+  "fonts": {
+    "folders": [],
+    "chosen_by": null
+  },
+  "diagnostics": []
+}

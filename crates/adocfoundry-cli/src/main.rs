@@ -113,6 +113,8 @@ ADOCFOUNDRY_CACHE_DIR), which keeps rendered diagrams in <dir>/diagrams, not in 
 or --no-cache, which keeps none.
 render, pdf, docx, kindle, epub and docbook take --authoring <profile>, which reads the pages
 with the attributes of [authoring.profiles.<profile>] in the settings.
+pdf, docx, kindle, epub and docbook take --format text|json; json prints one versioned object
+saying what was written and warned about. kindle takes it beside --format azw3|kfx.
 Relative paths, `--changed-file` among them, are read against the current directory.";
 
 /// How long a command may take, indexing and exporting together, unless `--timeout` or
@@ -844,6 +846,16 @@ struct Tool {
     version: &'static str,
 }
 
+impl Tool {
+    /// This command line and its version.
+    fn this() -> Self {
+        Self {
+            name: "adocfoundry-cli",
+            version: env!("CARGO_PKG_VERSION"),
+        }
+    }
+}
+
 /// How many diagnostics there are of each severity, every severity named.
 #[derive(Serialize)]
 struct CheckSummary {
@@ -862,10 +874,7 @@ impl<'a> CheckJson<'a> {
         };
         Self {
             schema_version: CHECK_SCHEMA_VERSION,
-            tool: Tool {
-                name: "adocfoundry-cli",
-                version: env!("CARGO_PKG_VERSION"),
-            },
+            tool: Tool::this(),
             root: root.display().to_string(),
             summary: CheckSummary {
                 error: count(DiagnosticSeverity::Error),
@@ -1282,9 +1291,11 @@ fn pdf(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, S
             "profile",
             "fail-on",
             "authoring",
+            "format",
         ],
     )?;
     let fail_on = fail_on(&options)?;
+    let json = json_format(&options)?;
     let standards = options
         .iter()
         .filter(|(name, _)| *name == "standard")
@@ -1332,7 +1343,8 @@ fn pdf(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, S
                 format!("[pdf.profiles.{profile}] fonts_dir")
             },
         };
-        return report_export(&mut engine, args, &root, fail_on, cli, &from, out);
+        let how = Reporting::pdf(json, &from);
+        return report_export(&mut engine, args, &root, fail_on, cli, &how, out);
     }
     let [target] = positional.as_slice() else {
         return Err(USAGE.to_owned());
@@ -1353,7 +1365,8 @@ fn pdf(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, S
         theme: "--theme".to_owned(),
         fonts: "--fonts-dir".to_owned(),
     };
-    report_export(&mut engine, args, &root, fail_on, cli, &from, out)
+    let how = Reporting::pdf(json, &from);
+    report_export(&mut engine, args, &root, fail_on, cli, &how, out)
 }
 
 /// How an export's own choice of theme and fonts was made, for naming it: the options, or a
@@ -1466,9 +1479,11 @@ fn docx(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, 
             "authoring",
             "theme",
             "template",
+            "format",
         ],
     )?;
     let fail_on = fail_on(&options)?;
+    let docx_how = Reporting::new(json_format(&options)?, "docx");
     // The look, at most one of the three; a PDF theme or template is found as an export of
     // the page in the app finds it: by name in the themes folder, or by path.
     let look = match (
@@ -1498,7 +1513,7 @@ fn docx(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, 
         let output = args.output.clone();
         let result = engine.export_docx_blocking(args, cli.remaining());
         let result = cli.in_time(&mut engine, result)?;
-        return report(result, &output, &root, fail_on, out, true);
+        return report(result, &output, &root, fail_on, &docx_how, out);
     }
     let [target] = positional.as_slice() else {
         return Err(USAGE.to_owned());
@@ -1515,7 +1530,7 @@ fn docx(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, 
     };
     let result = engine.export_docx_blocking(args, cli.remaining());
     let result = cli.in_time(&mut engine, result)?;
-    report(result, &output, &root, fail_on, out, true)
+    report(result, &output, &root, fail_on, &docx_how, out)
 }
 
 /// Exports a page, or a component version as a book, to a Kindle book: AZW3 or KFX, from
@@ -1535,11 +1550,25 @@ fn kindle(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode
         ],
     )?;
     let fail_on = fail_on(&options)?;
-    let asked = option(&options, "format")
-        .map(|name| {
-            KindleFormat::from_name(name).ok_or_else(|| format!("unknown Kindle format `{name}`"))
-        })
-        .transpose()?;
+    // `--format` names the book's format, the report's, or both, given twice (#808).
+    let (reports, books): (Vec<&str>, Vec<&str>) = options
+        .iter()
+        .filter(|(name, _)| *name == "format")
+        .map(|(_, value)| *value)
+        .partition(|value| matches!(*value, "text" | "json"));
+    let json = match reports.as_slice() {
+        [] | ["text"] => false,
+        ["json"] => true,
+        _ => return Err("give --format text or json at most once".to_owned()),
+    };
+    let asked = match books.as_slice() {
+        [] => None,
+        [name] => Some(
+            KindleFormat::from_name(name)
+                .ok_or_else(|| format!("unknown Kindle format `{name}`"))?,
+        ),
+        _ => return Err("give --format azw3 or kfx at most once".to_owned()),
+    };
     let output_format = option(&options, "output").map(|output| {
         Path::new(output)
             .extension()
@@ -1572,9 +1601,10 @@ fn kindle(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode
             args.output = PathBuf::from(output);
         }
         let output = args.output.clone();
+        let how = Reporting::new(json, args.format.extension());
         let result = engine.export_kindle_blocking(args, cli.remaining());
         let result = cli.in_time(&mut engine, result)?;
-        return report(result, &output, &root, fail_on, out, true);
+        return report(result, &output, &root, fail_on, &how, out);
     }
     let [target] = positional.as_slice() else {
         return Err(USAGE.to_owned());
@@ -1588,9 +1618,10 @@ fn kindle(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode
         PathBuf::from,
     );
     let args = KindleExportArgs::new(target, format, output.clone());
+    let how = Reporting::new(json, format.extension());
     let result = engine.export_kindle_blocking(args, cli.remaining());
     let result = cli.in_time(&mut engine, result)?;
-    report(result, &output, &root, fail_on, out, true)
+    report(result, &output, &root, fail_on, &how, out)
 }
 
 /// Exports a page, or a component version as a book, to an EPUB 3 book. An output that is not
@@ -1609,9 +1640,11 @@ fn docbook(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCod
             "fail-on",
             "authoring",
             "assets",
+            "format",
         ],
     )?;
     let fail_on = fail_on(&options)?;
+    let how = Reporting::new(json_format(&options)?, "docbook");
     if let Some(output) = option(&options, "output") {
         let xml = Path::new(output)
             .extension()
@@ -1654,9 +1687,9 @@ fn docbook(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCod
     let result = engine.export_docbook_blocking(args, cli.remaining());
     let result = cli.in_time(&mut engine, result)?;
     let written = result.is_ok();
-    let code = report(result, &output, &root, fail_on, out, true)?;
+    let code = report(result, &output, &root, fail_on, &how, out)?;
     let folder = adoc_engine::docbook_assets_folder(&output);
-    if written && folder.is_dir() {
+    if written && !how.json && folder.is_dir() {
         let count = std::fs::read_dir(&folder).map_or(0, Iterator::count);
         let plural = if count == 1 { "" } else { "s" };
         outln!(
@@ -1678,9 +1711,11 @@ fn epub(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, 
             "profile",
             "fail-on",
             "authoring",
+            "format",
         ],
     )?;
     let fail_on = fail_on(&options)?;
+    let how = Reporting::new(json_format(&options)?, "epub");
     if let Some(output) = option(&options, "output") {
         let epub = Path::new(output)
             .extension()
@@ -1703,7 +1738,7 @@ fn epub(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, 
         let output = args.output.clone();
         let result = engine.export_epub_blocking(args, cli.remaining());
         let result = cli.in_time(&mut engine, result)?;
-        return report(result, &output, &root, fail_on, out, true);
+        return report(result, &output, &root, fail_on, &how, out);
     }
     let [target] = positional.as_slice() else {
         return Err(USAGE.to_owned());
@@ -1713,7 +1748,7 @@ fn epub(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, 
     let args = EpubExportArgs::new(target, output.clone());
     let result = engine.export_epub_blocking(args, cli.remaining());
     let result = cli.in_time(&mut engine, result)?;
-    report(result, &output, &root, fail_on, out, true)
+    report(result, &output, &root, fail_on, &how, out)
 }
 
 /// The file a component named `name` is exported to by default, in the current directory: the
@@ -1748,7 +1783,7 @@ fn report_export(
     root: &Path,
     fail_on: Option<DiagnosticSeverity>,
     cli: &Globals,
-    from: &Choosers,
+    how: &Reporting,
     out: &mut Out,
 ) -> Result<ExitCode, String> {
     let output = args.output.clone();
@@ -1758,8 +1793,8 @@ fn report_export(
         .as_ref()
         .ok()
         .and_then(|summary| summary.pdf_look.clone());
-    let code = report(result, &output, root, fail_on, out, false)?;
-    if let Some(look) = look {
+    let code = report(result, &output, root, fail_on, how, out)?;
+    if let (Some(look), Some(from), false) = (look, how.from, how.json) {
         print_look(&look, root, from, out);
     }
     note_user_settings(engine);
@@ -1833,17 +1868,75 @@ fn note_user_settings(engine: &Engine) {
     }
 }
 
+/// What an export prints: lines of text, or with `--format json` one object (#808); the format
+/// written (`pdf`, `docx`, `epub`, `azw3`, `kfx` or `docbook`), and for a PDF what chose its
+/// look.
+struct Reporting<'a> {
+    json: bool,
+    format: &'static str,
+    from: Option<&'a Choosers>,
+}
+
+impl<'a> Reporting<'a> {
+    fn new(json: bool, format: &'static str) -> Self {
+        Self {
+            json,
+            format,
+            from: None,
+        }
+    }
+
+    fn pdf(json: bool, from: &'a Choosers) -> Self {
+        Self {
+            json,
+            format: "pdf",
+            from: Some(from),
+        }
+    }
+}
+
+/// An export's `--format`: `text`, the default, or `json`.
+fn json_format(options: &[(&str, &str)]) -> Result<bool, String> {
+    match option(options, "format").unwrap_or("text") {
+        "text" => Ok(false),
+        "json" => Ok(true),
+        other => Err(format!("unknown format `{other}`: expected text or json")),
+    }
+}
+
 /// Prints each diagnostic and then the output and its page count: a PDF's pages, a Word
-/// document's or an e-book's AsciiDoc pages, since its reader lays out its own. Fails when a diagnostic is at least
-/// as severe as `fail_on`, though the document is written.
+/// document's or an e-book's AsciiDoc pages, since its reader lays out its own; or, with
+/// `--format json`, the one object saying all of it. Fails when a diagnostic is at least as
+/// severe as `fail_on`, though the document is written.
 fn report(
     result: Result<ExportSummary, EngineError>,
     output: &Path,
     root: &Path,
     fail_on: Option<DiagnosticSeverity>,
+    how: &Reporting,
     out: &mut Out,
-    docx: bool,
 ) -> Result<ExitCode, String> {
+    // A note, such as an EPUB's that it is dated with the time of the export, never fails an
+    // export.
+    let failed = |summary: &ExportSummary| {
+        fail_on.is_some_and(|threshold| {
+            summary.diagnostics.iter().any(|diagnostic| {
+                diagnostic.severity == DiagnosticSeverity::Error
+                    || (threshold == DiagnosticSeverity::Warning
+                        && diagnostic.severity == DiagnosticSeverity::Warning)
+            })
+        })
+    };
+    let code = match &result {
+        Ok(summary) if !failed(summary) => ExitCode::SUCCESS,
+        _ => ExitCode::FAILURE,
+    };
+    if how.json {
+        let report = ExportJson::new(&result, output, root, how)?;
+        let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
+        outln!(out, "{text}");
+        return Ok(code);
+    }
     match result {
         Ok(summary) => {
             for diagnostic in &summary.diagnostics {
@@ -1861,7 +1954,7 @@ fn report(
                     ),
                 }
             }
-            if docx {
+            if how.format != "pdf" {
                 let plural = if summary.pages == 1 { "" } else { "s" };
                 outln!(
                     out,
@@ -1888,25 +1981,166 @@ fn report(
             if summary.protected {
                 outln!(out, "protected: read-only");
             }
-            // A note, such as an EPUB's that it is dated with the time of the export, never
-            // fails an export.
-            let failed = fail_on.is_some_and(|threshold| {
-                summary.diagnostics.iter().any(|diagnostic| {
-                    diagnostic.severity == DiagnosticSeverity::Error
-                        || (threshold == DiagnosticSeverity::Warning
-                            && diagnostic.severity == DiagnosticSeverity::Warning)
-                })
+        }
+        Err(error) => eprintln!("adocfoundry-cli: {error}"),
+    }
+    Ok(code)
+}
+
+/// The version of the export commands' `--format json` shape. A field added keeps it; a field
+/// removed, renamed or given another meaning raises it (#808).
+const EXPORT_SCHEMA_VERSION: u32 = 1;
+
+/// What an export's `--format json` prints: the outcome, every file and folder written (absolute,
+/// since an output need not be in the workspace), the AsciiDoc pages in order and the
+/// diagnostics (relative to `root`, with `/`), and the look. `pages` counts a PDF's pages and
+/// any other format's AsciiDoc pages, as the text does.
+#[derive(Serialize)]
+struct ExportJson {
+    schema_version: u32,
+    tool: Tool,
+    format: &'static str,
+    root: String,
+    /// `written`, `failed`, or `refused` when the pages ask for a read-only export the format
+    /// cannot carry. `--fail-on` can fail a written export.
+    outcome: &'static str,
+    outputs: Vec<Written>,
+    pages: usize,
+    sources: Vec<String>,
+    protected: bool,
+    /// A Word document's look.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    look: Option<WordLook>,
+    /// A PDF's theme and fonts, and what chose them (#812).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    theme: Option<ThemeJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fonts: Option<FontsJson>,
+    diagnostics: Vec<DiagnosticJson>,
+    /// Why nothing was written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Serialize)]
+struct Written {
+    path: String,
+    /// `file` or `folder`.
+    kind: &'static str,
+}
+
+#[derive(Serialize)]
+struct WordLook {
+    kind: &'static str,
+    name: String,
+    path: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ThemeJson {
+    name: String,
+    /// The theme's file; `None` for a bundled theme.
+    file: Option<String>,
+    /// What chose it, as the text says it; `None` for the default.
+    chosen_by: Option<String>,
+}
+
+#[derive(Serialize)]
+struct FontsJson {
+    /// The folders fonts were looked for in before the bundled fonts.
+    folders: Vec<String>,
+    chosen_by: Option<String>,
+}
+
+#[derive(Serialize)]
+struct DiagnosticJson {
+    severity: &'static str,
+    message: String,
+    path: Option<String>,
+    line: Option<u32>,
+}
+
+impl ExportJson {
+    fn new(
+        result: &Result<ExportSummary, EngineError>,
+        output: &Path,
+        root: &Path,
+        how: &Reporting,
+    ) -> Result<Self, String> {
+        let shown = |path: &Path| display_path(path, root);
+        let mut report = Self {
+            schema_version: EXPORT_SCHEMA_VERSION,
+            tool: Tool::this(),
+            format: how.format,
+            root: absolute(root)?.display().to_string(),
+            outcome: "written",
+            outputs: Vec::new(),
+            pages: 0,
+            sources: Vec::new(),
+            protected: false,
+            look: None,
+            theme: None,
+            fonts: None,
+            diagnostics: Vec::new(),
+            error: None,
+        };
+        let summary = match result {
+            Ok(summary) => summary,
+            Err(error) => {
+                report.outcome = match error {
+                    EngineError::ExportProtection(_) => "refused",
+                    _ => "failed",
+                };
+                report.error = Some(error.to_string());
+                return Ok(report);
+            }
+        };
+        let output = absolute(output)?;
+        let folder = adoc_engine::docbook_assets_folder(&output);
+        report.outputs.push(Written {
+            path: output.display().to_string(),
+            kind: "file",
+        });
+        if how.format == "docbook" && folder.is_dir() {
+            report.outputs.push(Written {
+                path: folder.display().to_string(),
+                kind: "folder",
             });
-            Ok(if failed {
-                ExitCode::FAILURE
-            } else {
-                ExitCode::SUCCESS
+        }
+        report.pages = summary.pages;
+        report.sources = summary.sources.iter().map(|path| shown(path)).collect();
+        report.protected = summary.protected;
+        report.look = summary.look.as_ref().map(|look| WordLook {
+            kind: look.kind.as_str(),
+            name: look.name.clone(),
+            path: look.path.as_deref().map(shown),
+        });
+        if let (Some(look), Some(from)) = (&summary.pdf_look, how.from) {
+            report.theme = Some(ThemeJson {
+                name: look.theme.clone(),
+                file: look.file.as_deref().map(shown),
+                chosen_by: chosen_by(&look.theme_from, "pdf-theme", &from.theme, root),
+            });
+            report.fonts = Some(FontsJson {
+                folders: look.fonts_dirs.iter().map(|dir| shown(dir)).collect(),
+                chosen_by: if look.fonts_dirs.is_empty() {
+                    None
+                } else {
+                    chosen_by(&look.fonts_from, "pdf-fontsdir", &from.fonts, root)
+                },
+            });
+        }
+        report.diagnostics = summary
+            .diagnostics
+            .iter()
+            .map(|diagnostic| DiagnosticJson {
+                severity: severity_name(diagnostic.severity),
+                message: diagnostic.message.clone(),
+                path: diagnostic.location.as_ref().map(|(path, _)| shown(path)),
+                line: diagnostic.location.as_ref().map(|(_, line)| *line),
             })
-        }
-        Err(error) => {
-            eprintln!("adocfoundry-cli: {error}");
-            Ok(ExitCode::FAILURE)
-        }
+            .collect();
+        Ok(report)
     }
 }
 
