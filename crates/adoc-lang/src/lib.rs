@@ -29,7 +29,7 @@ use adoc_parser::parse;
 pub use adoc_core::Location;
 pub use adoc_index::{WorkspaceSymbol, WorkspaceSymbolKind};
 pub use completion::{Candidate as CompletionItem, CandidateKind as CompletionItemKind};
-pub use hover::HoverContent as Hover;
+pub use hover::{AttributeValue, HoverContent as Hover};
 pub use symbols::{DocumentSymbol, DocumentSymbolKind};
 pub use workspace::WorkspaceState;
 pub use xref::{xref_to, XrefLink};
@@ -155,6 +155,17 @@ pub fn hover_in(
     offset: usize,
 ) -> Option<Hover> {
     hover::hover_at_offset(&ws.index, &ws.antora, path, document, offset)
+}
+
+/// [`hover::attribute_values`] in `document`, the parse of the text at `path`.
+#[must_use]
+pub fn attribute_values_in(
+    ws: &WorkspaceState,
+    path: &Path,
+    document: &Document,
+    range: adoc_core::SourceRange,
+) -> Vec<AttributeValue> {
+    hover::attribute_values(&ws.index, &ws.antora, path, document, range)
 }
 
 #[must_use]

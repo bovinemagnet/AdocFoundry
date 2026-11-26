@@ -36,7 +36,7 @@ The window has a page for each group of settings:
 |Page |Settings
 
 |Editor
-|`editor.font_family`, `editor.font_size`, `editor.soft_wrap`, `editor.tab_width`, `editor.preview_tabs` and `editor.auto_save`.
+|`editor.font_family`, `editor.font_size`, `editor.soft_wrap`, `editor.tab_width`, `editor.preview_tabs`, `editor.auto_save` and `editor.attribute_values`.
 
 |Appearance
 |`appearance.mode`, `appearance.light_theme`, `appearance.dark_theme`, `appearance.font_set` and `appearance.font_scale`.
@@ -96,6 +96,7 @@ tab_width = 2
 theme = "auto"                   # auto | light | dark; the older setting, used when [appearance] mode is not set
 preview_tabs = true              # false: every page you open stays open
 auto_save = "off"                # off | on_focus_change | after_delay
+attribute_values = false         # true shows each attribute reference's value at the end of its line
 
 [appearance]                     # user file only
 mode = "auto"                    # auto | light | dark
@@ -383,6 +384,11 @@ See xref:#font-sets[Font sets].
 |`"off"`, `"on_focus_change"` or `"after_delay"`
 |`"off"`
 |Save pages without asking. `"after_delay"` saves a page one second after your last edit to it. `"on_focus_change"` saves a page when you leave its tab and every edited page when the AdocFoundry window loses focus. Any other value is ignored with a warning and leaves auto-save off. See xref:using-the-editor.adoc#auto-save[Auto-save]. The xref:language-server.adoc[language server] ignores this setting and never saves.
+
+|`editor.attribute_values`
+|boolean
+|`false`
+|Show the value of each attribute reference at the end of its line in the source editor. See xref:using-the-editor.adoc#attribute-values[Attribute values beside references].
 
 |`editor.theme`
 |`"auto"`, `"light"` or `"dark"`

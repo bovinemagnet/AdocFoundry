@@ -5,6 +5,7 @@
 //! (`InputEditsEvent`); every engine change from elsewhere (undo, replace, rename, a reload from
 //! disk) is applied back to the widget. The engine rope is the truth.
 
+pub mod attribute_values;
 pub mod bindings;
 pub mod blame;
 pub mod changes;
@@ -192,6 +193,8 @@ pub struct SourceEditorView {
     marks: Rc<RefCell<Vec<changes::GutterMark>>>,
     /// The change whose card is open, with its text in `HEAD` and where it was clicked.
     open_change: Option<(adoc_engine::Hunk, String, gpui::Point<gpui::Pixels>)>,
+    /// The attribute values drawn at the ends of lines, kept while typing waits for a parse.
+    attribute_values: Rc<Vec<attribute_values::LineValues>>,
     /// Whether the blame column is shown.
     show_blame: bool,
     /// The gutter line the pointer rests on, and the blame tooltip once it has rested long enough.
@@ -385,6 +388,8 @@ impl SourceEditorView {
                 }
                 EngineEvent::SettingsChanged => cx.notify(),
                 EngineEvent::DiagnosticsUpdated { path } if this.is_path(path, cx) => {
+                    // The page's parse, which the attribute values come from, has settled.
+                    cx.notify();
                     this._diagnostics = Some(cx.spawn(async move |this, cx| {
                         cx.background_executor().timer(DIAGNOSTICS_DELAY).await;
                         let _ = this.update(cx, |this, cx| this.show_diagnostics(cx));
@@ -438,6 +443,7 @@ impl SourceEditorView {
             state,
             marks: Rc::default(),
             open_change: None,
+            attribute_values: Rc::default(),
             show_blame: false,
             hover_line: None,
             hover_tip: None,
@@ -593,6 +599,12 @@ impl SourceEditorView {
     #[cfg(test)]
     pub fn shown_comments(&self) -> &[std::ops::Range<usize>] {
         &self.shown_comments
+    }
+
+    /// The attribute values as last drawn at the ends of lines, for tests.
+    #[cfg(test)]
+    pub fn shown_attribute_values(&self) -> Vec<attribute_values::LineValues> {
+        self.attribute_values.as_ref().clone()
     }
 
     /// The suggestions' marks as last drawn, for tests.
@@ -1168,6 +1180,27 @@ impl SourceEditorView {
         cx.notify();
     }
 
+    /// The attribute values to draw near the view, while `[editor] attribute_values` is on:
+    /// the engine's answer for the lines near the view, or those last drawn while it has none.
+    fn attribute_values_near_view(
+        &mut self,
+        cx: &gpui::App,
+    ) -> Option<Rc<Vec<attribute_values::LineValues>>> {
+        let engine = &self.app.read(cx).engine;
+        if !engine.settings().editor.attribute_values {
+            self.attribute_values = Rc::default();
+            return None;
+        }
+        let state = self.state.read(cx);
+        if let Some(range) = changes::near_view_range(state) {
+            let range = SourceRange::new(range.start, range.end);
+            if let Some(values) = engine.attribute_values(self.document, range) {
+                self.attribute_values = Rc::new(attribute_values::by_line(state.text(), &values));
+            }
+        }
+        Some(self.attribute_values.clone())
+    }
+
     /// Shows or hides the blame column, asking the engine for the blame when shown.
     pub fn toggle_blame(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let document = self.document;
@@ -1410,6 +1443,7 @@ impl Render for SourceEditorView {
             .show_blame
             .then(|| engine.blame_for(self.document))
             .flatten();
+        let values = self.attribute_values_near_view(cx);
         let hover = engine.settings().git.blame_on_hover;
         let card = self
             .open_change
@@ -1498,6 +1532,15 @@ impl Render for SourceEditorView {
                 self.marks.clone(),
                 colours,
             ))
+            .when_some(values, |editor, values| {
+                editor.child(attribute_values::overlay(
+                    self.state.clone(),
+                    values,
+                    font.clone(),
+                    gpui::px(font_size),
+                    cx.theme().muted_foreground,
+                ))
+            })
             .when(hover, |editor| {
                 editor.child(blame::hover_watch(cx.weak_entity(), self.state.clone()))
             })

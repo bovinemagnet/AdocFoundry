@@ -2,6 +2,12 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- Attribute values beside their references (#87). With `[editor] attribute_values = true` (Settings › Editor › Attribute values), the source editor shows, faded, at the end of each line, the value of every attribute reference on it (`product = AdocFoundry`), resolved as hover resolves it: the playbook's, `antora.yml`'s and the page's own declarations, in order. Nothing is shown for an attribute that is unset, never set or set empty, for built-ins such as `{nbsp}`, or where Asciidoctor replaces nothing: escaped references, passthroughs, comments, and listing, literal and source blocks. Values follow typing once it pauses, and only the lines in view are worked out.
+
 ## 0.15.0 — 2026-11-25
 
 ### Added

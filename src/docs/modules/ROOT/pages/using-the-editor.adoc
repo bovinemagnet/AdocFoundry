@@ -1050,6 +1050,37 @@ Inspect Attribute does not trace the Antora command line or environment, `ifdef`
 Hover on an attribute reference and Go to Definition use the same resolution.
 A page header's declaration of an attribute that `antora.yml` hard sets is therefore not shown as the value.
 
+[#attribute-values]
+=== Attribute values beside references
+
+The source editor can show the value of each attribute reference at the end of its line.
+It is off by default.
+Turn it on with *Attribute values* in the Editor page of the xref:settings.adoc[settings window], or with `editor.attribute_values = true`.
+
+On a line that holds attribute references, the editor shows, faded, after the last character of the line, the value of each one as `name = value`.
+Several are separated by ` · `, and an attribute named twice on a line is shown once when its value is the same.
+A value longer than 40 characters is cut with an ellipsis.
+The values are shown at the end of the line, not beside each reference.
+
+For example, with the header above, the line `+Welcome to {product} {edition}.+` shows `product = Guide · edition = Enterprise` after its last character.
+
+The value is the one hover gives at that place.
+It follows Antora's rules, so a reference before a declaration shows the value from before it.
+Hover, or Inspect Attribute, says where a value comes from.
+
+Nothing is shown for:
+
+* an attribute that is not set, or not yet set, at that place;
+* an attribute that is unset, or set with no value;
+* Asciidoctor's built-in character replacements, such as `+{nbsp}+`;
+* a reference that Asciidoctor does not replace: an escaped one (`+\{name}+`), one in a passthrough, in a listing, literal, source or comment block, in a source paragraph, in a line comment, in an indented literal line or in a literal table cell.
+
+A verbatim block with `subs="attributes+"` also shows nothing.
+
+The values appear once typing pauses, because the page is parsed then.
+While you type, the values last shown stay until it does.
+Only the lines near the view are worked out, so a long page costs no more than a short one.
+
 [#go-to-symbol]
 == Go to symbol
 

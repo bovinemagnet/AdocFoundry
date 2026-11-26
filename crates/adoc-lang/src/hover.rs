@@ -83,6 +83,54 @@ pub fn hover_at_offset(
     })
 }
 
+/// The value of one attribute reference where it stands.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AttributeValue {
+    /// The reference, braces included.
+    pub range: SourceRange,
+    pub name: String,
+    pub value: String,
+}
+
+/// The value of each attribute reference in `range` of `document`, resolved as hover resolves
+/// it. A reference whose attribute is unset, never set, set with no value or built in (a
+/// character replacement, whose value is the character) has none.
+///
+/// Only the references in `range` are resolved, so a front end asks for the lines it shows.
+#[must_use]
+pub fn attribute_values(
+    index: &WorkspaceIndex,
+    antora: &AntoraCatalog,
+    current_path: &Path,
+    document: &Document,
+    range: SourceRange,
+) -> Vec<AttributeValue> {
+    let first = document
+        .attribute_references
+        .partition_point(|reference| reference.range.end <= range.start);
+    document.attribute_references[first..]
+        .iter()
+        .take_while(|reference| reference.range.start < range.end)
+        .filter_map(|reference| {
+            let resolution = resolve(
+                index,
+                antora,
+                current_path,
+                document,
+                &reference.name,
+                reference.range.start,
+            );
+            let step = resolution.winning_step()?;
+            let value = step.value.as_deref()?;
+            (step.origin != Origin::BuiltIn && !value.is_empty()).then(|| AttributeValue {
+                range: reference.range,
+                name: reference.name.clone(),
+                value: value.to_owned(),
+            })
+        })
+        .collect()
+}
+
 /// The `{name}` reference around `offset`, with the range of the whole reference.
 pub(crate) fn attribute_reference_at(text: &str, offset: usize) -> Option<(&str, SourceRange)> {
     if offset > text.len() || !text.is_char_boundary(offset) {
@@ -541,6 +589,92 @@ mod tests {
         assert!(
             unset.markdown.contains("Unset in this document"),
             "{unset:?}"
+        );
+    }
+
+    /// The values `attribute_values` gives for `text` at `page`: each as the text it covers,
+    /// the attribute's name and its value.
+    fn values(
+        index: &mut WorkspaceIndex,
+        antora: &AntoraCatalog,
+        page: &Path,
+        text: &str,
+        range: adoc_core::SourceRange,
+    ) -> Vec<(String, String, String)> {
+        index.index_source(page, text);
+        let document = index.file(page).expect("indexed").document.clone();
+        super::attribute_values(index, antora, page, &document, range)
+            .into_iter()
+            .map(|value| {
+                (
+                    text[value.range.start..value.range.end].to_owned(),
+                    value.name,
+                    value.value,
+                )
+            })
+            .collect()
+    }
+
+    /// Issue #87: each reference's value at its place, as hover gives it: the page's own,
+    /// `antora.yml`'s and the playbook's, a later declaration's after it, and nothing for an
+    /// attribute never set, not yet set, built in or escaped.
+    #[test]
+    fn gives_each_references_value_where_it_stands() {
+        let root = adoc_index::normalize_path(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures/effective-attributes"),
+        );
+        let mut index = WorkspaceIndex::new();
+        index.index_roots(std::slice::from_ref(&root)).unwrap();
+        let antora = discover_antora_workspace(std::slice::from_ref(&root))
+            .unwrap()
+            .catalog;
+        let page = root.join("docs/modules/ROOT/pages/index.adoc");
+        let text = format!(
+            "{}\nAlso {{unknown}}, {{later}}, {{flag}}, {{gone}}, A{{nbsp}}B and \\{{edition}}.\n\
+             :later: soon\n:flag:\n:gone!:\n\n{{flag}} {{gone}}\n",
+            std::fs::read_to_string(&page).unwrap()
+        );
+        let everything = adoc_core::SourceRange::new(0, text.len());
+
+        let found = values(&mut index, &antora, &page, &text, everything);
+
+        let expected = [
+            ("{edition}", "edition", "Enterprise"),
+            ("{product}", "product", "Guide"),
+            ("{company}", "company", "Foundry Ltd"),
+            ("{locked}", "locked", "site"),
+            // The playbook's `false` soft unsets it, so `antora.yml`'s value stands.
+            ("{support}", "support", "help desk"),
+            ("{edition}", "edition", "Later"),
+        ];
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|(written, name, value)| {
+                (
+                    (*written).to_owned(),
+                    (*name).to_owned(),
+                    (*value).to_owned(),
+                )
+            })
+            .collect();
+        assert_eq!(found, expected);
+    }
+
+    /// Issue #87: only the references in the range asked for are resolved.
+    #[test]
+    fn gives_only_the_values_in_the_range() {
+        let mut index = WorkspaceIndex::new();
+        let page = Path::new("/docs/index.adoc");
+        let text = "= Home\n:a: one\n:b: two\n\n{a}\n{b}\n{a}\n";
+        let second = text.find("{b}").unwrap();
+        let range = adoc_core::SourceRange::new(second, second + "{b}\n".len());
+
+        let found = values(&mut index, &AntoraCatalog::new(), page, text, range);
+
+        assert_eq!(
+            found,
+            [("{b}".to_owned(), "b".to_owned(), "two".to_owned())]
         );
     }
 

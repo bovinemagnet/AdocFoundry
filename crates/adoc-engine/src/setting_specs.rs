@@ -145,6 +145,13 @@ const SPECS: &[SettingSpec] = {
             "Save pages without asking.",
         ),
         setting(
+            "Editor",
+            "editor.attribute_values",
+            "Attribute values",
+            Switch,
+            "Show the value of each attribute reference at the end of its line.",
+        ),
+        setting(
             "Appearance",
             "appearance.mode",
             "Mode",
@@ -342,6 +349,7 @@ impl Settings {
             "editor.soft_wrap" => Bool(self.editor.soft_wrap),
             "editor.tab_width" => Number(self.editor.tab_width.into()),
             "editor.preview_tabs" => Bool(self.editor.preview_tabs),
+            "editor.attribute_values" => Bool(self.editor.attribute_values),
             "editor.auto_save" => text(match self.editor.auto_save {
                 AutoSave::Off => "off",
                 AutoSave::OnFocusChange => "on_focus_change",

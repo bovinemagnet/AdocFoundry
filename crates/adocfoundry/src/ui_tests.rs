@@ -14696,3 +14696,44 @@ fn a_settings_warning_is_said_once(cx: &mut TestAppContext) {
     window.setup.settings(wrong);
     assert_eq!(said(&mut window), 2);
 }
+
+/// Issue #87: with `[editor] attribute_values` on, each line referencing attributes has their
+/// values drawn after it, and turning it off takes them away.
+#[gpui::test]
+fn the_source_editor_shows_attribute_values_at_the_ends_of_lines(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let page = root.join("page.adoc");
+    let text = "= Guide\n:product: Foundry\n:version: 2.0\n\n\
+                Install {product} {version}.\n\n----\n{product}\n----\n\nNot {unknown}.\n";
+    std::fs::write(&page, text).unwrap();
+    let user = root.join("settings.toml");
+    std::fs::write(&user, "[editor]\nattribute_values = true\n").unwrap();
+    let settings = Settings::load(Some(&user), None).unwrap().with_git_opt_in();
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+
+    let shown = cx.update(|_, cx| editor.read(cx).shown_attribute_values());
+    let lines: Vec<(usize, &str)> = shown
+        .iter()
+        .map(|values| (values.line, values.text.as_str()))
+        .collect();
+    // A listing block and an unknown attribute show nothing.
+    assert_eq!(lines, [(4, "product = Foundry  ·  version = 2.0")]);
+
+    std::fs::write(&user, "[editor]\nattribute_values = false\n").unwrap();
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.engine.reload_settings().unwrap();
+            app.drain(cx);
+        })
+    });
+    cx.run_until_parked();
+    assert!(cx.update(|_, cx| editor.read(cx).shown_attribute_values().is_empty()));
+}

@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
 use adoc_core::{
-    Anchor, AttributeDeclaration, ImageDirective, IncludeDirective, Reference, ReferenceKind,
-    SourceRange, UiMacro,
+    Anchor, AttributeDeclaration, AttributeReference, ImageDirective, IncludeDirective, Reference,
+    ReferenceKind, SourceRange, UiMacro,
 };
 
 pub(crate) struct Heading<'a> {
@@ -989,6 +989,36 @@ fn menu_macro_end(rest: &str) -> Option<usize> {
     }
     let close = bracket_end(&rest[open + 1..])?;
     Some(open + 1 + close + 1)
+}
+
+/// The `{name}` attribute references in `line`, which starts at byte `offset`: a name of word
+/// characters and hyphens, not beginning with a hyphen, with no backslash before the brace.
+pub(crate) fn find_attribute_references(line: &str, offset: usize) -> Vec<AttributeReference> {
+    let mut found = Vec::new();
+    let mut index = 0;
+    while let Some(relative) = line[index..].find('{') {
+        let open = index + relative;
+        index = open + 1;
+        if line[..open].ends_with('\\') {
+            continue;
+        }
+        let Some(length) = line[open + 1..].find('}') else {
+            break;
+        };
+        let name = &line[open + 1..open + 1 + length];
+        let is_name_character =
+            |character: char| character.is_alphanumeric() || character == '_' || character == '-';
+        if name.is_empty() || name.starts_with('-') || !name.chars().all(is_name_character) {
+            continue;
+        }
+        let close = open + 1 + length;
+        found.push(AttributeReference {
+            name: name.to_owned(),
+            range: SourceRange::new(offset + open, offset + close + 1),
+        });
+        index = close + 1;
+    }
+    found
 }
 
 /// `line` with every inline passthrough blanked to spaces of the same byte length.
