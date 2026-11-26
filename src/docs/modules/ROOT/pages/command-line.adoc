@@ -1359,5 +1359,15 @@ adocfoundry-cli pdf docs/guide --output build/guide.pdf --timeout 900 --cache-di
 ----
 
 The archives attached to each release contain the binary for Linux, macOS and Windows, so no toolchain is needed.
+In a Linux CI container, use the musl archive for Alpine, RHEL 8 or 9 and Amazon Linux 2, which have no glibc 2.35 or later.
+Either archive works on Ubuntu 22.04 and later and Debian 12 and later.
+See xref:getting-started.adoc#linux-command-line[the command line on Linux].
+
+[source,sh]
+----
+curl -fsSLO https://github.com/bovinemagnet/AdocFoundry/releases/download/v<version>/adocfoundry-cli-<version>-linux-x86_64-musl.tar.gz
+tar -xzf adocfoundry-cli-<version>-linux-x86_64-musl.tar.gz
+./adocfoundry-cli check docs
+----
 Because the checker shares its code with the editor, it reports exactly what an author sees.
 See xref:diagnostics.adoc[Diagnostics] for the codes.

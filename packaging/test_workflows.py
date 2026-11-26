@@ -143,6 +143,33 @@ class ReleaseWaitsForCi(unittest.TestCase):
         )
         self.assertEqual(chosen, ["linux-*", "macos", "windows-*"])
 
+    def test_the_linux_cli_is_built_for_musl_and_tried_where_it_is_for(self):
+        # #811: the glibc build needs glibc 2.35, so the CLI is also built statically against
+        # musl, checked to need no shared library, and run in Alpine and RHEL 8's userland
+        # before anything is published.
+        release = jobs(read("release.yml"))
+        build = "\n".join(release["linux-musl"])
+        self.assertIn("TARGET: ${{ matrix.arch }}-unknown-linux-musl", build)
+        self.assertIn('cargo build --release --locked --target "$TARGET" -p adocfoundry-cli', build)
+        self.assertNotRegex(build, r"-p (adocfoundry|adoc-ls|adoc-mcp)\s", "the CLI alone")
+        self.assertIn("grep -q NEEDED", build)
+        self.assertIn("linux-${{ matrix.arch }}-musl.tar.gz", build)
+        self.assertIn("name: linux-musl-${{ matrix.arch }}", build)
+        smoke = "\n".join(release["smoke-musl"])
+        self.assertEqual(needs(release["smoke-musl"]), ["linux-musl"])
+        images = re.findall(r"^\s+- (\S+/\S+)$", smoke, re.MULTILINE)
+        self.assertEqual(len(images), 2, images)
+        self.assertTrue(any("/alpine:" in image for image in images), images)
+        self.assertTrue(any("/ubi8/" in image for image in images), images)
+        for image in images:
+            self.assertRegex(image, r"@sha256:[0-9a-f]{64}$", f"{image} is not pinned to a digest")
+        self.assertIn("--network none", smoke)
+        for step in ("--version", " check ", " pdf "):
+            self.assertIn(step, smoke)
+        publish = jobs(read("release.yml"))["publish"]
+        self.assertIn("smoke-musl", needs(publish))
+        self.assertIn("needs.smoke-musl.result == 'success'", "\n".join(publish))
+
     def test_the_flatpak_runtimes_are_writable_before_the_build(self):
         # The image's runtimes lie in its lower layer, where flatpak cannot move their folders:
         # once Flathub published newer ones, updating them failed with "Invalid cross-device

@@ -17,6 +17,10 @@ serde_json.workspace = true
 # `--no-cache`'s temporary diagram cache.
 tempfile.workspace = true
 
+# musl's own allocator made a 575-page PDF export 85% slower than glibc's (#811).
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc.workspace = true
+
 [dev-dependencies]
 # A Word template to export with, in `docx_look_choice_everywhere`.
 adoc-docx = { workspace = true, features = ["test-support"] }
