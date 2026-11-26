@@ -1415,3 +1415,52 @@ fn a_change_to_an_included_file_alone_parses_nothing_for_the_page() {
         "nothing parsed on this thread"
     );
 }
+
+/// A front end may keep the diagram cache outside the workspace, as `adocfoundry-cli
+/// --cache-dir` does for build tools whose inputs must stay as they were (#810): diagrams are
+/// written there and read back from there, and nothing is written beneath the root.
+#[test]
+fn a_diagram_cache_outside_the_workspace_leaves_the_workspace_alone() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("docs");
+    fs::create_dir(&root).unwrap();
+    let page = root.join("page.adoc");
+    fs::write(
+        &page,
+        "= Page\n\n[mermaid]\n----\ngraph LR\n  X --> Y\n----\n",
+    )
+    .unwrap();
+    let cache = directory.path().join("build").join("diagrams");
+    let mut engine = Engine::new(Settings::load(None, None).unwrap().with_git_opt_in());
+    engine.set_diagram_cache(Some(cache.clone()));
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    let id = engine.open(&page).unwrap();
+    let preview = engine.render_blocking(id, WAIT).unwrap();
+    assert!(matches!(
+        &preview.view.blocks[0].kind,
+        ViewKind::Diagram(DiagramView::Svg(_))
+    ));
+
+    let cached: Vec<PathBuf> = fs::read_dir(&cache)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(cached.len(), 1, "{cached:?}");
+    let written: Vec<_> = fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(written, ["page.adoc"]);
+
+    // A second engine with the same cache reads the image kept there, drawing nothing anew.
+    let marked = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"/>";
+    fs::write(&cached[0], marked).unwrap();
+    let mut again = Engine::new(Settings::load(None, None).unwrap().with_git_opt_in());
+    again.set_diagram_cache(Some(cache.clone()));
+    again.open_workspace(vec![root.clone()]).unwrap();
+    assert!(again.wait_for_workers(WAIT));
+    let id = again.open(&page).unwrap();
+    again.render_blocking(id, WAIT).unwrap();
+    assert_eq!(fs::read_to_string(&cached[0]).unwrap(), marked);
+}

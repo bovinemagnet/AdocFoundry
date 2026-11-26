@@ -47,9 +47,72 @@ adocfoundry-cli doctor [<root>] [--format text|json]
 adocfoundry-cli --version
 ----
 
+Every command also takes `--timeout <seconds>` and `--cache-dir <dir>`, before or after the command name; see <<global-options>>.
+
 Relative paths, those given to `--changed-file` included, are read against the current directory.
 Paths in the output are relative to the workspace root.
 Output piped to a command that stops reading early, such as `head`, ends quietly, and the exit code is the one the command earned.
+
+[#global-options]
+== Global options
+
+Two options are accepted by every command, written before or after the command name.
+They are meant for build tools, such as a Gradle plugin, that run the command as a step.
+
+[#timeout]
+=== --timeout
+
+`--timeout <seconds>` bounds the whole command: indexing, rendering and exporting together, not each wait within it.
+
+[source,sh]
+----
+adocfoundry-cli --timeout 600 pdf docs/guide --output build/guide.pdf
+adocfoundry-cli pdf docs/guide --output build/guide.pdf --timeout 600
+ADOCFOUNDRY_TIMEOUT=600 adocfoundry-cli pdf docs/guide --output build/guide.pdf
+----
+
+If the option is absent, the environment variable `ADOCFOUNDRY_TIMEOUT` is read.
+An empty variable counts as unset, and the option wins over the variable.
+The default is 300 seconds.
+The value is a number of seconds above 0, and decimals such as `0.5` are allowed.
+Anything else, such as 0, a negative number or text, is a usage error: the command names `--timeout` or `ADOCFOUNDRY_TIMEOUT` and exits with 2.
+
+When the time runs out, the command prints which step did not finish and exits with 2.
+
+[source,text]
+----
+adocfoundry-cli: the export did not finish within the timeout of 600 s (--timeout)
+----
+
+The steps named are `indexing`, `rendering` (`render`), `the export` (`pdf`, `docx`, `kindle`, `epub` and `docbook`), `reading the Git status` (`git-status`) and `reading the Git history` (`graph --ages`).
+
+An export that runs out of time never replaces an existing output file: the earlier file is left exactly as it was.
+The command then waits up to 10 more seconds for the abandoned work to remove the temporary files it was writing beside the output, so a timed-out command can take up to 10 seconds longer than the timeout.
+
+[#cache-dir]
+=== --cache-dir
+
+`--cache-dir <dir>` keeps rendered diagrams, and formulas drawn as images, in `<dir>/diagrams` instead of `<workspace>/.cache/adocfoundry/diagrams`, so the command writes nothing beneath the workspace for them.
+
+[source,sh]
+----
+adocfoundry-cli pdf docs/guide --output build/guide.pdf --cache-dir build/adocfoundry-cache
+ADOCFOUNDRY_CACHE_DIR=build/adocfoundry-cache adocfoundry-cli docx docs/guide --output build/guide.docx
+----
+
+This suits build tools whose task inputs are the documentation folders and whose outputs belong in a build directory, since a task that writes into its inputs breaks up-to-date checks and the build cache.
+
+If the option is absent, the environment variable `ADOCFOUNDRY_CACHE_DIR` is read.
+An empty variable counts as unset, and the option wins over the variable.
+A relative `<dir>` is read against the current directory.
+The folder is made when a diagram is first cached.
+It is never read or written through a symbolic link: if `<dir>/diagrams` is a link, nothing is cached there.
+A second run with the same cache folder reuses the diagrams cached there.
+Unused diagrams are pruned from that folder as from the workspace's, after `history.diagram_cache_days` (see xref:settings.adoc[Settings]).
+`doctor` reports the cache where `--cache-dir` puts it.
+
+Without the option the cache stays in the workspace, as before.
+The desktop application and the MCP server are not affected.
 
 == check
 
@@ -126,7 +189,7 @@ A folder or file that could not be read, for example for want of permission, was
 |At least one diagnostic met `--fail-on`. The default threshold is `error`.
 
 |2
-|Usage or runtime error, such as an unknown option, a bad format, or a workspace that could not be indexed in time or at all (when, for example, a module's `pages` folder cannot be read).
+|Usage or runtime error, such as an unknown option, a bad format, or a workspace that could not be indexed in time (see <<timeout>>) or at all (when, for example, a module's `pages` folder cannot be read).
 |===
 
 `audit` exits with 2 too when the workspace could not be indexed, rather than passing an audit of nothing.
@@ -1221,6 +1284,14 @@ See xref:using-the-editor.adoc#reporting-a-problem[Reporting a problem].
 
 Strict mode (`--require-complete`) is recommended in CI, so that a partial audit fails instead of passing.
 SARIF locations are relative to the audited root, so for code scanning audit from the repository root, to match the repository's paths.
+
+A long book export in a build can take more time than the default allows, and should not write its diagram cache into the documentation folder.
+`--timeout` raises the limit and `--cache-dir` moves the cache into the build directory.
+
+[source,sh]
+----
+adocfoundry-cli pdf docs/guide --output build/guide.pdf --timeout 900 --cache-dir build/adocfoundry-cache
+----
 
 The archives attached to each release contain the binary for Linux, macOS and Windows, so no toolchain is needed.
 Because the checker shares its code with the editor, it reports exactly what an author sees.

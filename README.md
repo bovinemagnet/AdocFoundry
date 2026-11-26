@@ -405,6 +405,8 @@ adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [
 adocfoundry-cli doctor [<root>] [--format text|json]
 ```
 
+Every command takes `--timeout <seconds>` (else `ADOCFOUNDRY_TIMEOUT`, 300 by default), the time the whole command may take, after which it names the step that did not finish and exits with 2, never replacing an export's existing output; and `--cache-dir <dir>` (else `ADOCFOUNDRY_CACHE_DIR`), which keeps rendered diagrams in `<dir>/diagrams` rather than in the workspace, for build tools whose inputs must not be written to.
+
 `check` prints the workspace's diagnostics (text: `path:line:col: severity code message`; JSON: an object with `schema_version`, `tool`, `root`, `summary` and `diagnostics`) and exits with 1 when any meets `--fail-on` (default `error`), which suits CI. It reports exactly what the editor and `adoc-ls` report, and a folder or file it could not read as an `adoc.unreadable` error, since nothing in it was checked. A workspace that could not be indexed at all exits with 2 from `check` and `audit` alike, never as a pass.
 
 Relative paths, `impact --changed-file` included, are read against the current directory, so `render index.adoc` from inside a `pages` folder finds its component and `--changed-file` takes what `git diff --name-only` prints at the top of the repository. Output piped to a command that stops reading early (`check docs | head`) ends quietly with the exit code the command earned.
