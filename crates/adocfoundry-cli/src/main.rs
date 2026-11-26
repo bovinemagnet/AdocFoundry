@@ -59,6 +59,13 @@ use adoc_engine::{
 };
 use serde::Serialize;
 
+/// musl's own allocator is slow under typesetting's many small allocations: a 575-page book
+/// took 85% longer to export than with glibc's, so the statically linked Linux build uses
+/// mimalloc (#811). Every other build keeps the system's.
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 const USAGE: &str = "usage:
   adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
   adocfoundry-cli audit <root> [--component [<version>@]<name>] [--format text|json|sarif]

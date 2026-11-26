@@ -96,6 +96,7 @@ image = { version = "=0.25.10", default-features = false, features = ["png", "jp
 lopdf = { version = "=0.47.0", default-features = false }
 # Reading AZW3 files back in adoc-kindle's tests: a reader that shares no code with the writer
 # (docs/qa/spike-kindle.md). A dev-dependency only.
+mimalloc = { version = "=0.1.52", default-features = false }
 mobi = "=0.8.0"
 resvg = { version = "=0.46.0", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 # Rasterises PDFs for the visual regression tests; already in the tree through Typst.
