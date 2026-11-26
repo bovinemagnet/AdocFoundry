@@ -19,6 +19,7 @@
 ** xref:keyboard-shortcuts.adoc[Keyboard shortcuts]
 ** xref:settings.adoc[Settings]
 * xref:antora-support.adoc[Antora support]
+** xref:checking-docs.adoc[Checking your documentation]
 ** xref:diagnostics.adoc[Diagnostics]
 ** xref:quality-audit.adoc[The quality audit]
 * xref:command-line.adoc[Command line]

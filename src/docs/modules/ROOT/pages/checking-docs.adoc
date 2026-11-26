@@ -1,0 +1,180 @@
+= Checking your documentation
+Paul Snow
+:revnumber: 0.0.0
+:description: Which AdocFoundry tool to use to lint a page, audit a publication or review a change, by goal, with a short recipe for each.
+
+AdocFoundry has no separate lint tool.
+Its existing tools already cover checking at two levels.
+This page says which one to use for each goal.
+Each section gives a short recipe and links to the page that covers the tool in full.
+
+[[two-levels]]
+== Linting and auditing
+
+Linting looks at one page at a time, as you write or before a commit.
+It asks whether the page is well formed.
+Do its xrefs, includes, images and anchors resolve, and are its Antora coordinates valid?
+The diagnostics and `adocfoundry-cli check` do this.
+
+Auditing looks at a whole component version or workspace, before you publish.
+It asks whether the publication is complete and of good quality.
+It finds pages that no navigation reaches, pages without titles and images without alternative text.
+It has a policy, exclusions and a verdict.
+`adocfoundry-cli audit` does this.
+
+`audit` reports everything `check` reports, with the same codes, severities and messages.
+CI that runs `audit` need not also run `check`.
+A pre-commit hook usually runs the quicker `check`.
+
+[[as-you-write]]
+== As you write
+
+In the app, the Problems panel shows the diagnostics for the whole workspace as you type.
+It updates when typing pauses.
+Turn the quality audit on (`[quality] enabled`, or open the Quality panel) and its `quality.*` findings appear in Problems too.
+
+See xref:diagnostics.adoc[Diagnostics] for the codes and xref:quality-audit.adoc[The quality audit] for the rules.
+
+[[in-another-editor]]
+== In another editor
+
+`adoc-ls`, the language server, publishes the same diagnostics as the app and as `check`.
+Point your editor at `adoc-ls --stdio`.
+It does not run the quality audit.
+
+See xref:language-server.adoc#_consistency_with_the_command_line[Consistency with the command line] and xref:language-server.adoc[Language server].
+
+[[before-a-commit]]
+== Before a commit
+
+`check` opens the workspace, waits for indexing and prints every diagnostic.
+
+[source,sh]
+----
+adocfoundry-cli check docs --fail-on warning
+----
+
+It exits 0 when no diagnostic meets `--fail-on`, and 1 when one does.
+The default threshold is `error`.
+Nearly every diagnostic is a warning, and only a folder or file that could not be read is an error, so use `--fail-on warning` to make problems fail.
+It exits 2 when the workspace could not be indexed.
+Use `--format json` when another tool reads the output.
+
+This Git hook stops a commit that has diagnostics.
+Save it as `.git/hooks/pre-commit` and make it executable.
+
+[source,sh]
+----
+#!/bin/sh
+exec adocfoundry-cli check docs --fail-on warning
+----
+
+See xref:command-line.adoc[Command line].
+
+[[in-ci]]
+== In continuous integration
+
+`audit` takes the policy from the `[quality]` table of the workspace's own `.adocfoundry.toml`.
+It never reads the user settings file, so CI gets the same result on every machine.
+
+[source,yaml]
+----
+- name: Audit the documentation
+  run: adocfoundry-cli audit docs --require-complete
+----
+
+It exits 0 when no finding meets the failure threshold (`--fail-on`, `error` by default), and 1 when one does.
+It exits 2 when the audit is unavailable, when it is partial under `--require-complete`, or when the `[quality]` settings are invalid.
+The report is always written in full first.
+`--require-complete` is recommended in CI, so that a gap cannot pass unnoticed.
+
+See xref:quality-audit.adoc#policy[The policy], xref:quality-audit.adoc#ci[Using it in CI] and xref:command-line.adoc#audit[audit].
+
+[[code-scanning]]
+== Code scanning
+
+`--format sarif` writes SARIF 2.1.0 for code-scanning tools.
+Excluded findings are written as suppressed results.
+
+[source,sh]
+----
+adocfoundry-cli audit docs --format sarif --output audit.sarif
+----
+
+Upload the file with your CI's SARIF upload step.
+Paths in it are relative to the audited root, through the `uriBaseId` `ROOT0`, and never absolute.
+
+The command-line page shows a complete example, upload included.
+See xref:command-line.adoc#audit[audit] and xref:quality-audit.adoc#ci[Using it in CI].
+
+[[reviewing-a-change]]
+== Reviewing a change
+
+`impact` lists what a change may affect, and why.
+
+[source,sh]
+----
+adocfoundry-cli impact docs --base main --head HEAD
+----
+
+It reports pages that render differently through includes, references to removed or moved targets, navigation changes and the publications that hold an affected page.
+Instead of two revisions you can give `--against HEAD`, which compares `HEAD` with the working tree, or `--changed-file <path>`, which needs no Git.
+
+It exits 0 when the analysis finished, however many impacts it found.
+It exits 2 for an invalid source, or for a partial report under `--require-complete`.
+
+See xref:command-line.adoc#impact[impact].
+
+[[asking-an-agent]]
+== Asking an agent to check
+
+The MCP server (`adoc-mcp`) gives an MCP client read-only tools for the same checks.
+
+* `quality_audit` returns the same report as `adocfoundry-cli audit --format json`, with its findings paged. See xref:mcp-server.adoc#quality-audit[Auditing quality].
+* `analyse_impact` returns the impact report for a change. See xref:mcp-server.adoc#impact[Analysing impact].
+* `validate_publication` puts the audit, the navigation and the publication profiles together. See xref:mcp-server.adoc#publication[Checking publication].
+
+An agent can ask for a report without write access to your files.
+
+[[summary]]
+== Summary
+
+[cols="2,2,3,2"]
+|===
+|Goal |Tool |Catches |Full documentation
+
+|As you write
+|Problems panel
+|Diagnostics as you type, and quality findings when the audit is on
+|xref:diagnostics.adoc[Diagnostics]
+
+|In another editor
+|`adoc-ls`
+|The same diagnostics as `check`
+|xref:language-server.adoc[Language server]
+
+|Before a commit
+|`adocfoundry-cli check`
+|Unresolved xrefs, includes and images, bad anchors and Antora coordinates
+|xref:command-line.adoc[Command line]
+
+|In CI
+|`adocfoundry-cli audit`
+|Everything `check` finds, pages no navigation reaches, missing titles and missing alternative text
+|xref:quality-audit.adoc[The quality audit]
+
+|Code scanning
+|`adocfoundry-cli audit --format sarif`
+|The audit's findings, as SARIF 2.1.0
+|xref:command-line.adoc#audit[audit]
+
+|Reviewing a change
+|`adocfoundry-cli impact`
+|Render, reference, navigation and publication impacts
+|xref:command-line.adoc#impact[impact]
+
+|Asking an agent
+|`adoc-mcp`
+|The audit, impact and publication reports
+|xref:mcp-server.adoc#quality-audit[Auditing quality]
+|===
