@@ -181,6 +181,7 @@ impl Engine {
             sources: Vec::new(),
             diagnostics: Vec::new(),
             look: None,
+            pdf_look: None,
             protected: false,
         });
         self.emit(EngineEvent::ExportFinished { output, result });

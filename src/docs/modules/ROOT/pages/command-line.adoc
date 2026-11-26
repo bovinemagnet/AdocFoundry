@@ -531,6 +531,51 @@ The command waits for diagrams to render, then prints `<output> (<n> pages)` on 
 Warnings, such as an unknown theme key, a missing image or a diagram that could not be rendered (wherever it sits: in a list, a table cell or any other block), print on standard error as `path:line: warning: message`.
 An export that fails, or reports a diagnostic that meets `--fail-on`, exits with 1, and a usage error exits with 2.
 
+After that line, and after `protected: read-only` when it applies, `pdf` prints two more lines on standard output.
+They say which theme and fonts the PDF used, so a build tool's log shows whether it matches the app's.
+
+[source,text]
+----
+docs/guide.pdf (42 pages)
+theme: acme (themes/acme-theme.yml, from [pdf] theme in .adocfoundry.toml)
+fonts: docs/fonts (from --fonts-dir)
+----
+
+The `theme:` line gives the theme's name, then where it came from.
+That is the theme file relative to the workspace root, or `bundled`, followed by what chose it.
+The choice is `--theme`, `pdf-theme` in a page or one of the files it includes, `pdf-theme` in `antora.yml` or `antora-playbook.yml`, `pdf-theme` in the export's attributes (a profile's `attributes`, or an authoring profile), `[pdf] theme`, or `[pdf.profiles.<name>] theme` with `--profile`.
+When nothing chose a theme, the line is `theme: default (bundled)`, with no source.
+
+The `fonts:` line lists the font folders in the same way, from `--fonts-dir`, a `pdf-fontsdir` attribute or `[pdf] fonts_dir`.
+A folder given on the command line is shown as given.
+It is `fonts: bundled` when only the bundled fonts are used.
+
+For a page, an attribute counts when it is set in the page's header.
+For a book, only `antora.yml` and the playbook count, because the theme for a book comes from them.
+See xref:pdf-export.adoc#choosing-a-theme[Choosing a theme] for the order in which the theme is chosen.
+
+[#user-settings-note]
+=== Settings the command line does not read
+
+The app reads `[pdf]` and `[pdf.profiles]` from both the user settings file and the workspace's `.adocfoundry.toml`.
+The command line reads only the workspace's `.adocfoundry.toml`, so that CI gives the same result on every machine.
+A theme chosen in the user settings therefore shapes the app's PDFs and not the command line's.
+
+When the user settings file exists and sets a `[pdf]` key that the workspace's file does not, `pdf` prints an information note on standard error for each.
+The keys it checks are `theme`, `themes_dir`, `fonts_dir` and `standards`.
+It also notes a `[pdf.profiles.<name>]` that the workspace's file does not have.
+
+[source,text]
+----
+info: [pdf] theme = "acme" in the user settings (/home/me/.config/adocfoundry/adocfoundry.toml) is used by the app but not by the command line; move it into .adocfoundry.toml to share it
+----
+
+The user file is only read, never applied, so the PDF is the same with or without it.
+An information note never fails an export, whatever `--fail-on` says.
+
+`ADOCFOUNDRY_USER_SETTINGS` names the user settings file to compare with, in place of the platform's.
+Use it in tests, or on a machine whose app reads another file.
+
 A page whose header asks for a read-only export (`:export-read-only: true`) is refused, because a PDF cannot carry that restriction yet, and so is a PDF that claims PDF/A for such a page.
 The command exits with 1, whatever `--fail-on` says, printing the reason with the page and line, and writes nothing.
 See xref:read-only-exports.adoc[Read-only exports].
