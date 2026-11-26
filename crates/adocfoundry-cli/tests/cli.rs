@@ -2555,6 +2555,65 @@ fn a_timed_out_export_leaves_the_output() {
     assert!(std::fs::read(&output).unwrap().starts_with(b"PK\x03\x04"));
 }
 
+/// With `--no-cache` nothing is kept: diagrams are drawn into a temporary folder that goes when
+/// the command ends, beneath neither the workspace nor anywhere else (#810).
+#[test]
+fn no_cache_keeps_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("docs");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(
+        root.join("page.adoc"),
+        "= Page\n\n[mermaid]\n----\ngraph LR\n  X --> Y\n----\n",
+    )
+    .unwrap();
+    let before = tree(&root);
+    let build = directory.path().join("build");
+    let temporary = directory.path().join("tmp");
+    std::fs::create_dir(&build).unwrap();
+    std::fs::create_dir(&temporary).unwrap();
+    let temporary_text = temporary.to_str().unwrap();
+    let pdf = build.join("page.pdf");
+    let environment = [
+        ("TMPDIR", temporary_text),
+        ("TMP", temporary_text),
+        ("TEMP", temporary_text),
+        // The option wins over the variable.
+        ("ADOCFOUNDRY_CACHE_DIR", "build/cache"),
+    ];
+
+    let output = cli_env(
+        directory.path(),
+        &[
+            "pdf",
+            "docs/page.adoc",
+            "--output",
+            pdf.to_str().unwrap(),
+            "--no-cache",
+        ],
+        &environment,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(pdf.is_file());
+    assert_eq!(tree(&root), before, "written into the workspace");
+    assert_eq!(tree(&build), [PathBuf::from("page.pdf")]);
+    assert_eq!(tree(&temporary), Vec::<PathBuf>::new(), "left behind");
+
+    let output = cli_env(
+        directory.path(),
+        &["check", "docs", "--no-cache", "--cache-dir", "build/cache"],
+        &[],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("--no-cache"), "{stderr}");
+}
+
 /// With `--cache-dir`, or `ADOCFOUNDRY_CACHE_DIR`, diagrams are kept in `<dir>/diagrams` and
 /// nothing is written beneath the workspace, so a build tool's inputs stay as they were (#810).
 #[test]

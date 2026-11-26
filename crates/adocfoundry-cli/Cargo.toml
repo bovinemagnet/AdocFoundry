@@ -14,6 +14,8 @@ adoc-index.workspace = true
 adoc-render.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# `--no-cache`'s temporary diagram cache.
+tempfile.workspace = true
 
 [dev-dependencies]
 # A Word template to export with, in `docx_look_choice_everywhere`.

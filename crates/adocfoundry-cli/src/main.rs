@@ -37,7 +37,8 @@
 //! adocfoundry-cli --version
 //! ```
 //!
-//! Every command also takes `--timeout <seconds>` and `--cache-dir <dir>` ([`Globals`]).
+//! Every command also takes `--timeout <seconds>`, and `--cache-dir <dir>` or `--no-cache`
+//! ([`Globals`]).
 
 use std::{
     io::{self, BufWriter, Write as _},
@@ -101,7 +102,8 @@ const USAGE: &str = "usage:
   adocfoundry-cli --version
 Every command takes --timeout <seconds> (else ADOCFOUNDRY_TIMEOUT; 300 by default), the time
 the whole command may take, after which it exits with 2, and --cache-dir <dir> (else
-ADOCFOUNDRY_CACHE_DIR), which keeps rendered diagrams in <dir>/diagrams, not in the workspace.
+ADOCFOUNDRY_CACHE_DIR), which keeps rendered diagrams in <dir>/diagrams, not in the workspace,
+or --no-cache, which keeps none.
 render, pdf, docx, kindle, epub and docbook take --authoring <profile>, which reads the pages
 with the attributes of [authoring.profiles.<profile>] in the settings.
 Relative paths, `--changed-file` among them, are read against the current directory.";
@@ -114,7 +116,8 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
 const TIDY_UP: Duration = Duration::from_secs(10);
 
 /// The options every command takes, wherever they are written: `--timeout <seconds>`, else
-/// `ADOCFOUNDRY_TIMEOUT`, and `--cache-dir <dir>`, else `ADOCFOUNDRY_CACHE_DIR`.
+/// `ADOCFOUNDRY_TIMEOUT`; `--cache-dir <dir>`, else `ADOCFOUNDRY_CACHE_DIR`; and `--no-cache`,
+/// which keeps nothing and wins over `ADOCFOUNDRY_CACHE_DIR`.
 struct Globals {
     /// When the command must have finished: the timeout bounds the whole command, not each
     /// wait within it.
@@ -123,6 +126,9 @@ struct Globals {
     /// The folder the diagram cache is kept in, as `<dir>/diagrams`, rather than in the
     /// workspace (#810).
     cache_dir: Option<PathBuf>,
+    /// With `--no-cache`, the temporary folder `cache_dir` names, removed with it as the
+    /// command ends.
+    _scratch: Option<tempfile::TempDir>,
 }
 
 impl Globals {
@@ -132,9 +138,14 @@ impl Globals {
         let mut rest = Vec::new();
         let mut timeout = None;
         let mut cache_dir = None;
+        let mut no_cache = false;
         let mut iter = arguments.iter();
         while let Some(argument) = iter.next() {
             let slot = match argument.as_str() {
+                "--no-cache" => {
+                    no_cache = true;
+                    continue;
+                }
                 "--timeout" => &mut timeout,
                 "--cache-dir" => &mut cache_dir,
                 _ => {
@@ -162,16 +173,32 @@ impl Globals {
                 .ok_or_else(|| format!("{name} `{value}`: expected a number of seconds above 0"))?,
             None => DEFAULT_TIMEOUT,
         };
-        let cache_dir = cache_dir
-            .or_else(|| environment("ADOCFOUNDRY_CACHE_DIR").map(|(_, value)| value))
-            .map(absolute)
+        if no_cache && cache_dir.is_some() {
+            return Err("`--no-cache` and `--cache-dir` cannot be used together".to_owned());
+        }
+        // Nothing kept: the diagrams are drawn into a folder of their own, gone at the end.
+        let scratch = no_cache
+            .then(|| {
+                tempfile::Builder::new()
+                    .prefix("adocfoundry-cli-")
+                    .tempdir()
+                    .map_err(|error| format!("--no-cache: {error}"))
+            })
             .transpose()?;
+        let cache_dir = match &scratch {
+            Some(scratch) => Some(scratch.path().to_path_buf()),
+            None => cache_dir
+                .or_else(|| environment("ADOCFOUNDRY_CACHE_DIR").map(|(_, value)| value))
+                .map(absolute)
+                .transpose()?,
+        };
         Ok((
             rest,
             Self {
                 deadline: started + timeout,
                 timeout,
                 cache_dir,
+                _scratch: scratch,
             },
         ))
     }

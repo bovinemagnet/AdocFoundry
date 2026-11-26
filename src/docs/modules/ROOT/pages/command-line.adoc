@@ -47,7 +47,7 @@ adocfoundry-cli doctor [<root>] [--format text|json]
 adocfoundry-cli --version
 ----
 
-Every command also takes `--timeout <seconds>` and `--cache-dir <dir>`, before or after the command name; see <<global-options>>.
+Every command also takes `--timeout <seconds>`, `--cache-dir <dir>` and `--no-cache`, before or after the command name; see <<global-options>>.
 
 Relative paths, those given to `--changed-file` included, are read against the current directory.
 Paths in the output are relative to the workspace root.
@@ -56,7 +56,7 @@ Output piped to a command that stops reading early, such as `head`, ends quietly
 [#global-options]
 == Global options
 
-Two options are accepted by every command, written before or after the command name.
+Three options are accepted by every command, written before or after the command name.
 They are meant for build tools, such as a Gradle plugin, that run the command as a step.
 
 [#timeout]
@@ -110,9 +110,29 @@ It is never read or written through a symbolic link: if `<dir>/diagrams` is a li
 A second run with the same cache folder reuses the diagrams cached there.
 Unused diagrams are pruned from that folder as from the workspace's, after `history.diagram_cache_days` (see xref:settings.adoc[Settings]).
 `doctor` reports the cache where `--cache-dir` puts it.
+To keep nothing at all, see <<no-cache>>.
 
 Without the option the cache stays in the workspace, as before.
 The desktop application and the MCP server are not affected.
+
+[#no-cache]
+=== --no-cache
+
+`--no-cache` keeps nothing between runs.
+It takes no value.
+
+[source,sh]
+----
+adocfoundry-cli pdf docs/guide --output build/guide.pdf --no-cache
+----
+
+Rendered diagrams, and formulas drawn as images, are drawn into a temporary folder of their own, which is removed when the command ends.
+Nothing is written beneath the workspace for them, and no cache is left anywhere.
+Every diagram is therefore drawn afresh on every run.
+
+`--no-cache` cannot be combined with `--cache-dir`: giving both is a usage error and the command exits with 2.
+It wins over the environment variable `ADOCFOUNDRY_CACHE_DIR`.
+It suits builds that want nothing kept between runs.
 
 == check
 
