@@ -436,6 +436,43 @@ fn render_writes_html() {
     assert_eq!(output.status.code(), Some(2));
 }
 
+/// Issue #102: `--authoring` reads the page with an authoring profile's attributes, and an
+/// unknown profile is an error that names it.
+#[test]
+fn render_reads_the_page_with_an_authoring_profile() {
+    let render = |extra: &[&str]| {
+        let mut arguments = vec![
+            "render",
+            "tests/fixtures/authoring/install.adoc",
+            "--root",
+            "tests/fixtures/authoring",
+        ];
+        arguments.extend_from_slice(extra);
+        cli(&arguments)
+    };
+
+    let plain = stdout(&render(&[]));
+    assert!(plain.contains("Run the installer."), "{plain}");
+    assert!(!plain.contains("cloud console"), "{plain}");
+
+    let output = render(&["--authoring", "cloud"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let cloud = stdout(&output);
+    assert!(cloud.contains("Sign in to the cloud console."), "{cloud}");
+    assert!(cloud.contains("The Cloud edition."), "{cloud}");
+    assert!(!cloud.contains("Run the installer."), "{cloud}");
+
+    let unknown = render(&["--authoring", "staging"]);
+    assert!(!unknown.status.success());
+    let error = String::from_utf8_lossy(&unknown.stderr);
+    assert!(error.contains("--authoring staging"), "{error}");
+    assert!(error.contains("no authoring profile is named"), "{error}");
+}
+
 #[test]
 fn render_to_a_file_embeds_local_images_unless_asked_to_link_them() {
     let directory = tempfile::tempdir().unwrap();

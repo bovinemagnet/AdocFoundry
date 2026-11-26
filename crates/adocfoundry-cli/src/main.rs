@@ -96,6 +96,8 @@ const USAGE: &str = "usage:
   adocfoundry-cli new-project <folder> --name <name> [--template <id|folder>] [--title <title>]
       [--version <version>] [--subfolder <dir>] [--no-git] [--no-readme] [--no-playbook]
   adocfoundry-cli --version
+render, pdf, docx, kindle, epub and docbook take --authoring <profile>, which reads the pages
+with the attributes of [authoring.profiles.<profile>] in the settings.
 Relative paths, `--changed-file` among them, are read against the current directory.";
 
 const INDEX_TIMEOUT: Duration = Duration::from_secs(300);
@@ -587,6 +589,17 @@ fn open_engine(root: &Path, git: bool) -> Result<Engine, String> {
     open_engine_with(root, settings)
 }
 
+/// Chooses the authoring profile `--authoring` names (#102), so pages are read with its
+/// attributes.
+fn choose_authoring(engine: &mut Engine, options: &[(&str, &str)]) -> Result<(), String> {
+    match option(options, "authoring") {
+        Some(name) => engine
+            .set_authoring_profile(Some(name))
+            .map_err(|error| format!("--authoring {name}: {error}")),
+        None => Ok(()),
+    }
+}
+
 /// An engine with `settings` over the workspace at `root`, indexed.
 fn open_engine_with(root: &Path, settings: Settings) -> Result<Engine, String> {
     let mut engine = Engine::new(settings);
@@ -992,7 +1005,8 @@ fn render(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         .filter(|argument| *argument != "--link-images")
         .cloned()
         .collect();
-    let (positional, options) = parse_options(&arguments, &["root", "output", "parser"])?;
+    let (positional, options) =
+        parse_options(&arguments, &["root", "output", "parser", "authoring"])?;
     let [file] = positional.as_slice() else {
         return Err(USAGE.to_owned());
     };
@@ -1009,6 +1023,7 @@ fn render(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     };
 
     let mut engine = open_engine(&root, false)?;
+    choose_authoring(&mut engine, &options)?;
     engine.set_document_parser(parser);
     let id = engine.open(&file).map_err(|error| error.to_string())?;
     let preview = engine
@@ -1045,6 +1060,7 @@ fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
             "typst",
             "profile",
             "fail-on",
+            "authoring",
         ],
     )?;
     let fail_on = fail_on(&options)?;
@@ -1063,6 +1079,7 @@ fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         // A profile is exported as the app exports it; options given here win over it.
         let root = profile_root(&positional, &options)?;
         let mut engine = open_engine(&root, false)?;
+        choose_authoring(&mut engine, &options)?;
         let mut args = engine
             .profile_export_args(profile)
             .map_err(|error| error.to_string())?;
@@ -1143,6 +1160,7 @@ fn open_target(
     };
 
     let mut engine = open_engine(&root, false)?;
+    choose_authoring(&mut engine, options)?;
     // The component version to export, `None` its version for one unversioned (`~`).
     let component = match option(options, "component") {
         Some(spec) => Some(match spec.split_once('@') {
@@ -1198,6 +1216,7 @@ fn docx(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
             "output",
             "profile",
             "fail-on",
+            "authoring",
             "theme",
             "template",
         ],
@@ -1219,6 +1238,7 @@ fn docx(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     if let Some(profile) = option(&options, "profile") {
         let root = profile_root(&positional, &options)?;
         let mut engine = open_engine(&root, false)?;
+        choose_authoring(&mut engine, &options)?;
         let mut args = engine
             .docx_profile_export_args(profile)
             .map_err(|error| error.to_string())?;
@@ -1261,6 +1281,7 @@ fn kindle(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
             "output",
             "profile",
             "fail-on",
+            "authoring",
             "format",
         ],
     )?;
@@ -1290,6 +1311,7 @@ fn kindle(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     if let Some(profile) = option(&options, "profile") {
         let root = profile_root(&positional, &options)?;
         let mut engine = open_engine(&root, false)?;
+        choose_authoring(&mut engine, &options)?;
         let mut args = engine
             .kindle_profile_export_args(profile)
             .map_err(|error| error.to_string())?;
@@ -1334,6 +1356,7 @@ fn docbook(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
             "output",
             "profile",
             "fail-on",
+            "authoring",
             "assets",
         ],
     )?;
@@ -1355,7 +1378,8 @@ fn docbook(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         .transpose()?;
     let (mut engine, root, args) = if let Some(profile) = option(&options, "profile") {
         let root = profile_root(&positional, &options)?;
-        let engine = open_engine(&root, false)?;
+        let mut engine = open_engine(&root, false)?;
+        choose_authoring(&mut engine, &options)?;
         let mut args = engine
             .docbook_profile_export_args(profile)
             .map_err(|error| error.to_string())?;
@@ -1395,7 +1419,14 @@ fn docbook(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
 fn epub(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(
         arguments,
-        &["root", "component", "output", "profile", "fail-on"],
+        &[
+            "root",
+            "component",
+            "output",
+            "profile",
+            "fail-on",
+            "authoring",
+        ],
     )?;
     let fail_on = fail_on(&options)?;
     if let Some(output) = option(&options, "output") {
@@ -1410,6 +1441,7 @@ fn epub(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     if let Some(profile) = option(&options, "profile") {
         let root = profile_root(&positional, &options)?;
         let mut engine = open_engine(&root, false)?;
+        choose_authoring(&mut engine, &options)?;
         let mut args = engine
             .epub_profile_export_args(profile)
             .map_err(|error| error.to_string())?;

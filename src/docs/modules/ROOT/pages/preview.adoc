@@ -316,6 +316,61 @@ To edit the formula itself, change its source.
 Formulas are cached like diagrams.
 See xref:pdf-export.adoc#stem[Exporting to PDF] for the notation rules.
 
+[#authoring-profiles]
+== Authoring profiles
+
+Conditional content, such as `ifdef::cloud[]`, `ifndef::cloud[]` and `+ifeval::[{edition} == "pro"]+`, and attribute values are hard to check when the preview shows only one set of attributes.
+An authoring profile is a named set of attribute values to read pages with.
+
+Profiles are tables in the workspace's `.adocfoundry.toml` or the user settings file.
+
+[source,toml]
+----
+[authoring.profiles.cloud]
+attributes = { cloud = true, edition = "Cloud" }
+
+[authoring.profiles.on-premises]
+attributes = { edition = "On-premises" }
+----
+
+`attributes` is a table of attribute names to strings, numbers or `true`, as an export profile's `attributes` are.
+`true` sets the attribute empty, as `:name:` does.
+`attributes` is the only key.
+A profile with another key, or a value of another type, is left out with a warning naming `authoring.profiles.<name>`.
+A workspace's profile replaces a user's of the same name.
+See xref:settings.adoc#authoring-profiles[Authoring profiles] in the settings.
+
+=== Choosing a profile
+
+Choose View › Select Authoring Profile…, which is also in the command palette.
+It lists None and each profile by name, and marks the chosen one "✓ …, chosen".
+Choosing a profile reads pages with its attributes.
+None goes back to the pages as they are.
+
+While a profile is chosen, the status bar says `Profile: <name>`.
+Clicking it opens the picker again.
+The choice lasts until the application closes and is not remembered between sessions.
+A profile taken out of the settings is no longer chosen.
+
+=== What a profile changes
+
+The profile's attributes are added after the playbook's, the component version's (`antora.yml`) and those Antora computes for the page.
+They are hard set, as the attributes in `antora.yml` are unless they end in `@`: a page's own header cannot change them.
+
+They apply to the preview, the PDF preview and the visual editor, and to every export started from the application: PDF, Word, Kindle, EPUB, DocBook and HTML.
+What is exported is therefore what the preview shows.
+
+=== Not yet
+
+Hover, Inspect Attribute, diagnostics and the source editor's attribute values do not follow the profile.
+They show the pages' own values.
+Content that a profile leaves out is not shown faded in the source editor.
+
+=== From the command line
+
+`adocfoundry-cli render`, `pdf`, `docx`, `kindle`, `epub` and `docbook` take `--authoring <profile>`, which reads the pages with that profile's attributes.
+See xref:command-line.adoc#authoring[Command line].
+
 == Known limits
 
 * The preview is read-only.

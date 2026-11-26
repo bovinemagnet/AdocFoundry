@@ -338,12 +338,36 @@ adocfoundry-cli render docs/modules/ROOT/pages/index.adoc --root docs > index.ht
 |`--output <file.html>`
 |Write to this file instead of standard output.
 
+|`--authoring <profile>`
+|Read the pages with the attributes of `[authoring.profiles.<profile>]`, as xref:preview.adoc#authoring-profiles[Authoring profiles] describes. It works with `--profile` as well as without. An unknown name is an error.
+
 |`--parser acdc\|asciidoc-parser`
 |Choose the document parser. The default is `acdc`. `asciidoc-parser` is a development comparison, and the application always uses `acdc`.
 |===
 
 Images and diagrams are written as absolute `file://` URLs, so the file shows them wherever it is opened on the same machine.
 A usage or runtime error exits with 2, as for the other subcommands.
+
+[#authoring]
+=== --authoring
+
+`--authoring <profile>` is taken by `render`, `pdf`, `docx`, `kindle`, `epub` and `docbook`.
+It reads the pages with the attributes of an authoring profile, as the application does when you choose one, so the output is what the preview shows.
+The profiles come from the workspace's `.adocfoundry.toml`, in the root folder; the command line reads no user settings file, so a profile it uses belongs in the workspace's.
+See xref:settings.adoc#authoring-profiles[Authoring profiles].
+
+[source,sh]
+----
+adocfoundry-cli render docs/modules/ROOT/pages/index.adoc --root docs --authoring cloud --output index.html
+adocfoundry-cli pdf --profile admin-guide . --authoring on-premises
+----
+
+An unknown name is an error, the command exits with a non-zero status, and nothing is written.
+
+[source,text]
+----
+--authoring staging: no authoring profile is named "staging"
+----
 
 [[pdf]]
 == pdf
@@ -394,6 +418,9 @@ Without a version, `--component` uses the latest version of the component.
 
 |`--typst <file.typ>`
 |Also write the generated Typst source, for inspection.
+
+|`--authoring <profile>`
+|Read the pages with the attributes of `[authoring.profiles.<profile>]`, as xref:preview.adoc#authoring-profiles[Authoring profiles] describes. It works with `--profile` as well as without. An unknown name is an error.
 
 |`--fail-on none\|warning\|error`
 |Exit with 1 when the export reports a diagnostic at least this severe, so CI can refuse a PDF with, for example, a diagram left as its source. The PDF is written all the same. The default, `none`, never fails for a diagnostic. An information note never fails an export, whatever the threshold.
@@ -456,6 +483,9 @@ Without a version, `--component` uses the latest version of the component.
 
 |`--output <file.docx>`
 |Where to write the document. It must be a `.docx` file name; any other output is refused.
+
+|`--authoring <profile>`
+|Read the pages with the attributes of `[authoring.profiles.<profile>]`, as xref:preview.adoc#authoring-profiles[Authoring profiles] describes. It works with `--profile` as well as without. An unknown name is an error.
 
 |`--fail-on none\|warning\|error`
 |Exit with 1 when the export reports a diagnostic at least this severe, so CI can refuse a document with, for example, a diagram left as its source. The document is written all the same. The default, `none`, never fails for a diagnostic. An information note never fails an export, whatever the threshold.
@@ -521,6 +551,9 @@ A directory that holds an `antora.yml`, or `--component`, exports the component 
 |`--output <file.azw3\|file.kfx>`
 |Where to write the book. Its extension must be the format's; any other output is refused.
 
+|`--authoring <profile>`
+|Read the pages with the attributes of `[authoring.profiles.<profile>]`, as xref:preview.adoc#authoring-profiles[Authoring profiles] describes. It works with `--profile` as well as without. An unknown name is an error.
+
 |`--fail-on none\|warning\|error`
 |Exit with 1 when the export reports a diagnostic at least this severe. The book is written all the same. The default, `none`, never fails for a diagnostic. An information note never fails an export, whatever the threshold.
 |===
@@ -565,6 +598,9 @@ A directory that holds an `antora.yml`, or `--component`, exports the component 
 
 |`--output <file.epub>`
 |Where to write the book. An output that is not an `.epub` file is refused before anything is read: the command exits with 2 and writes nothing.
+
+|`--authoring <profile>`
+|Read the pages with the attributes of `[authoring.profiles.<profile>]`, as xref:preview.adoc#authoring-profiles[Authoring profiles] describes. It works with `--profile` as well as without. An unknown name is an error.
 
 |`--fail-on none\|warning\|error`
 |Exit with 1 when the export reports a diagnostic at least this severe. The book is written all the same. The default, `none`, never fails for a diagnostic. An information note never fails an export, whatever the threshold.
@@ -621,6 +657,9 @@ A directory that holds an `antora.yml`, or `--component`, exports the component 
 
 |`--assets copy\|reference`
 |`copy` writes the pictures into `<name>_assets/` beside the document, and `reference` refers to them where they are, which is not portable. It replaces `[docbook] assets` and a profile's `assets`. Any other value exits with 2 before anything is read.
+
+|`--authoring <profile>`
+|Read the pages with the attributes of `[authoring.profiles.<profile>]`, as xref:preview.adoc#authoring-profiles[Authoring profiles] describes. It works with `--profile` as well as without. An unknown name is an error.
 
 |`--fail-on none\|warning\|error`
 |Exit with 1 when the export reports a diagnostic at least this severe. The document is written all the same. The default, `none`, never fails for a diagnostic.

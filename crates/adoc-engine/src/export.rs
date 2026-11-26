@@ -1801,6 +1801,9 @@ impl Engine {
                     .or_insert_with(|| value.trim_end_matches('@').to_owned());
             }
         }
+        for (name, value) in self.authoring_attributes() {
+            attributes.insert(name.clone(), value.clone());
+        }
         attributes.insert("doctype".to_owned(), "book".to_owned());
         attributes.entry("toc".to_owned()).or_default();
         if let Some(version) = component

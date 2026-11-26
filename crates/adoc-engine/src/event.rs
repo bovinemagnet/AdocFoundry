@@ -98,6 +98,8 @@ pub enum EngineEvent {
         error: String,
     },
     SettingsChanged,
+    /// Another authoring profile is chosen, or none (#102): `Engine::authoring_profile`.
+    AuthoringProfileChanged,
     /// A new preview of `id` is available from `Engine::rendered_preview`.
     PreviewReady {
         id: DocumentId,

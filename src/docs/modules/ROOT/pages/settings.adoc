@@ -598,6 +598,11 @@ These settings never affect PDF export (`pdf.theme`), HTML or the Antora site.
 |see <<docbook-settings>>
 |Where the DocBook export puts pictures, and named DocBook publication profiles in `[docbook.profiles.<name>]`. See <<docbook-settings>>.
 
+|`authoring.profiles.<name>`
+|table
+|none
+|A named set of attribute values to read pages with, in the preview, the visual editor and exports: `attributes`, a table of attribute names to strings, numbers or `true`. A workspace profile replaces a user profile of the same name. A profile that is not valid is left out with a warning. See <<authoring-profiles>>.
+
 |`history.enabled`
 |boolean
 |`true`
@@ -1311,9 +1316,42 @@ output = "build/admin-guide.xml"
 assets = "reference"
 ----
 
+[#authoring-profiles]
+== Authoring profiles
+
+`[authoring.profiles.<name>]` saves a set of attribute values under a name, to read pages with.
+It is a table in either settings file.
+
+[source,toml]
+----
+[authoring.profiles.cloud]
+attributes = { cloud = true, edition = "Cloud" }
+
+[authoring.profiles.on-premises]
+attributes = { edition = "On-premises" }
+----
+
+[cols="1,4"]
+|===
+|Key |Meaning
+
+|`attributes`
+|A table of attribute names to strings, numbers or `true`, which sets an attribute empty, as `:name:` does.
+|===
+
+`attributes` is the only key.
+A profile with any other key, or a value of another type, is left out with a warning naming `authoring.profiles.<name>`.
+A workspace profile replaces a user profile of the same name.
+Profiles are listed by name.
+
+The attributes are added after the playbook's, the component version's and those Antora computes for the page.
+They are hard set, as the attributes in `antora.yml` are unless they end in `@`: a page's own header cannot change them.
+Choose a profile from View › Select Authoring Profile…, or with `--authoring` on the command line.
+See xref:preview.adoc#authoring-profiles[Authoring profiles] for what it changes, and xref:command-line.adoc#authoring[Command line] for the options.
+
 == What a workspace file may set
 
-A workspace file may override `editor.*`, `templates.dir`, `sidebar.navigation.default_expansion`, `sidebar.modules.default_expansion`, `sidebar.follow_active`, `workspace.ignore`, `pdf.*`, `docx.*`, `graph.*`, `quality.*`, `spelling.enabled` and `spelling.language`.
+A workspace file may override `editor.*`, `templates.dir`, `sidebar.navigation.default_expansion`, `sidebar.modules.default_expansion`, `sidebar.follow_active`, `workspace.ignore`, `pdf.*`, `docx.*`, `authoring.*`, `graph.*`, `quality.*`, `spelling.enabled` and `spelling.language`.
 The two depths override separately.
 Both files may set `[quality]`: a rule's severity from the workspace file wins, and the exclusions and the providers of both files apply.
 `tools.*` is accepted only in the user file, so a repository cannot point the editor at an executable of its choosing.

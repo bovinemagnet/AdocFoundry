@@ -14737,3 +14737,65 @@ fn the_source_editor_shows_attribute_values_at_the_ends_of_lines(cx: &mut TestAp
     cx.run_until_parked();
     assert!(cx.update(|_, cx| editor.read(cx).shown_attribute_values().is_empty()));
 }
+
+/// Issue #102: Select Authoring Profile… lists None and the settings' profiles, and confirming
+/// one chooses it for the preview, the visual editor and exports.
+#[gpui::test]
+fn the_authoring_profile_picker_chooses_a_profile(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    std::fs::write(
+        root.join(".adocfoundry.toml"),
+        "[authoring.profiles.cloud]\nattributes = { cloud = true }\n\n\
+         [authoring.profiles.student]\nattributes = { audience = \"student\" }\n",
+    )
+    .unwrap();
+    let page = root.join("page.adoc");
+    std::fs::write(&page, "= Page\n\nifdef::cloud[]\nCloud.\nendif::[]\n").unwrap();
+    let settings = Settings::load(None, Some(&root)).unwrap().with_git_opt_in();
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.run_until_parked();
+    let chosen = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            app.read(cx)
+                .engine
+                .authoring_profile()
+                .map(|profile| profile.name.clone())
+        })
+    };
+
+    cx.dispatch_action(crate::editor::bindings::SelectAuthoringProfile);
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    // None, then cloud.
+    cx.simulate_keystrokes("down");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert_eq!(chosen(&mut cx).as_deref(), Some("cloud"));
+    cx.run_until_parked();
+    let status = cx
+        .debug_bounds("status-authoring")
+        .expect("the status bar names the profile");
+    cx.simulate_click(status.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(
+        cx.update(gpui_component::WindowExt::has_active_dialog),
+        "a click opens the picker"
+    );
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+
+    // None is first, so choosing it again takes the profile away.
+    cx.dispatch_action(crate::editor::bindings::SelectAuthoringProfile);
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(chosen(&mut cx), None);
+    assert!(cx.debug_bounds("status-authoring").is_none());
+}

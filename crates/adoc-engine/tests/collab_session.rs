@@ -1035,6 +1035,7 @@ const ALLOWED_WHILE_HOSTING: &[&str] = &[
     "navigate.open_on_remote",
     "navigate.peek_include",
     "navigate.reveal",
+    "preview.authoring_profile",
     "preview.pin",
     "preview.retry_diagrams",
     "project.build_site",

@@ -55,6 +55,7 @@ use crate::{
     visual::{VisualEvent, VisualView},
 };
 
+mod authoring_picker;
 mod build_site;
 mod collaboration;
 mod comments;
@@ -961,6 +962,8 @@ impl WorkspaceView {
                     cx,
                 );
             }
+            // The status bar names the profile chosen.
+            EngineEvent::AuthoringProfileChanged => cx.notify(),
             EngineEvent::SettingsChanged => {
                 self.apply_theme(window, cx);
                 self.warn_about_settings(window, cx);
@@ -5547,7 +5550,7 @@ impl WorkspaceView {
                 .iter()
                 .enumerate()
                 // The zoom commands only while an image or the PDF preview is shown.
-                .filter(|(index, _)| zoom || *index < ZOOM_UI_ACTIONS)
+                .filter(|(index, _)| zoom || !ZOOM_UI_ACTIONS.contains(index))
                 .map(|(index, (title, _))| {
                     actions.push(ui_action(index));
                     CommandItem::new().label(*title)
@@ -6356,6 +6359,9 @@ impl WorkspaceView {
                 .name;
             Some(format!("Following {name}"))
         });
+        let authoring = engine
+            .authoring_profile()
+            .map(|profile| format!("Profile: {}", profile.name));
         StatusBar::new()
             .left(
                 div()
@@ -6407,6 +6413,24 @@ impl WorkspaceView {
                         .debug_selector(|| "status-following".to_owned())
                         .text_xs()
                         .child(following),
+                )
+            })
+            .when_some(authoring, |bar, authoring| {
+                // Pages are read with the profile's attributes: said where it is always seen,
+                // and a click changes it.
+                bar.left(
+                    div()
+                        .id("status-authoring")
+                        .debug_selector(|| "status-authoring".to_owned())
+                        .text_xs()
+                        .cursor_pointer()
+                        .child(authoring)
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(crate::editor::bindings::SelectAuthoringProfile),
+                                cx,
+                            );
+                        }),
                 )
             })
             .when(indexing, |bar| bar.left(div().text_xs().child("Indexing…")))
@@ -6651,6 +6675,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_toggle_theme))
             .on_action(cx.listener(Self::on_select_theme))
             .on_action(cx.listener(Self::on_select_font_set))
+            .on_action(cx.listener(Self::on_select_authoring_profile))
             .on_action(cx.listener(Self::on_follow_system))
             .on_action(cx.listener(Self::on_light_appearance))
             .on_action(cx.listener(Self::on_dark_appearance))

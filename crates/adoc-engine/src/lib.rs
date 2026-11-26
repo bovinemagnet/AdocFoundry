@@ -6,6 +6,7 @@
 mod about;
 mod appearance;
 mod attribute_inspection;
+mod authoring;
 mod auto_save;
 mod clock;
 mod coauthors;
@@ -123,6 +124,7 @@ pub use appearance::AppearanceChoice;
 pub use attribute_inspection::{
     AttributeInspection, EffectiveValue, InspectionRow, InspectionRowKind,
 };
+pub use authoring::AuthoringProfile;
 pub use auto_save::AUTO_SAVE_DELAY;
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use coauthors::CoAuthor;

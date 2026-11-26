@@ -1,0 +1,6 @@
+# Authoring profiles (#102): named sets of attributes to read pages with.
+[authoring.profiles.cloud]
+attributes = { cloud = true, edition = "Cloud" }
+
+[authoring.profiles.on-premises]
+attributes = { edition = "On-premises" }

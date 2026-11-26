@@ -180,6 +180,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::PREVIEW_PIN),
             Command(ids::VIEW_TOGGLE_SCROLL_SYNC),
             Command(ids::PREVIEW_RETRY_DIAGRAMS),
+            Ui(16),
             Separator,
             Command(ids::GIT_SHOW_CHANGES),
             Command(ids::GIT_SHOW_BLAME),
@@ -372,7 +373,7 @@ pub(crate) fn menus(engine: &Engine) -> Vec<Menu> {
                         label: UI_ACTIONS[index].0.into(),
                         action: ui_action(index),
                         // The zoom commands act on an image or the PDF preview.
-                        disabled: index >= ZOOM_UI_ACTIONS && !can_zoom(engine),
+                        disabled: ZOOM_UI_ACTIONS.contains(&index) && !can_zoom(engine),
                     },
                     Command(id) => {
                         let (Some(command), Some(action)) =

@@ -631,7 +631,7 @@ impl Engine {
     }
 
     /// The attributes a page is parsed with before its own header: the playbook's, its
-    /// component version's and Antora's page attributes.
+    /// component version's, Antora's page attributes and the chosen authoring profile's.
     pub(crate) fn antora_attributes_for(&self, path: &Path) -> Vec<(String, String)> {
         let antora = &self.workspace_for(path).antora;
         let mut attributes: Vec<(String, String)> = antora
@@ -650,6 +650,7 @@ impl Engine {
                 .map(|(name, value)| (name.to_owned(), value.to_owned())),
         );
         attributes.extend(adoc_lang::attributes::antora_attributes(antora, path));
+        attributes.extend(self.authoring_attributes().iter().cloned());
         attributes
     }
 

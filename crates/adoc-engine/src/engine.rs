@@ -137,6 +137,8 @@ pub struct Engine {
     /// The settings files as last loaded, so a write that leaves them as they were (the app's
     /// own save, reloaded already) does not reload them again.
     pub(crate) settings_loaded: Option<u64>,
+    /// The authoring profile chosen, by name (#102): `Engine::authoring_profile`.
+    pub(crate) authoring_profile: Option<String>,
     /// A session is being restored: the open pages' diagnostics are refreshed once at the end,
     /// not as each page opens.
     pub(crate) restoring: bool,
@@ -284,6 +286,7 @@ impl Engine {
             settling: crate::index_settle::Settling::default(),
             typing: false,
             settings_loaded: None,
+            authoring_profile: None,
             restoring: false,
             applying: false,
             rendered: crate::rendered::PreviewState::default(),
@@ -1319,9 +1322,11 @@ impl Engine {
         let git_was_enabled = self.settings.git.enabled;
         let tools_before = self.settings.tools.clone();
         let audit_was_kept = self.audit_enabled();
+        let authoring_before = self.authoring_attributes().to_vec();
         reload(&mut self.settings)?;
         self.settings_loaded = Some(self.settings_files());
         self.emit(EngineEvent::SettingsChanged);
+        self.authoring_settings_changed(&authoring_before);
         self.audit_settings_changed(audit_was_kept);
         self.spelling_settings_changed();
         self.diagram_tools_changed(&tools_before);
