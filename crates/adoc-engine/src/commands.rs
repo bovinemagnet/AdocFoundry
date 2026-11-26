@@ -116,6 +116,7 @@ pub mod ids {
     pub const VIEW_TOGGLE_PDF_PREVIEW: CommandId = CommandId::new("view.toggle_pdf_preview");
     pub const VIEW_TOGGLE_PDF_WINDOW: CommandId = CommandId::new("view.toggle_pdf_window");
     pub const PREVIEW_PIN: CommandId = CommandId::new("preview.pin");
+    pub const PREVIEW_AUTHORING_PROFILE: CommandId = CommandId::new("preview.authoring_profile");
     pub const PREVIEW_RETRY_DIAGRAMS: CommandId = CommandId::new("preview.retry_diagrams");
     pub const VIEW_SHOW_SOURCE: CommandId = CommandId::new("view.show_source");
     pub const VIEW_SHOW_VISUAL: CommandId = CommandId::new("view.show_visual");
@@ -671,6 +672,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     #[cfg(feature = "collab")]
     crate::collab_session::register_collaboration(registry);
     crate::font_sets::register_font_sets(registry);
+    crate::authoring::register_authoring(registry);
     crate::graph::register_graph(registry);
     #[cfg(feature = "git")]
     {

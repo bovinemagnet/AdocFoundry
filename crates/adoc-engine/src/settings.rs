@@ -481,6 +481,9 @@ impl Default for FontScale {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Settings {
     pub editor: EditorSettings,
+    /// `[authoring.profiles.<name>]`: named sets of attributes to read pages with (#102), by
+    /// name; a workspace's replaces a user's of the same name.
+    pub authoring_profiles: Vec<crate::AuthoringProfile>,
     pub appearance: AppearanceSettings,
     pub workspace: WorkspaceSettings,
     pub tools: ToolSettings,
@@ -918,6 +921,10 @@ impl Settings {
             for (key, value) in entries {
                 if section == "pdf" && key == "profiles" {
                     self.apply_profiles(&source, value);
+                    continue;
+                }
+                if section == "authoring" && key == "profiles" {
+                    self.apply_authoring_profiles(&source, value);
                     continue;
                 }
                 // Either layer: a workspace publishes its own documents.
@@ -1362,6 +1369,32 @@ impl Settings {
                         .sort_by(|left, right| left.name.cmp(&right.name));
                 }
                 Err(problem) => self.warn(source, &format!("pdf.profiles.{name}"), &problem),
+            }
+        }
+    }
+
+    /// `[authoring.profiles.<name>]`: each profile's attributes, or a warning.
+    fn apply_authoring_profiles(&mut self, source: &str, value: &toml::Value) {
+        let Some(profiles) = value.as_table() else {
+            self.warn(source, "authoring.profiles", "expected a table of profiles");
+            return;
+        };
+        for (name, table) in profiles {
+            let parsed = table
+                .as_table()
+                .ok_or_else(|| "expected a table".to_owned())
+                .and_then(|table| crate::authoring::parse_profile(name, table));
+            match parsed {
+                Ok(profile) => {
+                    self.authoring_profiles
+                        .retain(|known| known.name != profile.name);
+                    self.authoring_profiles.push(profile);
+                    self.authoring_profiles
+                        .sort_by(|left, right| left.name.cmp(&right.name));
+                }
+                Err(problem) => {
+                    self.warn(source, &format!("authoring.profiles.{name}"), &problem);
+                }
             }
         }
     }

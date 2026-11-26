@@ -84,6 +84,7 @@ actions!(
         ToggleTheme,
         SelectTheme,
         SelectFontSet,
+        SelectAuthoringProfile,
         FollowSystemAppearance,
         UseLightAppearance,
         UseDarkAppearance,
@@ -189,11 +190,12 @@ pub const UI_ACTIONS: &[(&str, &str)] = &[
     ("Actual Size", "secondary-0"),
     ("Fit to Window", "secondary-9"),
     ("Fit Width", ""),
+    ("Select Authoring Profile…", ""),
 ];
 
-/// The first of the [`UI_ACTIONS`] that zoom, offered only while an image is the active tab or the
-/// PDF preview is shown.
-pub const ZOOM_UI_ACTIONS: usize = 11;
+/// The [`UI_ACTIONS`] that zoom, offered only while an image is the active tab or the PDF
+/// preview is shown.
+pub const ZOOM_UI_ACTIONS: std::ops::Range<usize> = 11..16;
 
 /// Whether command `id`'s default binding is left out on this platform: Windows quits with
 /// Alt-F4, which closes the window, and gives File › Exit no key of its own.
@@ -466,7 +468,8 @@ pub fn ui_action(index: usize) -> Box<dyn gpui::Action> {
         12 => Box::new(crate::image_view::ZoomOut),
         13 => Box::new(crate::image_view::ActualSize),
         14 => Box::new(crate::image_view::FitToWindow),
-        _ => Box::new(crate::image_view::FitWidth),
+        15 => Box::new(crate::image_view::FitWidth),
+        _ => Box::new(SelectAuthoringProfile),
     }
 }
 
@@ -705,6 +708,8 @@ mod tests {
             ids::SETTINGS_SAVE,
             // Saved by Select Font Set…, which is the app's own.
             ids::APPEARANCE_SAVE_FONT_SET,
+            // Chosen by Select Authoring Profile…, which is the app's own.
+            ids::PREVIEW_AUTHORING_PROFILE,
             // The Session panel's buttons, each on the participant or file of its row.
             ids::COLLAB_ADMIT,
             ids::COLLAB_DENY,

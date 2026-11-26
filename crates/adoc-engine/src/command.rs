@@ -143,6 +143,8 @@ pub enum CommandArgs {
     FontSet(String),
     /// A publication profile, by name: `[pdf.profiles.<name>]`.
     Profile(String),
+    /// An authoring profile to choose, by name, or none: `preview.authoring_profile`.
+    AuthoringProfile(Option<String>),
     Custom(serde_json::Value),
     /// A sidebar tree, for the commands that open and close its branches.
     Panel(crate::SidebarPanel),

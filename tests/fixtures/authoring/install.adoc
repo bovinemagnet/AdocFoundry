@@ -1,0 +1,10 @@
+= Install
+
+ifdef::cloud[]
+Sign in to the cloud console.
+endif::[]
+ifndef::cloud[]
+Run the installer.
+endif::[]
+
+The {edition} edition.
