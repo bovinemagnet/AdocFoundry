@@ -49,7 +49,8 @@ Automated coverage for reference:
 
 ## Updates
 
-- [ ] macOS and Windows: an older signed build, pointed at a feed offering a newer release, says once that it is available. After **Update** and confirming, it installs the newer release and relaunches, or, on Windows, runs its installer once the app has exited and then starts the new version.
+- [x] macOS: an older signed build, pointed at a feed offering a newer release, says once that it is available. After **Update** and confirming, it installs the newer release and relaunches. Checked with the app installed by Homebrew's cask, 0.14.0 updating to 0.15.0 once 0.15.0 was released (2026-11-26).
+- [ ] Windows: an older signed build, pointed at a feed offering a newer release, says once that it is available. After **Update** and confirming, it runs its installer once the app has exited and then starts the new version.
 - [ ] macOS and Windows: with a page typed into during the download, the update asks to save it before quitting, and Cancel leaves the app open, the page unsaved and the old version installed.
 - [ ] The notice is not shown again after the app restarts. With `[updates] check = false` there is no check at start-up, and the command still checks.
 - [ ] An ad-hoc or unsigned build, a deb, an rpm and a portable zip only notify, with a link to the release.
@@ -81,5 +82,6 @@ Check on macOS, Windows and Linux (Wayland and X11), from a package, not a sourc
 | Date | Build | Platform | Result |
 |---|---|---|---|
 | 2026-10-25 | `phase-6` branch, debug | macOS 26 (arm64) | MCP over HTTP: every item passes. `cargo test --workspace` (721 tests), clippy, `cargo deny` and `cargo xtask layers` pass. CI on PR #113 passes on Ubuntu, macOS and Windows. Inline STEM, signing and updates are not yet checked by hand: signing needs the Apple and Azure secrets, updating needs two signed releases. |
+| 2026-11-26 | 0.14.0 from Homebrew's cask, updating to 0.15.0 | macOS 27 (arm64) | Updates: the app noticed 0.15.0 once it was released, and **Update** installed it and relaunched the new version. Windows is still to check, once its builds are signed. |
 
 ## Known limitations found
