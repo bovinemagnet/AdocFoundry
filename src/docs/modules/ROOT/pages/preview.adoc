@@ -267,6 +267,7 @@ When a workspace opens, images in the cache that have not been read for 30 days 
 An image is marked as read at most once a day, by its file's modification time, and those the window is showing are never removed.
 Only the cache's own files are removed, regular files named as it names them, and if `.cache`, `.cache/adocfoundry` or the `diagrams` folder is a link, as a repository could make it, the cache is neither read, written nor pruned there.
 Help › Show Diagnostics and `adocfoundry-cli doctor` report the folder's size and how many files it holds.
+The command line can keep the cache elsewhere with `--cache-dir`; see xref:command-line.adoc#cache-dir[].
 A diagram drawn by Graphviz, PlantUML or D2 is also keyed by the program that drew it and the page's folder, so a different or upgraded tool draws it afresh.
 It is keyed too by the size and modification time of each local file the diagram names for its tool to read: PlantUML's `!include`, `!include_many`, `!include_once`, `!includesub`, `!import` and `!theme ... from`, Graphviz's `image` and `shapefile`, and D2's imports (`x: @file`, `...@file`) and local `icon` paths.
 Editing such a file therefore draws the diagram again, in the preview and in exports, and the preview and visual editor show it again as soon as the change is saved.

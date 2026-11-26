@@ -36,12 +36,15 @@
 //! adocfoundry-cli doctor [<root>] [--format text|json]
 //! adocfoundry-cli --version
 //! ```
+//!
+//! Every command also takes `--timeout <seconds>`, and `--cache-dir <dir>` or `--no-cache`
+//! ([`Globals`]).
 
 use std::{
     io::{self, BufWriter, Write as _},
     path::{Path, PathBuf},
     process::ExitCode,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use adoc_core::{DiagnosticSeverity, LineIndex};
@@ -97,11 +100,154 @@ const USAGE: &str = "usage:
   adocfoundry-cli new-project <folder> --name <name> [--template <id|folder>] [--title <title>]
       [--version <version>] [--subfolder <dir>] [--no-git] [--no-readme] [--no-playbook]
   adocfoundry-cli --version
+Every command takes --timeout <seconds> (else ADOCFOUNDRY_TIMEOUT; 300 by default), the time
+the whole command may take, after which it exits with 2, and --cache-dir <dir> (else
+ADOCFOUNDRY_CACHE_DIR), which keeps rendered diagrams in <dir>/diagrams, not in the workspace,
+or --no-cache, which keeps none.
 render, pdf, docx, kindle, epub and docbook take --authoring <profile>, which reads the pages
 with the attributes of [authoring.profiles.<profile>] in the settings.
 Relative paths, `--changed-file` among them, are read against the current directory.";
 
-const INDEX_TIMEOUT: Duration = Duration::from_secs(300);
+/// How long a command may take, indexing and exporting together, unless `--timeout` or
+/// `ADOCFOUNDRY_TIMEOUT` says otherwise (#809).
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// How long an export that ran out of time is given to take away its unfinished files.
+const TIDY_UP: Duration = Duration::from_secs(10);
+
+/// The options every command takes, wherever they are written: `--timeout <seconds>`, else
+/// `ADOCFOUNDRY_TIMEOUT`; `--cache-dir <dir>`, else `ADOCFOUNDRY_CACHE_DIR`; and `--no-cache`,
+/// which keeps nothing and wins over `ADOCFOUNDRY_CACHE_DIR`.
+struct Globals {
+    /// When the command must have finished: the timeout bounds the whole command, not each
+    /// wait within it.
+    deadline: Instant,
+    timeout: Duration,
+    /// The folder the diagram cache is kept in, as `<dir>/diagrams`, rather than in the
+    /// workspace (#810).
+    cache_dir: Option<PathBuf>,
+    /// With `--no-cache`, the temporary folder `cache_dir` names, removed with it as the
+    /// command ends.
+    _scratch: Option<tempfile::TempDir>,
+}
+
+impl Globals {
+    /// The arguments without the global options, and those options.
+    fn take(arguments: &[String]) -> Result<(Vec<String>, Self), String> {
+        let started = Instant::now();
+        let mut rest = Vec::new();
+        let mut timeout = None;
+        let mut cache_dir = None;
+        let mut no_cache = false;
+        let mut iter = arguments.iter();
+        while let Some(argument) = iter.next() {
+            let slot = match argument.as_str() {
+                "--no-cache" => {
+                    no_cache = true;
+                    continue;
+                }
+                "--timeout" => &mut timeout,
+                "--cache-dir" => &mut cache_dir,
+                _ => {
+                    rest.push(argument.clone());
+                    continue;
+                }
+            };
+            let value = iter
+                .next()
+                .ok_or_else(|| format!("`{argument}` needs a value"))?;
+            *slot = Some(value.clone());
+        }
+        // An empty variable is as good as none, as CI systems set them.
+        let environment = |name: &'static str| {
+            std::env::var(name)
+                .ok()
+                .filter(|value| !value.is_empty())
+                .map(|value| (name, value))
+        };
+        let timeout = match timeout
+            .map(|value| ("--timeout", value))
+            .or_else(|| environment("ADOCFOUNDRY_TIMEOUT"))
+        {
+            Some((name, value)) => seconds(&value)
+                .ok_or_else(|| format!("{name} `{value}`: expected a number of seconds above 0"))?,
+            None => DEFAULT_TIMEOUT,
+        };
+        if no_cache && cache_dir.is_some() {
+            return Err("`--no-cache` and `--cache-dir` cannot be used together".to_owned());
+        }
+        // Nothing kept: the diagrams are drawn into a folder of their own, gone at the end.
+        let scratch = no_cache
+            .then(|| {
+                tempfile::Builder::new()
+                    .prefix("adocfoundry-cli-")
+                    .tempdir()
+                    .map_err(|error| format!("--no-cache: {error}"))
+            })
+            .transpose()?;
+        let cache_dir = match &scratch {
+            Some(scratch) => Some(scratch.path().to_path_buf()),
+            None => cache_dir
+                .or_else(|| environment("ADOCFOUNDRY_CACHE_DIR").map(|(_, value)| value))
+                .map(absolute)
+                .transpose()?,
+        };
+        Ok((
+            rest,
+            Self {
+                deadline: started + timeout,
+                timeout,
+                cache_dir,
+                _scratch: scratch,
+            },
+        ))
+    }
+
+    /// What is left of the command's time.
+    fn remaining(&self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
+    }
+
+    fn expired(&self) -> bool {
+        Instant::now() >= self.deadline
+    }
+
+    /// The error for `step` having run out of the command's time.
+    fn ran_out(&self, step: &str) -> String {
+        format!(
+            "{step} did not finish within the timeout of {} s (--timeout)",
+            self.timeout.as_secs_f64()
+        )
+    }
+
+    /// An export's result, or the error for its having run out of time, which ends the command
+    /// with 2 rather than as a failed export. The engine abandons an export that runs out, so
+    /// it never replaces the output afterwards; its workers are given [`TIDY_UP`] to finish and
+    /// take away the files they were writing beside the output, which they would leave behind
+    /// were the process to end first.
+    fn in_time(
+        &self,
+        engine: &mut Engine,
+        result: Result<ExportSummary, EngineError>,
+    ) -> Result<Result<ExportSummary, EngineError>, String> {
+        match result {
+            Err(_) if self.expired() => {
+                engine.wait_for_workers(TIDY_UP);
+                Err(self.ran_out("the export"))
+            }
+            result => Ok(result),
+        }
+    }
+}
+
+/// A positive, finite number of seconds.
+fn seconds(value: &str) -> Option<Duration> {
+    value
+        .parse::<f64>()
+        .ok()
+        .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+        .and_then(|seconds| Duration::try_from_secs_f64(seconds).ok())
+}
 
 /// Writes to standard output through an [`Out`], as `print!` does.
 macro_rules! out {
@@ -176,6 +322,8 @@ fn main() -> ExitCode {
 }
 
 fn run(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+    let (arguments, cli) = Globals::take(arguments)?;
+    let cli = &cli;
     let Some((command, rest)) = arguments.split_first() else {
         return Err(USAGE.to_owned());
     };
@@ -188,22 +336,22 @@ fn run(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
             outln!(out, "{USAGE}");
             Ok(ExitCode::SUCCESS)
         }
-        "check" => check(rest, out),
-        "audit" => audit(rest, out),
-        "symbols" => symbols(rest, out),
-        "follow" => follow(rest, out),
-        "render" => render(rest, out),
-        "pdf" => pdf(rest, out),
-        "docx" => docx(rest, out),
-        "kindle" => kindle(rest, out),
-        "epub" => epub(rest, out),
-        "docbook" => docbook(rest, out),
-        "git-status" => git_status(rest, out),
-        "graph" => graph(rest, out),
-        "doctor" => doctor(rest, out),
-        "new-module" => new_module(rest, out),
-        "new-project" => new_project(rest, out),
-        "impact" => impact(rest, out),
+        "check" => check(rest, cli, out),
+        "audit" => audit(rest, cli, out),
+        "symbols" => symbols(rest, cli, out),
+        "follow" => follow(rest, cli, out),
+        "render" => render(rest, cli, out),
+        "pdf" => pdf(rest, cli, out),
+        "docx" => docx(rest, cli, out),
+        "kindle" => kindle(rest, cli, out),
+        "epub" => epub(rest, cli, out),
+        "docbook" => docbook(rest, cli, out),
+        "git-status" => git_status(rest, cli, out),
+        "graph" => graph(rest, cli, out),
+        "doctor" => doctor(rest, cli, out),
+        "new-module" => new_module(rest, cli, out),
+        "new-project" => new_project(rest, cli, out),
+        "impact" => impact(rest, cli, out),
         other => Err(format!("unknown command `{other}`\n{USAGE}")),
     }
 }
@@ -211,7 +359,7 @@ fn run(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
 /// Makes a module in the component version at `<component-root>` (the folder holding
 /// `antora.yml`) through the engine's `module.new`, as the app's New Module does, and lists the
 /// files it made, relative to the component root.
-fn new_module(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+fn new_module(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, String> {
     let nav = !arguments.iter().any(|argument| argument == "--no-nav");
     let arguments: Vec<String> = arguments
         .iter()
@@ -236,7 +384,7 @@ fn new_module(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
             .collect::<Result<_, _>>()?,
     };
     let root = adoc_index::normalize_path(Path::new(component));
-    let mut engine = open_engine(&root, false)?;
+    let mut engine = open_engine(&root, false, cli)?;
     let request = adoc_engine::NewModule {
         component: root.clone(),
         name: (*name).to_owned(),
@@ -281,7 +429,7 @@ fn new_module(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
 /// Makes an Antora project in `<folder>` (empty, or with `--subfolder` for a code repository)
 /// through the engine's `project.new`, as the app's New Antora Project does, and lists the files
 /// it made, relative to the folder.
-fn new_project(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+fn new_project(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, String> {
     let flags = ["--no-git", "--no-readme", "--no-playbook"];
     let has = |flag: &str| arguments.iter().any(|argument| argument == flag);
     let (git, readme, playbook) = (!has("--no-git"), !has("--no-readme"), !has("--no-playbook"));
@@ -298,7 +446,7 @@ fn new_project(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> 
         return Err(USAGE.to_owned());
     };
     let root = adoc_index::normalize_path(Path::new(folder));
-    let mut engine = open_engine(&root, false)?;
+    let mut engine = open_engine(&root, false, cli)?;
     // A built-in or listed template, or a template's folder.
     let template = match option(&options, "template") {
         Some(given) if Path::new(given).is_dir() => std::path::absolute(given)
@@ -353,7 +501,7 @@ fn new_project(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> 
 /// Git refs, `HEAD` against the working tree, or for paths named, as text or JSON. The exit
 /// code is 0 for a finished analysis, however many impacts; 2 when the source is invalid or
 /// unavailable, or the analysis is partial under `--require-complete`.
-fn impact(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+fn impact(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, String> {
     let require_complete = arguments
         .iter()
         .any(|argument| argument == "--require-complete");
@@ -418,7 +566,7 @@ fn impact(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
             .parse()
             .map_err(|_| format!("--max-impacts takes a number, not `{max}`"))?;
     }
-    let mut engine = open_engine(&root, false)?;
+    let mut engine = open_engine(&root, false, cli)?;
     let report = match engine.analyse_impact(&source, limits) {
         Ok(report) => report,
         Err(error) => {
@@ -578,7 +726,7 @@ fn option<'a>(options: &[(&str, &'a str)], name: &str) -> Option<&'a str> {
 }
 
 /// An engine over the workspace at `root`, indexed. Git is looked at only when `git` is true.
-fn open_engine(root: &Path, git: bool) -> Result<Engine, String> {
+fn open_engine(root: &Path, git: bool, cli: &Globals) -> Result<Engine, String> {
     let mut settings = Settings::load(None, None).map_err(|error| error.to_string())?;
     if git {
         settings.git.enabled = true;
@@ -587,7 +735,7 @@ fn open_engine(root: &Path, git: bool) -> Result<Engine, String> {
         // does not turn it back on.
         settings = settings.with_git_opt_in();
     }
-    open_engine_with(root, settings)
+    open_engine_with(root, settings, cli)
 }
 
 /// Chooses the authoring profile `--authoring` names (#102), so pages are read with its
@@ -602,13 +750,18 @@ fn choose_authoring(engine: &mut Engine, options: &[(&str, &str)]) -> Result<(),
 }
 
 /// An engine with `settings` over the workspace at `root`, indexed.
-fn open_engine_with(root: &Path, settings: Settings) -> Result<Engine, String> {
+fn open_engine_with(root: &Path, settings: Settings, cli: &Globals) -> Result<Engine, String> {
     let mut engine = Engine::new(settings);
+    // Before the workspace opens, which prunes the cache.
+    if let Some(dir) = &cli.cache_dir {
+        engine.set_diagram_cache(Some(dir.join("diagrams")));
+    }
     engine
         .open_workspace(vec![root.to_path_buf()])
         .map_err(|error| error.to_string())?;
-    if !engine.wait_for_workers(INDEX_TIMEOUT) {
-        return Err("indexing did not finish".to_owned());
+    // Out of time is out of time, even if the index came in at the last moment.
+    if !engine.wait_for_workers(cli.remaining()) || cli.expired() {
+        return Err(cli.ran_out("indexing"));
     }
     // A workspace that could not be indexed has nothing to report, which is not a pass.
     if let Some(error) = engine.index_failure() {
@@ -617,7 +770,7 @@ fn open_engine_with(root: &Path, settings: Settings) -> Result<Engine, String> {
     Ok(engine)
 }
 
-fn check(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+fn check(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(arguments, &["format", "fail-on"])?;
     let [root] = positional.as_slice() else {
         return Err(USAGE.to_owned());
@@ -635,7 +788,7 @@ fn check(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
 
     let shown_root = absolute(root)?;
     let root = adoc_index::normalize_path(Path::new(root));
-    let engine = open_engine(&root, false)?;
+    let engine = open_engine(&root, false, cli)?;
     let entries = engine.check_report(&root, None);
     let failed = entries.iter().any(|entry| entry.meets(threshold));
     if json {
@@ -723,7 +876,7 @@ impl<'a> CheckJson<'a> {
 /// code is the report's verdict (Quality PRD §5.4): 0 below the threshold, 1 at it, and 2 when
 /// the audit is unavailable, partial while completeness is required, or the `[quality]`
 /// settings are invalid. The report is written in full before exiting, whatever the code.
-fn audit(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+fn audit(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, String> {
     let require_complete = arguments
         .iter()
         .any(|argument| argument == "--require-complete");
@@ -762,7 +915,7 @@ fn audit(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     };
 
     let root = adoc_index::normalize_path(Path::new(root));
-    let engine = open_engine_with(&root, audit_settings(&root)?)?;
+    let engine = open_engine_with(&root, audit_settings(&root)?, cli)?;
     // Opening the workspace reads its settings file again, so the options apply afterwards.
     let quality = &engine.settings().quality;
     let problems = quality.problems.clone();
@@ -934,13 +1087,13 @@ fn audit_text(
     lines.join("\n")
 }
 
-fn symbols(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+fn symbols(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, String> {
     let (positional, _) = parse_options(arguments, &[])?;
     let [root, query] = positional.as_slice() else {
         return Err(USAGE.to_owned());
     };
     let root = adoc_index::normalize_path(Path::new(root));
-    let engine = open_engine(&root, false)?;
+    let engine = open_engine(&root, false, cli)?;
     for symbol in engine.workspace_symbols(query) {
         let text = std::fs::read_to_string(&symbol.path).unwrap_or_default();
         let (line, column) = LineIndex::new(&text).line_character(&text, symbol.range.start);
@@ -999,7 +1152,7 @@ fn default_root(file: &Path) -> PathBuf {
         )
 }
 
-fn follow(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+fn follow(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(arguments, &["root"])?;
     let [file, offset] = positional.as_slice() else {
         return Err(USAGE.to_owned());
@@ -1013,7 +1166,7 @@ fn follow(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         None => default_root(&file),
     };
 
-    let mut engine = open_engine(&root, false)?;
+    let mut engine = open_engine(&root, false, cli)?;
     let id = engine.open(&file).map_err(|error| error.to_string())?;
     match engine.invoke(
         ids::NAVIGATE_FOLLOW_LINK,
@@ -1055,7 +1208,7 @@ fn follow(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
 }
 
 /// Renders a page to a standalone HTML file, or to standard output, as the preview shows it.
-fn render(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+fn render(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, String> {
     let link_images = arguments.iter().any(|argument| argument == "--link-images");
     let arguments: Vec<String> = arguments
         .iter()
@@ -1079,13 +1232,17 @@ fn render(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         None => default_root(&file),
     };
 
-    let mut engine = open_engine(&root, false)?;
+    let mut engine = open_engine(&root, false, cli)?;
     choose_authoring(&mut engine, &options)?;
     engine.set_document_parser(parser);
     let id = engine.open(&file).map_err(|error| error.to_string())?;
-    let preview = engine
-        .render_blocking(id, INDEX_TIMEOUT)
-        .ok_or_else(|| format!("{} did not render", file.display()))?;
+    let preview = engine.render_blocking(id, cli.remaining()).ok_or_else(|| {
+        if cli.expired() {
+            cli.ran_out("rendering")
+        } else {
+            format!("{} did not render", file.display())
+        }
+    })?;
     let html = adoc_render::to_html(&preview.view, &engine.html_options(true));
     match option(&options, "output") {
         Some(output) => {
@@ -1104,7 +1261,7 @@ fn render(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
 }
 
 /// Exports a page, or a component version as a book, to PDF.
-fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+fn pdf(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(
         arguments,
         &[
@@ -1135,7 +1292,7 @@ fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     if let Some(profile) = option(&options, "profile") {
         // A profile is exported as the app exports it; options given here win over it.
         let root = profile_root(&positional, &options)?;
-        let mut engine = open_engine(&root, false)?;
+        let mut engine = open_engine(&root, false, cli)?;
         choose_authoring(&mut engine, &options)?;
         let mut args = engine
             .profile_export_args(profile)
@@ -1155,12 +1312,13 @@ fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
             }
         }
         args.typst = option(&options, "typst").map(PathBuf::from);
-        return report_export(&mut engine, args, &root, fail_on, out);
+        return report_export(&mut engine, args, &root, fail_on, cli, out);
     }
     let [target] = positional.as_slice() else {
         return Err(USAGE.to_owned());
     };
-    let (mut engine, root, export_target, default_output) = open_target(target, &options, "pdf")?;
+    let (mut engine, root, export_target, default_output) =
+        open_target(target, &options, cli, "pdf")?;
     let output = option(&options, "output").map_or(default_output, PathBuf::from);
     let args = ExportArgs {
         target: export_target,
@@ -1171,7 +1329,7 @@ fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         typst: option(&options, "typst").map(PathBuf::from),
         attributes: Vec::new(),
     };
-    report_export(&mut engine, args, &root, fail_on, out)
+    report_export(&mut engine, args, &root, fail_on, cli, out)
 }
 
 /// `--fail-on`: the least severe diagnostic that fails the run, or none.
@@ -1201,6 +1359,7 @@ fn profile_root(positional: &[&str], options: &[(&str, &str)]) -> Result<PathBuf
 fn open_target(
     target: &str,
     options: &[(&str, &str)],
+    cli: &Globals,
     extension: &str,
 ) -> Result<(Engine, PathBuf, ExportTarget, PathBuf), String> {
     let beside = Path::new(target).with_extension(extension);
@@ -1216,7 +1375,7 @@ fn open_target(
         None => default_root(&target),
     };
 
-    let mut engine = open_engine(&root, false)?;
+    let mut engine = open_engine(&root, false, cli)?;
     choose_authoring(&mut engine, options)?;
     // The component version to export, `None` its version for one unversioned (`~`).
     let component = match option(options, "component") {
@@ -1258,7 +1417,7 @@ fn open_target(
 }
 
 /// Exports a page, or a component version as a book, to an editable Word document.
-fn docx(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+fn docx(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, String> {
     let no_theme = arguments.iter().any(|argument| argument == "--no-theme");
     let arguments: Vec<String> = arguments
         .iter()
@@ -1294,7 +1453,7 @@ fn docx(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     };
     if let Some(profile) = option(&options, "profile") {
         let root = profile_root(&positional, &options)?;
-        let mut engine = open_engine(&root, false)?;
+        let mut engine = open_engine(&root, false, cli)?;
         choose_authoring(&mut engine, &options)?;
         let mut args = engine
             .docx_profile_export_args(profile)
@@ -1306,13 +1465,14 @@ fn docx(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
             args.look = look;
         }
         let output = args.output.clone();
-        let result = engine.export_docx_blocking(args, INDEX_TIMEOUT);
+        let result = engine.export_docx_blocking(args, cli.remaining());
+        let result = cli.in_time(&mut engine, result)?;
         return report(result, &output, &root, fail_on, out, true);
     }
     let [target] = positional.as_slice() else {
         return Err(USAGE.to_owned());
     };
-    let (mut engine, root, target, default_output) = open_target(target, &options, "docx")?;
+    let (mut engine, root, target, default_output) = open_target(target, &options, cli, "docx")?;
     let output = option(&options, "output").map_or(default_output, PathBuf::from);
     let args = DocxExportArgs {
         target,
@@ -1322,14 +1482,15 @@ fn docx(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         landscape: None,
         look,
     };
-    let result = engine.export_docx_blocking(args, INDEX_TIMEOUT);
+    let result = engine.export_docx_blocking(args, cli.remaining());
+    let result = cli.in_time(&mut engine, result)?;
     report(result, &output, &root, fail_on, out, true)
 }
 
 /// Exports a page, or a component version as a book, to a Kindle book: AZW3 or KFX, from
 /// `--format`, else the output's extension, else `[kindle] format`. A format is never written
 /// under the other's extension.
-fn kindle(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+fn kindle(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(
         arguments,
         &[
@@ -1367,7 +1528,7 @@ fn kindle(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     };
     if let Some(profile) = option(&options, "profile") {
         let root = profile_root(&positional, &options)?;
-        let mut engine = open_engine(&root, false)?;
+        let mut engine = open_engine(&root, false, cli)?;
         choose_authoring(&mut engine, &options)?;
         let mut args = engine
             .kindle_profile_export_args(profile)
@@ -1380,7 +1541,8 @@ fn kindle(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
             args.output = PathBuf::from(output);
         }
         let output = args.output.clone();
-        let result = engine.export_kindle_blocking(args, INDEX_TIMEOUT);
+        let result = engine.export_kindle_blocking(args, cli.remaining());
+        let result = cli.in_time(&mut engine, result)?;
         return report(result, &output, &root, fail_on, out, true);
     }
     let [target] = positional.as_slice() else {
@@ -1388,14 +1550,15 @@ fn kindle(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     };
     let guess = named.unwrap_or_default();
     let (mut engine, root, target, default_output) =
-        open_target(target, &options, guess.extension())?;
+        open_target(target, &options, cli, guess.extension())?;
     let format = named.unwrap_or(engine.settings().kindle.format);
     let output = option(&options, "output").map_or_else(
         || default_output.with_extension(format.extension()),
         PathBuf::from,
     );
     let args = KindleExportArgs::new(target, format, output.clone());
-    let result = engine.export_kindle_blocking(args, INDEX_TIMEOUT);
+    let result = engine.export_kindle_blocking(args, cli.remaining());
+    let result = cli.in_time(&mut engine, result)?;
     report(result, &output, &root, fail_on, out, true)
 }
 
@@ -1404,7 +1567,7 @@ fn kindle(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
 /// Exports a page as a DocBook article, or a component version as a DocBook book, with its
 /// pictures in the folder beside it named after it. An output that is not an `.xml` file is
 /// refused before anything is read.
-fn docbook(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+fn docbook(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(
         arguments,
         &[
@@ -1435,7 +1598,7 @@ fn docbook(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         .transpose()?;
     let (mut engine, root, args) = if let Some(profile) = option(&options, "profile") {
         let root = profile_root(&positional, &options)?;
-        let mut engine = open_engine(&root, false)?;
+        let mut engine = open_engine(&root, false, cli)?;
         choose_authoring(&mut engine, &options)?;
         let mut args = engine
             .docbook_profile_export_args(profile)
@@ -1448,7 +1611,7 @@ fn docbook(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         let [target] = positional.as_slice() else {
             return Err(USAGE.to_owned());
         };
-        let (engine, root, target, default_output) = open_target(target, &options, "xml")?;
+        let (engine, root, target, default_output) = open_target(target, &options, cli, "xml")?;
         let output = option(&options, "output").map_or(default_output, PathBuf::from);
         (engine, root, DocBookExportArgs::new(target, output))
     };
@@ -1457,7 +1620,8 @@ fn docbook(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         ..args
     };
     let output = args.output.clone();
-    let result = engine.export_docbook_blocking(args, INDEX_TIMEOUT);
+    let result = engine.export_docbook_blocking(args, cli.remaining());
+    let result = cli.in_time(&mut engine, result)?;
     let written = result.is_ok();
     let code = report(result, &output, &root, fail_on, out, true)?;
     let folder = adoc_engine::docbook_assets_folder(&output);
@@ -1473,7 +1637,7 @@ fn docbook(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     Ok(code)
 }
 
-fn epub(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+fn epub(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(
         arguments,
         &[
@@ -1497,7 +1661,7 @@ fn epub(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     }
     if let Some(profile) = option(&options, "profile") {
         let root = profile_root(&positional, &options)?;
-        let mut engine = open_engine(&root, false)?;
+        let mut engine = open_engine(&root, false, cli)?;
         choose_authoring(&mut engine, &options)?;
         let mut args = engine
             .epub_profile_export_args(profile)
@@ -1506,16 +1670,18 @@ fn epub(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
             args.output = PathBuf::from(output);
         }
         let output = args.output.clone();
-        let result = engine.export_epub_blocking(args, INDEX_TIMEOUT);
+        let result = engine.export_epub_blocking(args, cli.remaining());
+        let result = cli.in_time(&mut engine, result)?;
         return report(result, &output, &root, fail_on, out, true);
     }
     let [target] = positional.as_slice() else {
         return Err(USAGE.to_owned());
     };
-    let (mut engine, root, target, default_output) = open_target(target, &options, "epub")?;
+    let (mut engine, root, target, default_output) = open_target(target, &options, cli, "epub")?;
     let output = option(&options, "output").map_or(default_output, PathBuf::from);
     let args = EpubExportArgs::new(target, output.clone());
-    let result = engine.export_epub_blocking(args, INDEX_TIMEOUT);
+    let result = engine.export_epub_blocking(args, cli.remaining());
+    let result = cli.in_time(&mut engine, result)?;
     report(result, &output, &root, fail_on, out, true)
 }
 
@@ -1550,10 +1716,12 @@ fn report_export(
     args: ExportArgs,
     root: &Path,
     fail_on: Option<DiagnosticSeverity>,
+    cli: &Globals,
     out: &mut Out,
 ) -> Result<ExitCode, String> {
     let output = args.output.clone();
-    let result = engine.export_blocking(args, INDEX_TIMEOUT);
+    let result = engine.export_blocking(args, cli.remaining());
+    let result = cli.in_time(engine, result)?;
     report(result, &output, root, fail_on, out, false)
 }
 
@@ -1636,7 +1804,7 @@ fn report(
 
 /// The branch of the repository holding `root`, and its changed AsciiDoc files with the number
 /// of changed line runs in each.
-fn git_status(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+fn git_status(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(arguments, &["format"])?;
     let [root] = positional.as_slice() else {
         return Err(USAGE.to_owned());
@@ -1647,10 +1815,16 @@ fn git_status(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         other => return Err(format!("unknown format `{other}`")),
     };
     let root = adoc_index::normalize_path(Path::new(root));
-    let mut engine = open_engine(&root, true)?;
+    let mut engine = open_engine(&root, true, cli)?;
     let report = engine
-        .git_status_report(&root, INDEX_TIMEOUT)
-        .map_err(|error| error.to_string())?;
+        .git_status_report(&root, cli.remaining())
+        .map_err(|error| {
+            if cli.expired() {
+                cli.ran_out("reading the Git status")
+            } else {
+                error.to_string()
+            }
+        })?;
     if json {
         let output = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
         outln!(out, "{output}");
@@ -1668,7 +1842,7 @@ fn git_status(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
 
 /// The link graph of the workspace at `root`, of a page and its neighbours, or along the
 /// shortest path between two pages, as JSON, DOT or an SVG image.
-fn graph(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+fn graph(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, String> {
     // Flags take no value: take them out before the options.
     let flags = [
         "--no-partials",
@@ -1731,12 +1905,12 @@ fn graph(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     };
     // Ages come from Git history, read once the repository is found.
     let ages = flag("--ages");
-    let mut engine = open_engine(&root, ages)?;
+    let mut engine = open_engine(&root, ages, cli)?;
     if ages {
         for _ in 0..3 {
             engine.pump();
-            if !engine.wait_for_workers(INDEX_TIMEOUT) {
-                return Err("reading the Git history did not finish".to_owned());
+            if !engine.wait_for_workers(cli.remaining()) {
+                return Err(cli.ran_out("reading the Git history"));
             }
         }
         engine.pump();
@@ -1839,7 +2013,7 @@ fn change_letter(name: &str) -> char {
 
 /// The doctor report, for support requests: with the user settings file the app reads, and
 /// `root`'s workspace settings when given.
-fn doctor(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
+fn doctor(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(arguments, &["format"])?;
     let json = match option(&options, "format").unwrap_or("text") {
         "text" => false,
@@ -1849,6 +2023,9 @@ fn doctor(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let user_file = Settings::default_user_file();
     let settings = Settings::load(user_file.as_deref(), None).map_err(|error| error.to_string())?;
     let mut engine = Engine::new(settings);
+    if let Some(dir) = &cli.cache_dir {
+        engine.set_diagram_cache(Some(dir.join("diagrams")));
+    }
     match positional.as_slice() {
         [] => {}
         [root] => engine
@@ -1883,7 +2060,12 @@ mod tests {
         repository.commit_all("page");
 
         let root = directory.path();
-        let engine = open_engine_with(root, audit_settings(root).unwrap()).unwrap();
+        let engine = open_engine_with(
+            root,
+            audit_settings(root).unwrap(),
+            &Globals::take(&[]).unwrap().1,
+        )
+        .unwrap();
         assert!(engine.git().repositories().is_empty());
     }
 

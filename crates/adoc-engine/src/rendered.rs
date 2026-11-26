@@ -140,6 +140,9 @@ pub(crate) struct PreviewState {
     /// waiting for it.
     crashed: BTreeMap<DocumentId, u64>,
     diagrams: Option<Arc<Diagrams>>,
+    /// The diagram cache's folder when a front end chose one, see
+    /// [`Engine::set_diagram_cache`].
+    cache_dir: Option<PathBuf>,
     /// The parser previews are built with; acdc unless set otherwise.
     parser: Option<Arc<dyn DocumentParser>>,
     rendering: BTreeSet<String>,
@@ -848,15 +851,15 @@ impl Engine {
         self.request_pdf_preview(id);
     }
 
-    /// The diagram renderer, cached under the first workspace root.
+    /// The diagram renderer, cached in [`Engine::diagram_cache`].
     fn diagrams(&mut self) -> Arc<Diagrams> {
+        let cache = self.diagram_cache();
         self.rendered
             .diagrams
             .get_or_insert_with(|| {
-                let cache = match self.roots.first() {
-                    Some(root) => DiagramCache::for_workspace(root),
-                    None => DiagramCache::new(std::env::temp_dir().join("adocfoundry-diagrams")),
-                };
+                let cache = cache.unwrap_or_else(|| {
+                    DiagramCache::new(std::env::temp_dir().join("adocfoundry-diagrams"))
+                });
                 // External tools read files of their own (PlantUML's `!include`, Graphviz's
                 // `image`), so a confined engine renders Mermaid only.
                 let diagrams = match self.file_access {
@@ -937,11 +940,26 @@ impl Engine {
         self.rendered.failed.len()
     }
 
-    /// The workspace's diagram cache: under the first root, where the renderer keeps it.
+    /// The diagram cache: the folder a front end chose, else under the first root, where the
+    /// renderer keeps it.
     pub(crate) fn diagram_cache(&self) -> Option<DiagramCache> {
+        if let Some(dir) = &self.rendered.cache_dir {
+            return Some(DiagramCache::new(dir.clone()));
+        }
         self.roots
             .first()
             .map(|root| DiagramCache::for_workspace(root))
+    }
+
+    /// Keeps rendered diagrams in `dir` rather than in `<workspace>/.cache/adocfoundry/diagrams`,
+    /// or there again with `None`: for a build tool whose inputs, the workspace, must not be
+    /// written to (`adocfoundry-cli --cache-dir`, #810). It is not a setting a workspace can
+    /// give. The folder is made when a diagram is first kept, and never read or written
+    /// through a link. Call it before opening the workspace, whose opening prunes the cache.
+    pub fn set_diagram_cache(&mut self, dir: Option<PathBuf>) {
+        self.rendered.cache_dir = dir;
+        self.rendered.diagrams = None;
+        self.preview_workspace_changed();
     }
 
     /// Removes, on a worker, the images in the workspace's diagram cache not read for

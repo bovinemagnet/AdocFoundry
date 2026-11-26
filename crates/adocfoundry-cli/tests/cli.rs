@@ -2387,3 +2387,312 @@ fn docbook_cli_exports_and_gates() {
     succeeded(&run(&root, &[&page[..], &["--fail-on", "error"]].concat()));
     succeeded(&run(&root, &[&page[..], &["--fail-on", "none"]].concat()));
 }
+
+/// Runs the binary from `directory` with `environment` added.
+fn cli_env(directory: &Path, arguments: &[&str], environment: &[(&str, &str)]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+        .current_dir(directory)
+        .args(arguments)
+        .env_remove("ADOCFOUNDRY_TIMEOUT")
+        .env_remove("ADOCFOUNDRY_CACHE_DIR")
+        .envs(environment.iter().copied())
+        .output()
+        .unwrap()
+}
+
+/// Every file and folder beneath `root`, relative to it, sorted.
+fn tree(root: &Path) -> Vec<PathBuf> {
+    fn walk(root: &Path, folder: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(folder).unwrap() {
+            let path = entry.unwrap().path();
+            out.push(path.strip_prefix(root).unwrap().to_path_buf());
+            if path.is_dir() {
+                walk(root, &path, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, root, &mut out);
+    out.sort();
+    out
+}
+
+/// `--timeout` bounds the whole command, and `ADOCFOUNDRY_TIMEOUT` stands in for it (#809): a
+/// command that runs out of time says which step did and exits with 2.
+#[test]
+fn a_timeout_names_the_step_and_exits_with_2() {
+    let root = repository_root();
+    let fixture = "tests/fixtures/antora-broken-references";
+    for (arguments, environment) in [
+        (&["check", fixture, "--timeout", "0.000001"][..], &[][..]),
+        (&["--timeout", "0.000001", "check", fixture][..], &[][..]),
+        (
+            &["check", fixture][..],
+            &[("ADOCFOUNDRY_TIMEOUT", "0.000001")][..],
+        ),
+    ] {
+        let output = cli_env(&root, arguments, environment);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{arguments:?}: {stderr}");
+        assert!(
+            stderr.contains("indexing did not finish within the timeout"),
+            "{arguments:?}: {stderr}"
+        );
+    }
+
+    // The option wins over the environment, and an ample one passes.
+    let output = cli_env(
+        &root,
+        &["check", fixture, "--timeout", "120"],
+        &[("ADOCFOUNDRY_TIMEOUT", "0.000001")],
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    for (arguments, environment, complaint) in [
+        (
+            &["check", fixture, "--timeout", "0"][..],
+            &[][..],
+            "--timeout",
+        ),
+        (
+            &["check", fixture, "--timeout", "soon"][..],
+            &[][..],
+            "--timeout",
+        ),
+        (
+            &["check", fixture, "--timeout", "-5"][..],
+            &[][..],
+            "--timeout",
+        ),
+        (&["check", fixture, "--timeout"][..], &[][..], "--timeout"),
+        (
+            &["check", fixture][..],
+            &[("ADOCFOUNDRY_TIMEOUT", "soon")][..],
+            "ADOCFOUNDRY_TIMEOUT",
+        ),
+    ] {
+        let output = cli_env(&root, arguments, environment);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{arguments:?}: {stderr}");
+        assert!(stderr.contains(complaint), "{arguments:?}: {stderr}");
+    }
+}
+
+/// An export that runs out of time exits with 2, says so, and leaves the file it would have
+/// replaced as it was, with nothing of its own beside it (#809).
+#[test]
+fn a_timed_out_export_leaves_the_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("long");
+    let pages = root.join("modules/ROOT/pages");
+    std::fs::create_dir_all(&pages).unwrap();
+    std::fs::write(
+        root.join("antora.yml"),
+        "name: long\nversion: '1.0'\nnav:\n- modules/ROOT/nav.adoc\n",
+    )
+    .unwrap();
+    let mut nav = String::new();
+    for page in 0..60 {
+        let sections: String = (0..20)
+            .map(|section| {
+                format!("== Section {section}\n\nText of {page}.{section}.footnote:[A note.]\n\n|===\n|a |b\n|===\n\n")
+            })
+            .collect();
+        std::fs::write(
+            pages.join(format!("p{page}.adoc")),
+            format!("= Page {page}\n\n{sections}"),
+        )
+        .unwrap();
+        nav.push_str(&format!("* xref:p{page}.adoc[]\n"));
+    }
+    std::fs::write(root.join("modules/ROOT/nav.adoc"), nav).unwrap();
+    let out = directory.path().join("out");
+    std::fs::create_dir(&out).unwrap();
+    let output = out.join("long.docx");
+
+    let mut timeout = 0.002_f64;
+    let mut steps = Vec::new();
+    loop {
+        std::fs::write(&output, "the earlier document").unwrap();
+        let seconds = timeout.to_string();
+        let run = cli_env(
+            directory.path(),
+            &[
+                "docx",
+                "long",
+                "--output",
+                output.to_str().unwrap(),
+                "--timeout",
+                &seconds,
+            ],
+            &[],
+        );
+        let stderr = String::from_utf8_lossy(&run.stderr).into_owned();
+        if run.status.code() == Some(0) {
+            break;
+        }
+        assert_eq!(run.status.code(), Some(2), "at {seconds} s: {stderr}");
+        let step = ["indexing", "the export"]
+            .into_iter()
+            .find(|step| stderr.contains(&format!("{step} did not finish within the timeout")))
+            .unwrap_or_else(|| panic!("at {seconds} s, no step named: {stderr}"));
+        steps.push(step);
+        assert_eq!(
+            std::fs::read_to_string(&output).unwrap_or_default(),
+            "the earlier document",
+            "replaced after timing out at {seconds} s"
+        );
+        assert_eq!(tree(&out), [PathBuf::from("long.docx")], "at {seconds} s");
+        assert!(timeout < 120.0, "never finished");
+        timeout *= 1.25;
+    }
+    assert!(steps.contains(&"the export"), "{steps:?}");
+    assert!(std::fs::read(&output).unwrap().starts_with(b"PK\x03\x04"));
+}
+
+/// With `--no-cache` nothing is kept: diagrams are drawn into a temporary folder that goes when
+/// the command ends, beneath neither the workspace nor anywhere else (#810).
+#[test]
+fn no_cache_keeps_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("docs");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(
+        root.join("page.adoc"),
+        "= Page\n\n[mermaid]\n----\ngraph LR\n  X --> Y\n----\n",
+    )
+    .unwrap();
+    let before = tree(&root);
+    let build = directory.path().join("build");
+    let temporary = directory.path().join("tmp");
+    std::fs::create_dir(&build).unwrap();
+    std::fs::create_dir(&temporary).unwrap();
+    let temporary_text = temporary.to_str().unwrap();
+    let pdf = build.join("page.pdf");
+    let environment = [
+        ("TMPDIR", temporary_text),
+        ("TMP", temporary_text),
+        ("TEMP", temporary_text),
+        // The option wins over the variable.
+        ("ADOCFOUNDRY_CACHE_DIR", "build/cache"),
+    ];
+
+    let output = cli_env(
+        directory.path(),
+        &[
+            "pdf",
+            "docs/page.adoc",
+            "--output",
+            pdf.to_str().unwrap(),
+            "--no-cache",
+        ],
+        &environment,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(pdf.is_file());
+    assert_eq!(tree(&root), before, "written into the workspace");
+    assert_eq!(tree(&build), [PathBuf::from("page.pdf")]);
+    assert_eq!(tree(&temporary), Vec::<PathBuf>::new(), "left behind");
+
+    let output = cli_env(
+        directory.path(),
+        &["check", "docs", "--no-cache", "--cache-dir", "build/cache"],
+        &[],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("--no-cache"), "{stderr}");
+}
+
+/// With `--cache-dir`, or `ADOCFOUNDRY_CACHE_DIR`, diagrams are kept in `<dir>/diagrams` and
+/// nothing is written beneath the workspace, so a build tool's inputs stay as they were (#810).
+#[test]
+fn a_cache_dir_keeps_diagrams_out_of_the_workspace() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("docs");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(
+        root.join("page.adoc"),
+        "= Page\n\n[mermaid]\n----\ngraph LR\n  X --> Y\n----\n",
+    )
+    .unwrap();
+    let before = tree(&root);
+    let build = directory.path().join("build");
+    let pdf = build.join("page.pdf");
+    std::fs::create_dir(&build).unwrap();
+
+    let output = cli_env(
+        directory.path(),
+        &[
+            "pdf",
+            "docs/page.adoc",
+            "--output",
+            pdf.to_str().unwrap(),
+            "--cache-dir",
+            "build/cache",
+        ],
+        &[],
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(tree(&root), before, "written into the workspace");
+    let cached: Vec<PathBuf> = std::fs::read_dir(build.join("cache/diagrams"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(cached.len(), 1, "{cached:?}");
+
+    // A second export with the same cache reads the image kept there rather than drawing it.
+    let marked = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"/>";
+    std::fs::write(&cached[0], marked).unwrap();
+    let output = cli_env(
+        directory.path(),
+        &["pdf", "docs/page.adoc", "--output", pdf.to_str().unwrap()],
+        &[("ADOCFOUNDRY_CACHE_DIR", "build/cache")],
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(std::fs::read_to_string(&cached[0]).unwrap(), marked);
+    assert_eq!(tree(&root), before, "written into the workspace");
+
+    // `doctor` reports the cache where it is kept.
+    let doctor = cli_env(
+        directory.path(),
+        &["doctor", "docs", "--cache-dir", "build/cache"],
+        &[],
+    );
+    let report = stdout(&doctor);
+    let kept = Path::new("build").join("cache").join("diagrams");
+    assert!(
+        report.lines().any(|line| line.contains("Diagram cache:")
+            && line.contains(&format!("{} (", kept.display()))),
+        "{report}"
+    );
+
+    // Without either, the cache is in the workspace, as before.
+    let output = cli_env(
+        directory.path(),
+        &["pdf", "docs/page.adoc", "--output", pdf.to_str().unwrap()],
+        &[],
+    );
+    assert_eq!(output.status.code(), Some(0));
+    assert!(root.join(".cache/adocfoundry/diagrams").is_dir());
+}
