@@ -68,6 +68,25 @@ impl Engine {
         )
     }
 
+    /// The value of each attribute reference in `range` of document `id`, for showing beside
+    /// it (#87). `None` while the page has typing its pause has yet to parse: nothing is parsed
+    /// here, so a front end may ask as it draws, keeping what it showed until this answers.
+    #[must_use]
+    pub fn attribute_values(
+        &self,
+        id: DocumentId,
+        range: adoc_core::SourceRange,
+    ) -> Option<Vec<adoc_lang::AttributeValue>> {
+        let document = self.document(id).filter(|document| document.asciidoc)?;
+        let parsed = document.parsed.get()?;
+        Some(adoc_lang::attribute_values_in(
+            self.workspace_for(&document.path),
+            &document.path,
+            parsed,
+            range,
+        ))
+    }
+
     /// Whether typing `typed` at `offset` in document `id` puts the caret inside something
     /// that completes: a target being typed, `<<`, or an attribute reference. Only the line is
     /// read, so a front end can ask on every keystroke, and ask for [`Engine::completions`]

@@ -14,7 +14,9 @@ pub use document::{
     AttributeDeclaration, Document, DocumentTitle, LineIndex, Location, SourceRange, UiMacro,
 };
 pub use path::normalize_path;
-pub use reference::{xref_file, ImageDirective, IncludeDirective, Reference, ReferenceKind};
+pub use reference::{
+    xref_file, AttributeReference, ImageDirective, IncludeDirective, Reference, ReferenceKind,
+};
 pub use symbol::{
     alphanumeric_id, canonical_id, plain_title, section_ids, section_ids_with_conditionals, Anchor,
     IdStyle, Section, SectionIds,

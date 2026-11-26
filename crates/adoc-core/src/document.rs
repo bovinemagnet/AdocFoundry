@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use crate::{Anchor, Diagnostic, ImageDirective, IncludeDirective, Reference, Section};
+use crate::{
+    Anchor, AttributeReference, Diagnostic, ImageDirective, IncludeDirective, Reference, Section,
+};
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SourceRange {
@@ -75,6 +77,9 @@ pub struct Document {
     pub images: Vec<ImageDirective>,
     /// The keyboard, button and menu macros in prose, in document order.
     pub ui_macros: Vec<UiMacro>,
+    /// The `{name}` references Asciidoctor replaces, in document order: none in verbatim or
+    /// comment blocks, comments, passthroughs or literal lines.
+    pub attribute_references: Vec<AttributeReference>,
     pub diagnostics: Vec<Diagnostic>,
 }
 

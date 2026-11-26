@@ -6,10 +6,10 @@ use adoc_core::{
 };
 
 use crate::line_parser::{
-    broken_code_spans, content, find_anchors, find_images, find_includes, find_references,
-    find_ui_macros, is_block_metadata, is_dynamic_id, is_line_comment, mask_passthroughs,
-    parse_attribute, parse_heading, trailing_anchor, Conditional, Heading, Verbatim,
-    VerbatimBlocks,
+    broken_code_spans, content, find_anchors, find_attribute_references, find_images,
+    find_includes, find_references, find_ui_macros, is_block_metadata, is_dynamic_id,
+    is_line_comment, mask_passthroughs, parse_attribute, parse_heading, trailing_anchor,
+    Conditional, Heading, Verbatim, VerbatimBlocks,
 };
 use crate::table::Tables;
 
@@ -102,6 +102,9 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
                             }));
                         document.references.extend(find_references(&inline, at));
                         document.images.extend(find_images(&inline, at));
+                        document
+                            .attribute_references
+                            .extend(find_attribute_references(&inline, at));
                     }
                 }
             }
@@ -262,6 +265,12 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         {
             broken_spans.extend(broken_code_spans(&inline, offset));
             document.ui_macros.extend(find_ui_macros(&inline, offset));
+        }
+        // An indented line is literal, and Asciidoctor replaces no attribute in it.
+        if !line.starts_with([' ', '\t']) {
+            document
+                .attribute_references
+                .extend(find_attribute_references(&inline, offset));
         }
         document.references.extend(find_references(&inline, offset));
         document.includes.extend(line_includes);
@@ -1615,6 +1624,91 @@ image::diagram.png[Architecture]\n";
                       ----\nkbd:[Ctrl+S]\n----\n\n// kbd:[Ctrl+S]\n\n:shortcut: kbd:[Ctrl+S]\n\n  \
                       kbd:[Ctrl+S]\n\nNot menu:[x], menu: File[x], kbd:[] or btn:[OK.\n";
         assert!(ui_macros(source).is_empty(), "{:?}", ui_macros(source));
+    }
+
+    /// The attribute references of `source`: each as its name and the text it covers.
+    fn attribute_references(source: &str) -> Vec<(String, String)> {
+        parse("file:///doc.adoc", source)
+            .document
+            .attribute_references
+            .iter()
+            .map(|found| {
+                (
+                    found.name.clone(),
+                    source[found.range.start..found.range.end].to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    /// Issue #87: every `{name}` Asciidoctor replaces is recorded, in order: in the title,
+    /// headings, prose, attribute entries' values, block attribute lists and a single-line
+    /// conditional's text.
+    #[test]
+    fn records_attribute_references_wherever_they_are_replaced() {
+        let source = "= {product} Guide\n:full: {product} {version}\n\n== About {product-name}\n\n\
+                      [role={lang}]\nUse {product_2} and {ünï}.\n\nifdef::cloud[Run {cloud-host}.]\n";
+        let names: Vec<String> = attribute_references(source)
+            .into_iter()
+            .map(|(name, written)| {
+                assert_eq!(written, format!("{{{name}}}"));
+                name
+            })
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "product",
+                "product",
+                "version",
+                "product-name",
+                "lang",
+                "product_2",
+                "ünï",
+                "cloud-host"
+            ]
+        );
+    }
+
+    /// Issue #87: nothing Asciidoctor leaves as written is recorded: escaped, passed through,
+    /// in a verbatim or comment block or a source paragraph, a line comment, an indented
+    /// literal line, a literal table cell, a conditional's own names, and what is no attribute
+    /// reference at all.
+    #[test]
+    fn leaves_out_attribute_references_asciidoctor_does_not_replace() {
+        let source = "Write \\{x}, +{x}+, `+{x}+`, pass:[{x}] and ++{x}++.\n\n\
+                      ----\n{x}\n----\n\n....\n{x}\n....\n\n////\n{x}\n////\n\n// {x}\n\n  \
+                      {x}\n\n[source,ruby]\nputs \"{x}\"\n\n[cols=\"1\"]\n|===\nl|{x}\n|===\n\nifdef::x[]\nendif::x[]\n\n\
+                      Not {counter:x}, {set:x}, { x }, {-x}, {} or {x\n";
+        assert!(
+            attribute_references(source).is_empty(),
+            "{:?}",
+            attribute_references(source)
+        );
+    }
+
+    /// Issue #87: half-typed input records what is complete and never panics.
+    #[test]
+    fn records_attribute_references_in_half_typed_input() {
+        for source in [
+            "{",
+            "{a",
+            "{a}",
+            "a {b} {",
+            "\\{",
+            "{é}",
+            "{a}{b}",
+            "\u{feff}{a}",
+        ] {
+            let _ = attribute_references(source);
+        }
+        assert_eq!(
+            attribute_references("{a}{b}"),
+            [
+                ("a".to_owned(), "{a}".to_owned()),
+                ("b".to_owned(), "{b}".to_owned())
+            ]
+        );
     }
 
     /// The broken code spans of `source`: each as the text it covers and its message.

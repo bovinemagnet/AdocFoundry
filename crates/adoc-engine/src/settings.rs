@@ -36,6 +36,9 @@ pub struct EditorSettings {
     pub preview_tabs: bool,
     /// When pages are saved without Save.
     pub auto_save: AutoSave,
+    /// `[editor] attribute_values`: the source editor shows each attribute reference's value
+    /// at the end of its line (#87).
+    pub attribute_values: bool,
 }
 
 /// `[editor] auto_save`: when an edited page is saved without Save.
@@ -60,6 +63,7 @@ impl Default for EditorSettings {
             theme: ThemePreference::Auto,
             preview_tabs: true,
             auto_save: AutoSave::Off,
+            attribute_values: false,
         }
     }
 }
@@ -1188,6 +1192,7 @@ impl Settings {
             }
             ("editor", "tab_width") => self.editor.tab_width = positive(value)?,
             ("editor", "preview_tabs") => self.editor.preview_tabs = boolean(value)?,
+            ("editor", "attribute_values") => self.editor.attribute_values = boolean(value)?,
             ("editor", "auto_save") => {
                 self.editor.auto_save = match value.as_str() {
                     Some("off") => AutoSave::Off,
@@ -1514,6 +1519,7 @@ fn is_known(section: &str, key: &str) -> bool {
                     | "theme"
                     | "preview_tabs"
                     | "auto_save"
+                    | "attribute_values"
             )
             | ("workspace", "ignore")
             | (

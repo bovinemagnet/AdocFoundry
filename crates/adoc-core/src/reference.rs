@@ -18,6 +18,14 @@ pub struct Reference {
     pub range: SourceRange,
 }
 
+/// A `{name}` attribute reference Asciidoctor replaces with the attribute's value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AttributeReference {
+    pub name: String,
+    /// The whole reference, braces included.
+    pub range: SourceRange,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IncludeDirective {
     pub target: String,

@@ -84,8 +84,23 @@ pub fn overlay(
 /// out: those rows and a screenful either side, so a hunk scrolled into view this frame is
 /// placed too. The rest are neither copied nor measured.
 pub fn near_view(state: &EditorState, hunks: &[Hunk]) -> Vec<(usize, Hunk)> {
-    let rows = state.visible_row_range();
-    let range = rows.map(|rows| {
+    let range = near_view_range(state);
+    hunks
+        .iter()
+        .enumerate()
+        .filter(|(_, hunk)| {
+            range
+                .as_ref()
+                .is_none_or(|range| hunk.range.start <= range.end && hunk.range.end >= range.start)
+        })
+        .map(|(index, hunk)| (index, hunk.clone()))
+        .collect()
+}
+
+/// The bytes of the rows the editor last laid out and a screenful either side, or `None`
+/// before it has laid any out.
+pub fn near_view_range(state: &EditorState) -> Option<std::ops::Range<usize>> {
+    state.visible_row_range().map(|rows| {
         // Only rows that exist are mapped (one past the end maps to the first line), and the
         // margin is added in lines.
         let margin = rows.end.saturating_sub(rows.start).max(1);
@@ -100,17 +115,7 @@ pub fn near_view(state: &EditorState, hunks: &[Hunk]) -> Vec<(usize, Hunk)> {
         let start = text.line_to_byte_idx(first.min(lines), ropey::LineType::LF_CR);
         let end = text.line_to_byte_idx((last + 1).min(lines), ropey::LineType::LF_CR);
         start..end
-    });
-    hunks
-        .iter()
-        .enumerate()
-        .filter(|(_, hunk)| {
-            range
-                .as_ref()
-                .is_none_or(|range| hunk.range.start <= range.end && hunk.range.end >= range.start)
-        })
-        .map(|(index, hunk)| (index, hunk.clone()))
-        .collect()
+    })
 }
 
 /// Where each hunk's marker goes in window coordinates, for the hunks the editor shows.
