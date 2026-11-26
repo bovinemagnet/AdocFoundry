@@ -49,11 +49,12 @@ use adoc_engine::{
     audit,
     commands::ids,
     pdf_standard,
-    report::{display_path, severity_name, ChangedFile},
+    report::{display_path, severity_name, ChangedFile, CheckEntry},
     CommandArgs, CommandOutcome, DocBookAssets, DocBookExportArgs, DocxExportArgs, Engine,
     EngineError, EpubExportArgs, ExportArgs, ExportSummary, ExportTarget, GraphFilter, GraphScope,
     KindleExportArgs, KindleFormat, LookChoice, Settings, SvgStyle,
 };
+use serde::Serialize;
 
 const USAGE: &str = "usage:
   adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
@@ -632,12 +633,14 @@ fn check(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         other => return Err(format!("unknown --fail-on level `{other}`")),
     };
 
+    let shown_root = absolute(root)?;
     let root = adoc_index::normalize_path(Path::new(root));
     let engine = open_engine(&root, false)?;
     let entries = engine.check_report(&root, None);
     let failed = entries.iter().any(|entry| entry.meets(threshold));
     if json {
-        let output = serde_json::to_string_pretty(&entries).map_err(|error| error.to_string())?;
+        let report = CheckJson::new(&shown_root, &entries);
+        let output = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
         outln!(out, "{output}");
     } else {
         for entry in &entries {
@@ -658,6 +661,60 @@ fn check(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     } else {
         ExitCode::SUCCESS
     })
+}
+
+/// The version of `check --format json`'s shape. A field added keeps it; a field removed,
+/// renamed or given another meaning raises it (#807).
+const CHECK_SCHEMA_VERSION: u32 = 1;
+
+/// What `check --format json` prints: [`CHECK_SCHEMA_VERSION`], the tool, the root the paths are
+/// relative to, the counts by severity and the diagnostics.
+#[derive(Serialize)]
+struct CheckJson<'a> {
+    schema_version: u32,
+    tool: Tool,
+    root: String,
+    summary: CheckSummary,
+    diagnostics: &'a [CheckEntry],
+}
+
+#[derive(Serialize)]
+struct Tool {
+    name: &'static str,
+    version: &'static str,
+}
+
+/// How many diagnostics there are of each severity, every severity named.
+#[derive(Serialize)]
+struct CheckSummary {
+    error: usize,
+    warning: usize,
+    info: usize,
+}
+
+impl<'a> CheckJson<'a> {
+    fn new(root: &Path, diagnostics: &'a [CheckEntry]) -> Self {
+        let count = |level| {
+            diagnostics
+                .iter()
+                .filter(|entry| entry.level == level)
+                .count()
+        };
+        Self {
+            schema_version: CHECK_SCHEMA_VERSION,
+            tool: Tool {
+                name: "adocfoundry-cli",
+                version: env!("CARGO_PKG_VERSION"),
+            },
+            root: root.display().to_string(),
+            summary: CheckSummary {
+                error: count(DiagnosticSeverity::Error),
+                warning: count(DiagnosticSeverity::Warning),
+                info: count(DiagnosticSeverity::Information),
+            },
+            diagnostics,
+        }
+    }
 }
 
 /// Audits the documentation's quality and writes the report as text, JSON or SARIF. The policy

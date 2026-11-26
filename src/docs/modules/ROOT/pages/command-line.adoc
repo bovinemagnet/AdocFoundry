@@ -74,22 +74,40 @@ path:line:col: severity code message
 Lines and columns are one-based, and the column counts characters, as editors and CI annotations count them.
 `severity` is `info`, `warning` or `error`.
 
-`--format json` prints an array of objects.
+`--format json` prints one object.
 
 [source,json]
 ----
-[
-  {
-    "path": "modules/ROOT/pages/index.adoc",
-    "range": { "start": 120, "end": 138 },
-    "line": 7,
-    "column": 3,
-    "severity": "warning",
-    "code": "adoc.unresolved-xref-file",
-    "message": "..."
-  }
-]
+{
+  "schema_version": 1,
+  "tool": { "name": "adocfoundry-cli", "version": "0.16.0" },
+  "root": "/home/me/docs",
+  "summary": { "error": 0, "warning": 1, "info": 0 },
+  "diagnostics": [
+    {
+      "path": "modules/ROOT/pages/index.adoc",
+      "range": { "start": 120, "end": 138 },
+      "line": 7,
+      "column": 3,
+      "severity": "warning",
+      "code": "adoc.unresolved-xref-file",
+      "message": "..."
+    }
+  ]
+}
 ----
+
+`schema_version`:: The version of this shape.
+A field added keeps the version.
+A field removed, renamed or given another meaning raises it.
+`tool`:: The name of the program and its version.
+`root`:: The workspace root, as an absolute path: the `<root>` argument read against the current directory.
+The `path` of each diagnostic is relative to it, with `/` separators.
+`summary`:: The number of diagnostics of each severity.
+It always names all three: `error`, `warning` and `info`.
+`diagnostics`:: The diagnostics, sorted by path.
+
+Before 0.16.0 the output was a bare array of the entries that `diagnostics` now holds.
 
 `range` holds byte offsets into the file.
 

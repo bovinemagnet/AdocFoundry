@@ -391,7 +391,7 @@ These tools are always offered.
 
 |`check`
 |`scope?`, `fail_on?`, `cursor?`, `limit?`
-|The workspace's diagnostics, the same array that `adocfoundry-cli check --format json` prints, and `failed`. `failed` is true when any diagnostic meets `fail_on`, which is `error` (the default) or `warning`. It is judged over every diagnostic, not only the page. The answer is paged: see <<paging>>.
+|The workspace's diagnostics, the same entries as the `diagnostics` of `adocfoundry-cli check --format json`, and `failed`. `failed` is true when any diagnostic meets `fail_on`, which is `error` (the default) or `warning`. It is judged over every diagnostic, not only the page. The answer is paged: see <<paging>>.
 
 |`symbols`
 |`query`, `cursor?`, `limit?`

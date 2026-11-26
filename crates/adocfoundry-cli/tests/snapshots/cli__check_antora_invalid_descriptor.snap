@@ -2,29 +2,42 @@
 source: crates/adocfoundry-cli/tests/cli.rs
 expression: "check_json(\"antora-invalid-descriptor\")"
 ---
-[
-  {
-    "path": "antora.yml",
-    "range": {
-      "start": 0,
-      "end": 19
-    },
-    "line": 1,
-    "column": 1,
-    "severity": "warning",
-    "code": "adoc.antora.missing-key",
-    "message": "The component descriptor has no `name`, so Antora cannot use it"
+{
+  "schema_version": 1,
+  "tool": {
+    "name": "adocfoundry-cli",
+    "version": "[version]"
   },
-  {
-    "path": "modules/ROOT/pages/index.adoc",
-    "range": {
-      "start": 0,
-      "end": 0
+  "root": "[root]",
+  "summary": {
+    "error": 0,
+    "warning": 2,
+    "info": 0
+  },
+  "diagnostics": [
+    {
+      "path": "antora.yml",
+      "range": {
+        "start": 0,
+        "end": 19
+      },
+      "line": 1,
+      "column": 1,
+      "severity": "warning",
+      "code": "adoc.antora.missing-key",
+      "message": "The component descriptor has no `name`, so Antora cannot use it"
     },
-    "line": 1,
-    "column": 1,
-    "severity": "warning",
-    "code": "adoc.antora.invalid-descriptor",
-    "message": "`tests/fixtures/antora-invalid-descriptor/antora.yml` is invalid, so Antora navigation and checks are off for this component: Antora component descriptor is missing `name`"
-  }
-]
+    {
+      "path": "modules/ROOT/pages/index.adoc",
+      "range": {
+        "start": 0,
+        "end": 0
+      },
+      "line": 1,
+      "column": 1,
+      "severity": "warning",
+      "code": "adoc.antora.invalid-descriptor",
+      "message": "`tests/fixtures/antora-invalid-descriptor/antora.yml` is invalid, so Antora navigation and checks are off for this component: Antora component descriptor is missing `name`"
+    }
+  ]
+}

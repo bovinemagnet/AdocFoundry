@@ -2,4 +2,17 @@
 source: crates/adocfoundry-cli/tests/cli.rs
 expression: "check_json(\"antora-versions\")"
 ---
-[]
+{
+  "schema_version": 1,
+  "tool": {
+    "name": "adocfoundry-cli",
+    "version": "[version]"
+  },
+  "root": "[root]",
+  "summary": {
+    "error": 0,
+    "warning": 0,
+    "info": 0
+  },
+  "diagnostics": []
+}

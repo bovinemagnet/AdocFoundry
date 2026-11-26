@@ -41,14 +41,31 @@ fn prints_version() {
 
 fn check_json(fixture: &str) -> String {
     let path = format!("tests/fixtures/{fixture}");
-    let output = cli(&["check", &path, "--format", "json"]);
+    check_json_of(&cli(&["check", &path, "--format", "json"]), fixture)
+}
+
+/// `check --format json`'s output, with what differs between machines and releases, the root's
+/// absolute path and the CLI's version, put as `[root]` and `[version]` once checked.
+fn check_json_of(output: &Output, fixture: &str) -> String {
     assert!(
         output.status.code() == Some(0) || output.status.code() == Some(1),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    let mut json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let root = Path::new(json["root"].as_str().unwrap());
+    assert!(root.is_absolute(), "{root:?}");
+    assert!(
+        root.ends_with(Path::new("tests/fixtures").join(fixture)),
+        "{root:?}"
+    );
+    assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"));
+    json["root"] = "[root]".into();
+    json["tool"]["version"] = "[version]".into();
     // Messages show paths as the platform writes them; JSON escapes a Windows `\` as `\\`.
-    stdout(&output).replace("\\\\", "/")
+    serde_json::to_string_pretty(&json)
+        .unwrap()
+        .replace("\\\\", "/")
 }
 
 #[test]
@@ -309,6 +326,71 @@ fn graph_prints_the_path_between_two_pages() {
     assert_eq!(half.status.code(), Some(2));
 }
 
+/// `check --format json` is an object with a schema version, the tool and its version, the
+/// root, the counts by severity and the diagnostics (#807), so a build tool can rely on it.
+#[test]
+fn check_json_is_versioned() {
+    let output = cli(&[
+        "check",
+        "tests/fixtures/broken-references",
+        "--format",
+        "json",
+    ]);
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["schema_version"], 1, "{json}");
+    assert_eq!(json["tool"]["name"], "adocfoundry-cli", "{json}");
+    assert_eq!(json["tool"]["version"], env!("CARGO_PKG_VERSION"), "{json}");
+    let diagnostics = json["diagnostics"].as_array().unwrap();
+    assert!(!diagnostics.is_empty(), "{json}");
+    for severity in ["error", "warning", "info"] {
+        let count = diagnostics
+            .iter()
+            .filter(|entry| entry["severity"] == severity)
+            .count();
+        assert_eq!(json["summary"][severity], count, "{severity}: {json}");
+    }
+    let keys: Vec<&str> = json
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        ["schema_version", "tool", "root", "summary", "diagnostics"],
+        "{json}"
+    );
+}
+
+/// `check` exits with 0 when nothing meets `--fail-on`, 1 when something does, and 2 for a
+/// usage or runtime error, whatever the format (#807).
+#[test]
+fn check_exit_codes() {
+    let root = "tests/fixtures/antora-broken-references";
+    let cases: [(&[&str], i32); 8] = [
+        (&["check", root], 0),
+        (&["check", root, "--format", "json"], 0),
+        (&["check", root, "--fail-on", "warning"], 1),
+        (
+            &["check", root, "--format", "json", "--fail-on", "warning"],
+            1,
+        ),
+        (&["check"], 2),
+        (&["check", root, "--format", "yaml"], 2),
+        (&["check", root, "--fail-on", "never"], 2),
+        (&["check", root, "--bogus", "x"], 2),
+    ];
+    for (arguments, expected) in cases {
+        let output = cli(arguments);
+        assert_eq!(
+            output.status.code(),
+            Some(expected),
+            "{arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
 #[test]
 fn check_text_format_and_fail_on() {
     let output = cli(&["check", "tests/fixtures/antora-invalid-descriptor"]);
@@ -347,7 +429,7 @@ fn columns_count_characters_as_editors_do() {
     assert!(text.starts_with("page.adoc:3:16: warning "), "{text}");
     let json: serde_json::Value =
         serde_json::from_str(&stdout(&cli(&["check", root, "--format", "json"]))).unwrap();
-    assert_eq!(json[0]["column"], 16, "{json}");
+    assert_eq!(json["diagnostics"][0]["column"], 16, "{json}");
 
     let page = format!("{root}/page.adoc");
     let offset = std::fs::read_to_string(&page)
@@ -519,10 +601,8 @@ fn check_accepts_the_current_directory_as_root() {
     let fixture = "tests/fixtures/antora-broken-references";
     let output = cli_in(fixture, &["check", ".", "--format", "json"]);
     assert_eq!(
-        stdout(&output),
+        check_json_of(&output, "antora-broken-references"),
         check_json("antora-broken-references"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
     );
 }
 
@@ -1176,8 +1256,9 @@ fn check_reports_what_it_could_not_read() {
         stdout(&text)
     );
     let entries: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(entries["summary"]["error"], 1, "{entries}");
     assert!(
-        entries
+        entries["diagnostics"]
             .as_array()
             .unwrap()
             .iter()

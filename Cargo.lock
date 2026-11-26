@@ -565,6 +565,7 @@ dependencies = [
  "adoc-render",
  "hayro",
  "insta",
+ "serde",
  "serde_json",
  "tempfile",
 ]
