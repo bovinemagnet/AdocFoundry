@@ -164,7 +164,7 @@ pub use expansion::{Branch, SidebarPanel, EXPANSION_SAVE_SETTLE, EXPANSION_STATE
 pub use export::docbook_assets_folder;
 pub use export::{
     DocBookAssets, DocBookExportArgs, DocxExportArgs, EpubExportArgs, ExportArgs, ExportDiagnostic,
-    ExportSummary, ExportTarget, KindleExportArgs, KindleFormat,
+    ExportSummary, ExportTarget, KindleExportArgs, KindleFormat, LookOrigin, PdfLook,
 };
 pub use external::{is_web_address, SYSTEM_VIEWER_EXTENSIONS, WEB_SCHEMES};
 pub use files::{DirectoryEntry, DirectoryError, EntryKind, Listing};

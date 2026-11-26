@@ -868,6 +868,42 @@ impl Settings {
 
     /// Makes Git opt-in: off unless a settings file sets `[git] enabled = true`, now and on
     /// every reload. For front ends where Git is not expected, such as the language server.
+    /// What the user settings `user` give a PDF export that these settings, the workspace's
+    /// alone as the command line reads them, do not (#812): each `[pdf]` key among `theme`,
+    /// `themes_dir`, `fonts_dir` and `standards` the user file writes and the workspace's
+    /// file does not, as `[pdf] theme = "acme"`, then each `[pdf.profiles.<name>]` only the
+    /// user file has. The app would export with them and the command line does not.
+    #[must_use]
+    pub fn pdf_settings_only_in(&self, user: &Settings) -> Vec<String> {
+        let mut only = Vec::new();
+        let written =
+            |key: &str| user.written_in(key) == Some(Layer::User) && self.written_in(key).is_none();
+        for (key, value) in [
+            ("theme", Some(user.pdf.theme.clone())),
+            ("themes_dir", user.pdf.themes_dir.clone()),
+            ("fonts_dir", user.pdf.fonts_dir.clone()),
+            ("standards", None),
+        ] {
+            if written(&format!("pdf.{key}")) {
+                only.push(match value {
+                    Some(value) => format!("[pdf] {key} = {}", toml::Value::String(value)),
+                    None => format!("[pdf] {key}"),
+                });
+            }
+        }
+        for profile in &user.pdf.profiles {
+            if !self
+                .pdf
+                .profiles
+                .iter()
+                .any(|ours| ours.name == profile.name)
+            {
+                only.push(format!("[pdf.profiles.{}]", profile.name));
+            }
+        }
+        only
+    }
+
     /// Whether a settings file names `[pdf] theme`, rather than leaving the bundled default:
     /// only a named theme gives a Word export its look.
     #[must_use]

@@ -2696,3 +2696,190 @@ fn a_cache_dir_keeps_diagrams_out_of_the_workspace() {
     assert_eq!(output.status.code(), Some(0));
     assert!(root.join(".cache/adocfoundry/diagrams").is_dir());
 }
+
+/// A component in `docs` of a temporary folder, its page holding `header`, and the files in
+/// `extra` written beside it, relative to `docs`.
+fn themed_workspace(header: &str, antora: &str, extra: &[(&str, &str)]) -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    let docs = directory.path().join("docs");
+    let pages = docs.join("modules/ROOT/pages");
+    std::fs::create_dir_all(&pages).unwrap();
+    std::fs::write(
+        docs.join("antora.yml"),
+        format!("name: guide\nversion: ~\n{antora}"),
+    )
+    .unwrap();
+    std::fs::write(
+        pages.join("index.adoc"),
+        format!("= Guide\n{header}\nSome text.\n"),
+    )
+    .unwrap();
+    for (path, text) in extra {
+        let path = docs.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    directory
+}
+
+/// Exports the page of a [`themed_workspace`] to `out.pdf` beside `docs`, with `arguments`
+/// and `environment` added and no user settings file unless `environment` names one.
+fn export_themed(directory: &Path, arguments: &[&str], environment: &[(&str, &str)]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"));
+    command
+        .current_dir(directory)
+        .args([
+            "pdf",
+            "docs/modules/ROOT/pages/index.adoc",
+            "--root",
+            "docs",
+            "--output",
+            "out.pdf",
+        ])
+        .args(arguments)
+        .env(
+            "ADOCFOUNDRY_USER_SETTINGS",
+            directory.join("no-user-settings.toml"),
+        )
+        .envs(environment.iter().copied());
+    let output = command.output().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+/// `pdf` names the theme it used and where the choice came from, and the fonts folders the
+/// same way (#812).
+#[test]
+fn pdf_names_its_theme_and_where_it_came_from() {
+    let theme = "extends: default\nbase:\n  font_color: 333333\n";
+    let line = |output: &Output, start: &str| {
+        stdout(output)
+            .lines()
+            .find(|line| line.starts_with(start))
+            .unwrap_or_else(|| panic!("no `{start}` line: {}", stdout(output)))
+            .to_owned()
+    };
+
+    let plain = themed_workspace("", "", &[]);
+    let output = export_themed(plain.path(), &[], &[]);
+    assert_eq!(line(&output, "theme:"), "theme: default (bundled)");
+    assert_eq!(line(&output, "fonts:"), "fonts: bundled");
+
+    let output = export_themed(plain.path(), &["--theme", "default-sans"], &[]);
+    assert_eq!(
+        line(&output, "theme:"),
+        "theme: default-sans (bundled, from --theme)"
+    );
+
+    let page = themed_workspace(":pdf-theme: default-for-print\n", "", &[]);
+    let output = export_themed(page.path(), &[], &[]);
+    assert_eq!(
+        line(&output, "theme:"),
+        "theme: default-for-print (bundled, from pdf-theme in modules/ROOT/pages/index.adoc)"
+    );
+
+    let component = themed_workspace("", "asciidoc:\n  attributes:\n    pdf-theme: base\n", &[]);
+    let output = export_themed(component.path(), &[], &[]);
+    assert_eq!(
+        line(&output, "theme:"),
+        "theme: base (bundled, from pdf-theme in antora.yml)"
+    );
+
+    let settings = themed_workspace(
+        "",
+        "",
+        &[
+            (
+                ".adocfoundry.toml",
+                "[pdf]\ntheme = \"acme\"\nthemes_dir = \"themes\"\nfonts_dir = \"fonts\"\n",
+            ),
+            ("themes/acme-theme.yml", theme),
+            ("fonts/.keep", ""),
+        ],
+    );
+    let output = export_themed(settings.path(), &[], &[]);
+    assert_eq!(
+        line(&output, "theme:"),
+        "theme: acme (themes/acme-theme.yml, from [pdf] theme in .adocfoundry.toml)"
+    );
+    assert_eq!(
+        line(&output, "fonts:"),
+        "fonts: fonts (from [pdf] fonts_dir in .adocfoundry.toml)"
+    );
+
+    // The export's own wins over the settings'.
+    let output = export_themed(settings.path(), &["--fonts-dir", "docs/fonts"], &[]);
+    assert_eq!(
+        line(&output, "fonts:"),
+        "fonts: docs/fonts (from --fonts-dir)"
+    );
+}
+
+/// A `[pdf]` key or profile the user settings set and the workspace's do not is used by the
+/// app, never by the command line, which says so in an information note that fails nothing;
+/// the PDF is the one written without the file (#812).
+#[test]
+fn pdf_notes_user_settings_the_app_would_use() {
+    let workspace = themed_workspace(
+        "",
+        "",
+        &[
+            (".adocfoundry.toml", "[pdf]\nfonts_dir = \"fonts\"\n"),
+            ("fonts/.keep", ""),
+        ],
+    );
+    let directory = workspace.path();
+    let without = export_themed(directory, &["--fail-on", "warning"], &[]);
+    assert!(
+        !String::from_utf8_lossy(&without.stderr).contains("info:"),
+        "{}",
+        String::from_utf8_lossy(&without.stderr)
+    );
+    let written = std::fs::read(directory.join("out.pdf")).unwrap();
+
+    let user = directory.join("user").join("adocfoundry.toml");
+    std::fs::create_dir_all(user.parent().unwrap()).unwrap();
+    std::fs::write(
+        &user,
+        "[pdf]\ntheme = \"default-sans\"\nfonts_dir = \"elsewhere\"\nstandards = [\"pdf-a-2a\"]\n\n[pdf.profiles.handbook]\ncomponent = \"guide\"\n",
+    )
+    .unwrap();
+    let with = export_themed(
+        directory,
+        &["--fail-on", "warning"],
+        &[("ADOCFOUNDRY_USER_SETTINGS", user.to_str().unwrap())],
+    );
+    let stderr = String::from_utf8_lossy(&with.stderr);
+    let notes: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.starts_with("info: "))
+        .collect();
+    assert_eq!(notes.len(), 3, "{stderr}");
+    assert!(
+        notes[0].contains("[pdf] theme = \"default-sans\"")
+            && notes[0].contains("used by the app but not by the command line")
+            && notes[0].contains(".adocfoundry.toml"),
+        "{stderr}"
+    );
+    assert!(notes[1].contains("[pdf] standards"), "{stderr}");
+    assert!(notes[2].contains("[pdf.profiles.handbook]"), "{stderr}");
+    assert!(
+        !stderr.contains("fonts_dir"),
+        "the workspace sets it: {stderr}"
+    );
+    assert_eq!(line_of(&with, "theme:"), "theme: default (bundled)");
+    assert_eq!(std::fs::read(directory.join("out.pdf")).unwrap(), written);
+}
+
+fn line_of(output: &Output, start: &str) -> String {
+    stdout(output)
+        .lines()
+        .find(|line| line.starts_with(start))
+        .unwrap_or_default()
+        .to_owned()
+}

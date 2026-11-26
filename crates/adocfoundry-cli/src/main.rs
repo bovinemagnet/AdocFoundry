@@ -55,7 +55,7 @@ use adoc_engine::{
     report::{display_path, severity_name, ChangedFile, CheckEntry},
     CommandArgs, CommandOutcome, DocBookAssets, DocBookExportArgs, DocxExportArgs, Engine,
     EngineError, EpubExportArgs, ExportArgs, ExportSummary, ExportTarget, GraphFilter, GraphScope,
-    KindleExportArgs, KindleFormat, LookChoice, Settings, SvgStyle,
+    KindleExportArgs, KindleFormat, LookChoice, LookOrigin, PdfLook, Settings, SvgStyle,
 };
 use serde::Serialize;
 
@@ -1312,7 +1312,20 @@ fn pdf(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, S
             }
         }
         args.typst = option(&options, "typst").map(PathBuf::from);
-        return report_export(&mut engine, args, &root, fail_on, cli, out);
+        let chosen_here = |name| option(&options, name).is_some();
+        let from = Choosers {
+            theme: if chosen_here("theme") {
+                "--theme".to_owned()
+            } else {
+                format!("[pdf.profiles.{profile}] theme")
+            },
+            fonts: if chosen_here("fonts-dir") {
+                "--fonts-dir".to_owned()
+            } else {
+                format!("[pdf.profiles.{profile}] fonts_dir")
+            },
+        };
+        return report_export(&mut engine, args, &root, fail_on, cli, &from, out);
     }
     let [target] = positional.as_slice() else {
         return Err(USAGE.to_owned());
@@ -1329,7 +1342,18 @@ fn pdf(arguments: &[String], cli: &Globals, out: &mut Out) -> Result<ExitCode, S
         typst: option(&options, "typst").map(PathBuf::from),
         attributes: Vec::new(),
     };
-    report_export(&mut engine, args, &root, fail_on, cli, out)
+    let from = Choosers {
+        theme: "--theme".to_owned(),
+        fonts: "--fonts-dir".to_owned(),
+    };
+    report_export(&mut engine, args, &root, fail_on, cli, &from, out)
+}
+
+/// How an export's own choice of theme and fonts was made, for naming it: the options, or a
+/// profile.
+struct Choosers {
+    theme: String,
+    fonts: String,
 }
 
 /// `--fail-on`: the least severe diagnostic that fails the run, or none.
@@ -1717,12 +1741,89 @@ fn report_export(
     root: &Path,
     fail_on: Option<DiagnosticSeverity>,
     cli: &Globals,
+    from: &Choosers,
     out: &mut Out,
 ) -> Result<ExitCode, String> {
     let output = args.output.clone();
     let result = engine.export_blocking(args, cli.remaining());
     let result = cli.in_time(engine, result)?;
-    report(result, &output, root, fail_on, out, false)
+    let look = result
+        .as_ref()
+        .ok()
+        .and_then(|summary| summary.pdf_look.clone());
+    let code = report(result, &output, root, fail_on, out, false)?;
+    if let Some(look) = look {
+        print_look(&look, root, from, out);
+    }
+    note_user_settings(engine);
+    Ok(code)
+}
+
+/// The `theme:` and `fonts:` lines: what the PDF was made with, and what chose it (#812).
+fn print_look(look: &PdfLook, root: &Path, from: &Choosers, out: &mut Out) {
+    let place = match &look.file {
+        Some(file) => display_path(file, root),
+        None => "bundled".to_owned(),
+    };
+    match chosen_by(&look.theme_from, "pdf-theme", &from.theme, root) {
+        Some(chooser) => outln!(out, "theme: {} ({place}, from {chooser})", look.theme),
+        None => outln!(out, "theme: {} ({place})", look.theme),
+    }
+    if look.fonts_dirs.is_empty() {
+        outln!(out, "fonts: bundled");
+    } else {
+        let dirs: Vec<String> = look
+            .fonts_dirs
+            .iter()
+            .map(|dir| display_path(dir, root))
+            .collect();
+        match chosen_by(&look.fonts_from, "pdf-fontsdir", &from.fonts, root) {
+            Some(chooser) => outln!(out, "fonts: {} (from {chooser})", dirs.join(", ")),
+            None => outln!(out, "fonts: {}", dirs.join(", ")),
+        }
+    }
+}
+
+/// What made a choice, in words: the export's own option or profile key (`export`), the
+/// `attribute` where it is written, or a setting in its file; none for the default.
+fn chosen_by(origin: &LookOrigin, attribute: &str, export: &str, root: &Path) -> Option<String> {
+    let setting = |key: &str| key.strip_prefix("pdf.").unwrap_or(key).to_owned();
+    Some(match origin {
+        LookOrigin::Export => export.to_owned(),
+        LookOrigin::Page(path) | LookOrigin::Component(path) | LookOrigin::Playbook(path) => {
+            format!("{attribute} in {}", display_path(path, root))
+        }
+        LookOrigin::Attributes => format!("{attribute} in the export's attributes"),
+        LookOrigin::Setting { key, file } => match file {
+            Some(file) => format!("[pdf] {} in {}", setting(key), display_path(file, root)),
+            None => format!("[pdf] {}", setting(key)),
+        },
+        LookOrigin::Default => return None,
+    })
+}
+
+/// Says, as information that fails nothing, which PDF settings of the user settings file the
+/// app would export with and the command line does not, since it reads the workspace's alone
+/// (#812). The file is `ADOCFOUNDRY_USER_SETTINGS`, else the platform's, and is only read.
+fn note_user_settings(engine: &Engine) {
+    let Some(file) = std::env::var_os("ADOCFOUNDRY_USER_SETTINGS")
+        .filter(|file| !file.is_empty())
+        .map(PathBuf::from)
+        .or_else(Settings::default_user_file)
+        .filter(|file| file.is_file())
+    else {
+        return;
+    };
+    let Ok(user) = Settings::load(Some(&file), None) else {
+        return;
+    };
+    for setting in engine.settings().pdf_settings_only_in(&user) {
+        eprintln!(
+            "info: {setting} in the user settings ({}) is used by the app but not by the command line; move it into {} to share it",
+            file.display(),
+            adoc_engine::WORKSPACE_SETTINGS_FILE
+        );
+    }
 }
 
 /// Prints each diagnostic and then the output and its page count: a PDF's pages, a Word

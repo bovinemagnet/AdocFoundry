@@ -222,6 +222,17 @@ A name that is not bundled is looked for as `<name>-theme.yml` in a themes direc
 That is the page's `pdf-themesdir` attribute, resolved against the page, or else `[pdf] themes_dir`, resolved against the first workspace root.
 A value ending in `.yml` is a theme file.
 
+The command line and the app read different settings files.
+The app reads `[pdf]` and `[pdf.profiles]` from both the user settings file and the workspace's `.adocfoundry.toml`, and a workspace setting wins over a user one.
+`adocfoundry-cli pdf` reads only the workspace's `.adocfoundry.toml`, so that CI gives the same result on every machine.
+A theme chosen in the user settings therefore shapes the app's PDFs and not the command line's.
+
+To make the app and the command line agree, put the `[pdf]` settings and profiles in the workspace's `.adocfoundry.toml` and commit it with the documentation, not in the user file.
+The app reads that file too.
+
+`adocfoundry-cli pdf` prints the theme and fonts it used, and notes user settings that it does not read.
+See xref:command-line.adoc#pdf[pdf] and xref:command-line.adoc#user-settings-note[Settings the command line does not read].
+
 To try a theme on the active page, choose Export › Export Page to PDF with Theme… (also in the command palette).
 It lists the bundled themes, marked "(bundled)", and each `<name>-theme.yml` in `[pdf] themes_dir`, shown with its path.
 It then asks where to save the page's PDF in the theme you chose.

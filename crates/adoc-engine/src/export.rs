@@ -310,8 +310,46 @@ pub struct ExportSummary {
     pub diagnostics: Vec<ExportDiagnostic>,
     /// The look a Word export used; `None` for PDF and HTML.
     pub look: Option<crate::ExportLook>,
+    /// The theme and fonts a PDF export used, and why; `None` for other formats.
+    pub pdf_look: Option<Box<PdfLook>>,
     /// The output carries an editing restriction its pages asked for (`:export-read-only:`).
     pub protected: bool,
+}
+
+/// The theme a PDF export used and the folders its fonts were looked for in, each with what
+/// chose it (#812), so a build can see which look it got and why.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfLook {
+    /// The theme as it was named: a bundled theme, a name in the themes folder, or a file.
+    pub theme: String,
+    /// The theme's file; `None` for a bundled theme.
+    pub file: Option<PathBuf>,
+    pub theme_from: LookOrigin,
+    /// The folders fonts were looked for in before the bundled fonts; empty for those alone.
+    pub fonts_dirs: Vec<PathBuf>,
+    pub fonts_from: LookOrigin,
+}
+
+/// What chose a part of a PDF's look.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LookOrigin {
+    /// The export's own: `--theme`, `--fonts-dir` or a profile's `theme` and `fonts_dir`.
+    Export,
+    /// An attribute entry in the page, or in a file it includes, at that path.
+    Page(PathBuf),
+    /// `asciidoc.attributes` in the component version's `antora.yml`, at that path.
+    Component(PathBuf),
+    /// `asciidoc.attributes` in the playbook, at that path.
+    Playbook(PathBuf),
+    /// An attribute the export itself gave: a profile's `attributes`, an authoring profile's.
+    Attributes,
+    /// A setting (`pdf.theme`, `pdf.fonts_dir`) in that settings file.
+    Setting {
+        key: &'static str,
+        file: Option<PathBuf>,
+    },
+    /// Nothing: the bundled default.
+    Default,
 }
 
 /// A problem found while exporting, at a line of a page when known.
@@ -2062,6 +2100,8 @@ impl Engine {
             adoc_pdf::Document::Book(book) => book.attributes.clone(),
         };
         let theme = self.export_theme(&args, &attributes, first_page.as_deref());
+        let book = matches!(document, adoc_pdf::Document::Book(_));
+        let look = self.pdf_look(&args, &attributes, first_page.as_deref(), book);
         let mut options = self.export_options(&args, &attributes, first_page.as_deref());
         options.protection = if protection == crate::ExportProtection::Off {
             adoc_pdf::PdfProtection::None
@@ -2079,6 +2119,7 @@ impl Engine {
                 .and_then(|theme| typeset(&document, &theme, &options, &args, replace, &commit))
                 .map(|mut summary| {
                     summary.sources = sources;
+                    summary.pdf_look = Some(Box::new(look));
                     summary.diagnostics.extend(failed);
                     summary.diagnostics.extend(unread);
                     summary
@@ -2097,6 +2138,112 @@ impl Engine {
     ) -> Result<LoadedTheme, String> {
         let source = self.theme_source(args.theme.as_deref(), attributes, page);
         adoc_pdf::load_theme_within(&source, &self.file_access).map_err(|error| error.to_string())
+    }
+
+    /// The look [`Engine::export_theme`] and [`Engine::fonts_dirs`] give `args`, with what
+    /// chose each part: the export, an attribute (read from the first page for an article, from
+    /// what is above any page for a book), the settings or nothing.
+    fn pdf_look(
+        &self,
+        args: &ExportArgs,
+        attributes: &BTreeMap<String, String>,
+        page: Option<&Path>,
+        book: bool,
+    ) -> PdfLook {
+        let (theme, theme_from) = match (&args.theme, attributes.get("pdf-theme")) {
+            (Some(theme), _) => (theme.clone(), LookOrigin::Export),
+            (None, Some(theme)) => (
+                theme.clone(),
+                self.attribute_origin("pdf-theme", theme, page, book),
+            ),
+            (None, None) => (
+                self.settings.pdf.theme.clone(),
+                self.setting_origin("pdf.theme"),
+            ),
+        };
+        let file = match self.theme_source(args.theme.as_deref(), attributes, page) {
+            adoc_pdf::theme::ThemeSource::File(file) => Some(file),
+            adoc_pdf::theme::ThemeSource::Bundled(_) => None,
+        };
+        let fonts_dirs: Vec<PathBuf> = self
+            .fonts_dirs(args.fonts_dir.as_deref(), attributes, page)
+            .into_iter()
+            .filter(|dir| dir.as_os_str() != "GEM_FONTS_DIR")
+            .collect();
+        let fonts_from = match (&args.fonts_dir, attributes.get("pdf-fontsdir")) {
+            (Some(_), _) => LookOrigin::Export,
+            (None, Some(dirs)) => self.attribute_origin("pdf-fontsdir", dirs, page, book),
+            (None, None) if self.settings.pdf.fonts_dir.is_some() => {
+                self.setting_origin("pdf.fonts_dir")
+            }
+            (None, None) => LookOrigin::Default,
+        };
+        PdfLook {
+            theme,
+            file,
+            theme_from,
+            fonts_dirs,
+            fonts_from,
+        }
+    }
+
+    /// Where the attribute `name`, whose value is `value`, comes from for `page`: its header
+    /// for an article, only what comes before the page for a book. A value none of them gives
+    /// is the export's own.
+    fn attribute_origin(
+        &self,
+        name: &str,
+        value: &str,
+        page: Option<&Path>,
+        book: bool,
+    ) -> LookOrigin {
+        let workspace = &self.workspace;
+        let Some((page, file)) = page.and_then(|page| Some((page, workspace.index.file(page)?)))
+        else {
+            return LookOrigin::Attributes;
+        };
+        let offset = if book {
+            0
+        } else {
+            match file.text() {
+                Some(text) => adoc_parser::main_header_end(&text),
+                None => return LookOrigin::Attributes,
+            }
+        };
+        let resolution = adoc_lang::effective::resolve(
+            &workspace.index,
+            &workspace.antora,
+            page,
+            &file.document,
+            name,
+            offset,
+        );
+        let Some(step) = resolution
+            .winning_step()
+            .filter(|step| step.value.as_deref() == Some(value))
+        else {
+            return LookOrigin::Attributes;
+        };
+        let path = step.location.as_ref().map(|location| location.path.clone());
+        match (&step.origin, path) {
+            (adoc_lang::effective::Origin::Declaration, Some(path)) => LookOrigin::Page(path),
+            (adoc_lang::effective::Origin::Component, Some(path)) => LookOrigin::Component(path),
+            (adoc_lang::effective::Origin::Playbook, Some(path)) => LookOrigin::Playbook(path),
+            _ => LookOrigin::Attributes,
+        }
+    }
+
+    /// The settings file that gives the setting `key`, or the default when none does.
+    fn setting_origin(&self, key: &'static str) -> LookOrigin {
+        let file = match self.settings.written_in(key) {
+            Some(crate::settings::Layer::User) => self.settings.user_file(),
+            Some(crate::settings::Layer::Workspace) => self.settings.workspace_file(),
+            None => return LookOrigin::Default,
+        };
+        LookOrigin::Setting {
+            key,
+            file: file.map(Path::to_path_buf),
+        }
     }
 
     pub(crate) fn export_options(
@@ -2462,6 +2609,7 @@ impl Engine {
                         sources,
                         diagnostics,
                         look: Some(look),
+                        pdf_look: None,
                         protected: report_protected,
                     }
                 });
@@ -2720,6 +2868,7 @@ fn typeset(
         sources: Vec::new(),
         diagnostics,
         look: None,
+        pdf_look: None,
         protected: output.protected,
     })
 }
@@ -2850,6 +2999,7 @@ impl Engine {
                         sources,
                         diagnostics,
                         look: None,
+                        pdf_look: None,
                         protected: false,
                     }
                 });
@@ -2963,6 +3113,7 @@ impl Engine {
                         sources,
                         diagnostics,
                         look: None,
+                        pdf_look: None,
                         protected: false,
                     }
                 });
@@ -3206,6 +3357,7 @@ impl Engine {
                         sources,
                         diagnostics,
                         look: None,
+                        pdf_look: None,
                         protected: false,
                     }
                 });
